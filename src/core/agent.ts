@@ -61,8 +61,7 @@ If you have finished the task, provide a summary.
       });
 
       const result = await chat.sendMessage("Proceed with the next step according to the skill instructions.");
-      const response = await result.response;
-      const responseText = response.candidates?.[0].content.parts[0].text || "";
+      const responseText = result.response.text();
       
       console.log(`\n--- Turn ${i + 1} ---`);
       console.log(responseText);

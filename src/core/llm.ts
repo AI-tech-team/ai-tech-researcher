@@ -1,30 +1,27 @@
-import { VertexAI } from '@google-cloud/vertexai';
-import dotenv from 'dotenv';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
 
 dotenv.config();
 
-const project = process.env.GCP_PROJECT_ID || '';
-const location = process.env.GCP_LOCATION || 'us-central1';
+const apiKey = process.env.GEMINI_API_KEY;
+if (!apiKey) {
+  console.warn("GEMINI_API_KEY is not set in .env file.");
+}
 
-// Initialize Vertex AI
-const vertexAI = new VertexAI({ project: project, location: location });
+const genAI = new GoogleGenerativeAI(apiKey || "");
 
 export function getModel(systemInstruction?: string) {
-  return vertexAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
-    systemInstruction: systemInstruction ? { role: 'system', parts: [{ text: systemInstruction }] } : undefined,
+  return genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",
+    systemInstruction: systemInstruction,
   });
 }
 
-// Default model for simple tasks
+// Default model
 export const model = getModel();
 
 export async function askGemini(prompt: string, systemInstruction?: string) {
   const m = getModel(systemInstruction);
-  const result = await m.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-  });
-  
-  const response = await result.response;
-  return response.candidates?.[0].content.parts[0].text || '';
+  const result = await m.generateContent(prompt);
+  return result.response.text();
 }
