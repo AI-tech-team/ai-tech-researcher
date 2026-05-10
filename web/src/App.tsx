@@ -31,15 +31,14 @@ const App: React.FC = () => {
     }
   };
 
-  // Mock data for trends (In real app, fetch from backend)
   const trendData = [
-    { name: 'Mon', value: 40 },
-    { name: 'Tue', value: 30 },
-    { name: 'Wed', value: 65 },
-    { name: 'Thu', value: 45 },
-    { name: 'Fri', value: 85 },
-    { name: 'Sat', value: 70 },
-    { name: 'Sun', value: 90 },
+    { name: '月', value: 40 },
+    { name: '火', value: 30 },
+    { name: '水', value: 65 },
+    { name: '木', value: 45 },
+    { name: '金', value: 85 },
+    { name: '土', value: 70 },
+    { name: '日', value: 90 },
   ];
 
   const sourceDistribution = sources.reduce((acc: any, curr) => {
@@ -47,8 +46,14 @@ const App: React.FC = () => {
     return acc;
   }, {});
 
+  const statusMap: any = {
+    'active': '稼働中',
+    'candidate': '候補',
+    'low-priority': '低優先度'
+  };
+
   const chartData = Object.keys(sourceDistribution).map(key => ({
-    name: key.toUpperCase(),
+    name: statusMap[key] || key.toUpperCase(),
     value: sourceDistribution[key]
   }));
 
@@ -61,8 +66,8 @@ const App: React.FC = () => {
             <Terminal className="text-white" size={24} />
           </div>
           <div>
-            <h2 className="font-bold text-lg font-outfit leading-tight">Researcher</h2>
-            <span className="text-xs text-sky-400 font-medium tracking-widest uppercase">Autonomous AI</span>
+            <h2 className="font-bold text-lg font-outfit leading-tight">AI Researcher</h2>
+            <span className="text-xs text-sky-400 font-medium tracking-widest uppercase">自律型技術調査</span>
           </div>
         </div>
 
@@ -71,27 +76,27 @@ const App: React.FC = () => {
             onClick={() => setActiveTab('overview')}
             className={`sidebar-item ${activeTab === 'overview' ? 'active' : ''}`}
           >
-            <LayoutGrid size={20} /> Overview
+            <LayoutGrid size={20} /> 全体概要
           </button>
           <button 
             onClick={() => setActiveTab('reports')}
             className={`sidebar-item ${activeTab === 'reports' ? 'active' : ''}`}
           >
-            <FileText size={20} /> Reports
+            <FileText size={20} /> 調査レポート
           </button>
           <button 
             onClick={() => setActiveTab('sources')}
             className={`sidebar-item ${activeTab === 'sources' ? 'active' : ''}`}
           >
-            <Database size={20} /> Sources
+            <Database size={20} /> 情報ソース管理
           </button>
         </nav>
 
         <div className="mt-auto p-4 rounded-2xl bg-white/5 border border-white/5">
-          <p className="text-xs text-slate-500 mb-2">System Status</p>
+          <p className="text-xs text-slate-500 mb-2">システムステータス</p>
           <div className="flex items-center gap-2 text-emerald-400 text-sm font-medium">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            Live & Active
+            オンライン・稼働中
           </div>
         </div>
       </aside>
@@ -100,11 +105,13 @@ const App: React.FC = () => {
       <main className="flex-1 p-10 overflow-y-auto">
         <header className="flex justify-between items-center mb-10">
           <div>
-            <h1 className="text-3xl font-bold font-outfit mb-1 capitalize">{activeTab}</h1>
-            <p className="text-slate-500 text-sm">Autonomous intelligence gathering system</p>
+            <h1 className="text-3xl font-bold font-outfit mb-1 capitalize">
+              {activeTab === 'overview' ? '全体概要' : activeTab === 'reports' ? '調査レポート' : '情報ソース管理'}
+            </h1>
+            <p className="text-slate-500 text-sm">自ら学習し、進化する次世代の情報収集基盤</p>
           </div>
           <button className="btn-primary flex items-center gap-2" onClick={fetchData}>
-            <Activity size={18} /> Sync Data
+            <Activity size={18} /> データ同期
           </button>
         </header>
 
@@ -120,10 +127,10 @@ const App: React.FC = () => {
               {/* Stats Cards */}
               <div className="grid grid-cols-4 gap-6">
                 {[
-                  { label: 'Active Sources', value: stats?.active_sources, color: 'text-sky-400', icon: <TrendingUp size={20}/> },
-                  { label: 'Total Data Points', value: stats?.total_articles, color: 'text-purple-400', icon: <Globe size={20}/> },
-                  { label: 'Knowledge Base', value: stats?.total_reports, color: 'text-emerald-400', icon: <FileText size={20}/> },
-                  { label: 'Tracking Keywords', value: stats?.total_sources, color: 'text-amber-400', icon: <Search size={20}/> },
+                  { label: '有効な情報源', value: stats?.active_sources, color: 'text-sky-400', icon: <TrendingUp size={20}/> },
+                  { label: '収集データ件数', value: stats?.total_articles, color: 'text-purple-400', icon: <Globe size={20}/> },
+                  { label: '生成レポート数', value: stats?.total_reports, color: 'text-emerald-400', icon: <FileText size={20}/> },
+                  { label: '追跡キーワード', value: stats?.total_sources, color: 'text-amber-400', icon: <Search size={20}/> },
                 ].map((stat, idx) => (
                   <div key={idx} className="glass-card">
                     <div className="flex justify-between items-start mb-4">
@@ -140,12 +147,12 @@ const App: React.FC = () => {
               <div className="grid grid-cols-3 gap-8">
                 <div className="col-span-2 glass-card h-[400px]">
                   <h3 className="text-lg font-bold font-outfit mb-6 flex items-center gap-2">
-                    <BarChart3 size={20} className="text-sky-400" /> Collection Activity Trend
+                    <BarChart3 size={20} className="text-sky-400" /> 情報収集アクティビティ推移
                   </h3>
                   <ResponsiveContainer width="100%" height="85%">
                     <AreaChart data={trendData}>
                       <defs>
-                        <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id="colorValue" x1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.3}/>
                           <stop offset="95%" stopColor="#38bdf8" stopOpacity={0}/>
                         </linearGradient>
@@ -164,7 +171,7 @@ const App: React.FC = () => {
 
                 <div className="glass-card h-[400px]">
                   <h3 className="text-lg font-bold font-outfit mb-6 flex items-center gap-2">
-                    <Database size={20} className="text-purple-400" /> Source Health
+                    <Database size={20} className="text-purple-400" /> ソース健全性
                   </h3>
                   <ResponsiveContainer width="100%" height="85%">
                     <BarChart data={chartData}>
@@ -197,7 +204,7 @@ const App: React.FC = () => {
                         <FileText size={24} />
                       </div>
                       <div>
-                        <h3 className="font-bold text-lg font-outfit">{report.type.toUpperCase()} Insights</h3>
+                        <h3 className="font-bold text-lg font-outfit">{report.type === 'daily' ? '日次' : '週次'}インサイト</h3>
                         <p className="text-xs text-slate-500 flex items-center gap-1">
                           <Clock size={12} /> {report.report_date}
                         </p>
@@ -209,8 +216,8 @@ const App: React.FC = () => {
                     {report.content}
                   </p>
                   <div className="mt-6 pt-6 border-t border-white/5 flex justify-between items-center">
-                    <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Digest ID: {report.id}</span>
-                    <button className="text-sky-400 text-xs font-bold hover:underline">Read Full Digest</button>
+                    <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">レポートID: {report.id}</span>
+                    <button className="text-sky-400 text-xs font-bold hover:underline">詳細を見る</button>
                   </div>
                 </div>
               ))}
@@ -228,10 +235,10 @@ const App: React.FC = () => {
               <table className="w-full">
                 <thead>
                   <tr className="text-slate-500 text-[10px] uppercase tracking-[0.2em] font-bold border-b border-white/5">
-                    <th className="pb-6 text-left">Target Domain / Value</th>
-                    <th className="pb-6 text-left">Category</th>
-                    <th className="pb-6 text-left">Lifecycle</th>
-                    <th className="pb-6 text-right">Intelligence Score</th>
+                    <th className="pb-6 text-left">収集対象（ドメイン/値）</th>
+                    <th className="pb-6 text-left">カテゴリ</th>
+                    <th className="pb-6 text-left">ステータス</th>
+                    <th className="pb-6 text-right">インテリジェンス・スコア</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -245,7 +252,7 @@ const App: React.FC = () => {
                           src.status === 'candidate' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 
                           'bg-slate-500/10 text-slate-400 border border-slate-500/20'
                         }`}>
-                          {src.status.toUpperCase()}
+                          {statusMap[src.status] || src.status.toUpperCase()}
                         </span>
                       </td>
                       <td className="py-5 text-right font-mono text-sky-400 font-bold text-lg">{src.score}</td>
