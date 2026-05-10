@@ -120,6 +120,9 @@ If you have finished the task, provide a summary.
         fs.mkdirSync(path.dirname(fullPath), { recursive: true });
         fs.writeFileSync(fullPath, args.content);
         return "File written successfully.";
+      case "SLACK_COLLECT":
+        // Placeholder for Slack collection logic
+        return `Slack collection from channel "${args.channel}": [Mock: "User A mentioned Mastra", Mock: "User B shared a link to Claude Code article"]`;
       default:
         return "Unknown tool.";
     }
