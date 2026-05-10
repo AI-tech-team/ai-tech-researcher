@@ -1,4 +1,4 @@
-import { model } from "./llm";
+import { getModel } from "./llm";
 import db from "./db";
 import fs from "fs";
 import path from "path";
@@ -55,13 +55,14 @@ If you have finished the task, provide a summary.
     console.log(`Starting skill execution: ${path.basename(this.skillPath)}`);
 
     for (let i = 0; i < maxTurns; i++) {
-      const chat = model.startChat({
+      const chatModel = getModel(systemPrompt);
+      const chat = chatModel.startChat({
         history: history,
-        systemInstruction: systemPrompt,
       });
 
       const result = await chat.sendMessage("Proceed with the next step according to the skill instructions.");
-      const responseText = result.response.text();
+      const response = await result.response;
+      const responseText = response.candidates?.[0].content.parts[0].text || "";
       
       console.log(`\n--- Turn ${i + 1} ---`);
       console.log(responseText);
