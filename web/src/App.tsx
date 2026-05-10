@@ -11,14 +11,12 @@ const App: React.FC = () => {
   const [sources, setSources] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'sources'>('overview');
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchData();
   }, []);
 
   const fetchData = async () => {
-    setLoading(true);
     try {
       const [sRes, srcRes, repRes] = await Promise.all([
         axios.get(`${API_BASE}/stats`),
@@ -30,8 +28,6 @@ const App: React.FC = () => {
       setReports(repRes.data);
     } catch (e) {
       console.error("Failed to fetch data", e);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -128,8 +124,8 @@ const App: React.FC = () => {
                   { label: 'Total Data Points', value: stats?.total_articles, color: 'text-purple-400', icon: <Globe size={20}/> },
                   { label: 'Knowledge Base', value: stats?.total_reports, color: 'text-emerald-400', icon: <FileText size={20}/> },
                   { label: 'Tracking Keywords', value: stats?.total_sources, color: 'text-amber-400', icon: <Search size={20}/> },
-                ].map((stat, i) => (
-                  <div key={i} className="glass-card">
+                ].map((stat, idx) => (
+                  <div key={idx} className="glass-card">
                     <div className="flex justify-between items-start mb-4">
                       <div className={`p-2 rounded-lg bg-white/5 ${stat.color}`}>{stat.icon}</div>
                       <span className="text-emerald-400 text-xs font-bold bg-emerald-400/10 px-2 py-1 rounded">+12%</span>
@@ -193,7 +189,7 @@ const App: React.FC = () => {
               exit={{ opacity: 0, x: -20 }}
               className="grid grid-cols-1 md:grid-cols-2 gap-6"
             >
-              {reports.map((report, i) => (
+              {reports.map((report) => (
                 <div key={report.id} className="glass-card hover:translate-y-[-4px] group">
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex items-center gap-3">
