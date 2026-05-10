@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Layout, Search, FileText, TrendingUp, Settings, Activity, Globe } from 'lucide-react';
+import { Search, FileText, TrendingUp, Activity, Globe } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const API_BASE = "http://localhost:4000/api";
