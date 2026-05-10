@@ -1,9 +1,10 @@
 name: Daily Research
 
+# on:
+#   schedule:
+#     - cron: '6 5 * * *' # 毎日 14:06 JST (UTC 5:06)
 on:
-  schedule:
-    - cron: '6 5 * * *' # 毎日 14:06 JST (UTC 5:06)
-  workflow_dispatch: # 手動実行用
+  workflow_dispatch: # 手動実行のみ
 
 permissions:
   contents: write
