@@ -1,4 +1,4 @@
-name: Deploy Dashboard
+name: Deploy V2 Dashboard
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "pages-v2"
   cancel-in-progress: false
 
 jobs:
@@ -26,18 +26,20 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: v2/package-lock.json
 
       - name: Install dependencies
-        run: cd web && npm install
+        run: cd v2 && npm install
 
-      - name: Build
-        run: cd web && npm run build
+      - name: Build Next.js
+        run: cd v2 && npm run build
+        env:
+          NEXT_PUBLIC_BASE_PATH: /ai-tech-researcher
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './web/dist'
+          path: './v2/out'
 
   deploy:
     environment:
