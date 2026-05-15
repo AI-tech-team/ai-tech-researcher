@@ -1,40 +1,50 @@
 # AI Tech Researcher 🤖🔍
 
-Zennの記事「1年間の育休に備えて「勝手に賢くなる」AI情報収集基盤を作った」をベースにした、自走型AI技術情報収集システムです。
+自走型AI技術情報収集・レポーティングシステムです。最新のAIモデル・ツール・研究動向を自動で収集し、エンジニアや研究者が効率よくキャッチアップできるレポートを日次生成します。
 
 ## 特徴
-- **Skillベースの実行**: Markdown形式の手順書を読み込み、LLM（Gemini）が自律的にタスクを遂行。
-- **情報ソースの自己進化**: レポートへの採用実績に基づき、キーワードのスコアリングと昇格・降格を自動で実施。
-- **プレミアム・ダッシュボード**: ガラスモーフィズムを採用した洗練されたWeb UIでレポートを閲覧可能。
-- **GitHub Actionsによる自動運用**: 毎日決まった時間に自動でリサーチを実行。
+- **スマートシード進化**: キーワードのパフォーマンス（採用スコア）を自動で評価し、有用なキーワードを昇格・不要なものを降格
+- **Gemini駆動のリサーチ**: Gemini 3.1 Flash Liteが各キーワードに関する最新技術情報を自律的に収集・要約
+- **AIチャットコパイロット**: ダッシュボード内でGeminiに直接質問し、DBの情報を横断的に調査可能
+- **プレミアムダッシュボード**: ガラスモーフィズムを採用したモダンなWebUIでレポートをリアルタイム閲覧
+- **完全自動運用**: GitHub Actionsで毎日の情報収集・レポート生成・キーワード最適化を自動実行
 
 ## セットアップ
 
 ### 1. 依存関係のインストール
 ```bash
 npm install
-cd web && npm install && cd ..
+cd v2 && npm install && cd ..
 ```
 
 ### 2. 環境変数の設定
-`.env.example` を `.env` にコピーし、APIキーを設定してください。
-- `GEMINI_API_KEY`: Google AI Studioから取得してください。
-
-### 3. 実行
-**日次パイプラインの実行（収集・レポート・進化）:**
-```bash
-npx tsx scripts/run_daily.ts
+`v2/.env.local` を作成し、以下を設定してください：
+```env
+TURSO_DATABASE_URL=libsql://your-db.turso.io
+TURSO_AUTH_TOKEN=your-auth-token
+GOOGLE_GENERATIVE_AI_API_KEY=your-gemini-api-key
 ```
 
-**Webダッシュボードの起動:**
+### 3. シードデータの投入
 ```bash
-# Backend (API Server)
-npx tsx src/server.ts
+cd v2 && npx tsx insert_300_seeds.ts
+```
 
-# Frontend (Dashboard)
-cd web && npm run dev
+### 4. 開発サーバーの起動
+```bash
+cd v2 && npm run dev
+```
+
+## デプロイ（Vercel）
+
+```bash
+vercel --prod --cwd v2
 ```
 
 ## GitHub自動運用
+
 GitHub Actions (`.github/workflows/run.yml`) が設定されています。
-GitHubレポジトリの `Settings > Secrets and variables > Actions` に `GEMINI_API_KEY` を登録することで、毎日自動でリサーチが実行されます。
+GitHubリポジトリの `Settings > Secrets and variables > Actions` に以下を登録することで、毎日自動でリサーチが実行されます：
+- `GEMINI_API_KEY`
+- `TURSO_DATABASE_URL`
+- `TURSO_AUTH_TOKEN`
