@@ -1,13 +1,9 @@
 name: Daily Research
 
-# on:
-#   schedule:
-#     - cron: '6 5 * * *' # 毎日 14:06 JST (UTC 5:06)
 on:
-  workflow_dispatch: # 手動実行のみ
-
-permissions:
-  contents: write
+  schedule:
+    - cron: '0 21 * * *' # 毎日 06:00 JST (UTC 21:00)
+  workflow_dispatch:
 
 jobs:
   research:
@@ -20,19 +16,14 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: v2/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: cd v2 && npm install
 
-      - name: Run Research Pipeline
+      - name: Run Daily Pipeline
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: npx tsx scripts/run_daily.ts
-
-      - name: Commit and push changes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add data/database.sqlite reports/
-          git commit -m "Auto: Daily research and report [skip ci]" || echo "No changes to commit"
-          git push
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+        run: cd v2 && npx tsx daily_pipeline.ts

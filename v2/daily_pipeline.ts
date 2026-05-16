@@ -1,0 +1,171 @@
+import { drizzle } from 'drizzle-orm/libsql';
+import { createClient } from '@libsql/client';
+import { google } from '@ai-sdk/google';
+import { generateText } from 'ai';
+import { eq, sql, desc } from 'drizzle-orm';
+import { config } from 'dotenv';
+import * as schema from './src/db/schema';
+
+config({ path: '.env.local' });
+
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL!,
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+const db = drizzle(client, { schema });
+
+async function collectData(rounds = 10) {
+  console.log(`[Collect] ${rounds}ラウンド開始`);
+  let collected = 0;
+
+  for (let i = 0; i < rounds; i++) {
+    const sourceList = await db.select().from(schema.sources)
+      .where(eq(schema.sources.status, 'active'))
+      .orderBy(sql`RANDOM()`)
+      .limit(1);
+
+    if (sourceList.length === 0) break;
+    const target = sourceList[0];
+
+    try {
+      const result = await generateText({
+        model: google('gemini-3.1-flash-lite', { useSearchGrounding: true }),
+        system: `あなたはAI技術情報収集エンジンです。
+与えられたキーワードでGoogle検索を行い、最新のAI技術に関する実際の記事を1つ見つけてください。
+以下のJSONフォーマットのみを出力してください：
+{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約"}`,
+        prompt: `対象キーワード: ${target.value}`,
+      });
+
+      let parsedData;
+      try {
+        const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
+        parsedData = JSON.parse(jsonStr);
+      } catch {
+        const src = result.sources?.[0];
+        if (!src) { console.warn(`  スキップ (${target.value}): URLなし`); continue; }
+        parsedData = { title: src.title || target.value, url: src.url, summary: result.text.substring(0, 200) };
+      }
+
+      if (result.sources?.[0]?.url) parsedData.url = result.sources[0].url;
+
+      await db.insert(schema.collectedData).values({
+        sourceId: target.id,
+        title: parsedData.title,
+        url: parsedData.url,
+        summary: parsedData.summary,
+        rawContent: result.text,
+        publishedAt: new Date().toISOString(),
+      }).onConflictDoNothing();
+
+      await db.update(schema.sources)
+        .set({ lastHitAt: new Date().toISOString() })
+        .where(eq(schema.sources.id, target.id));
+
+      collected++;
+      console.log(`  収集: ${parsedData.title}`);
+    } catch (e: any) {
+      console.error(`  失敗 (${target.value}): ${e.message}`);
+    }
+  }
+
+  console.log(`[Collect] ${collected}件完了`);
+}
+
+async function generateReport() {
+  console.log('[Report] レポート生成開始');
+
+  const recentData = await db.select().from(schema.collectedData)
+    .orderBy(desc(schema.collectedData.createdAt))
+    .limit(10);
+
+  if (recentData.length === 0) { console.log('[Report] データなし、スキップ'); return; }
+
+  const contextStr = recentData
+    .map(d => `[${d.title}]\n${d.summary}\nURL: ${d.url}`)
+    .join('\n\n---\n\n');
+
+  const { text } = await generateText({
+    model: google('gemini-3.1-flash-lite'),
+    system: `AIテック情報のデイリーレポートをMarkdown形式で作成してください。
+エンジニア向けに具体的・実践的なトーンで1200文字程度。
+箇条書きや絵文字を活用して読みやすくしてください。`,
+    prompt: `【収集データ】\n${contextStr}`,
+  });
+
+  await db.insert(schema.reports).values({
+    type: 'daily',
+    content: text,
+    reportDate: new Date().toISOString().split('T')[0],
+  });
+
+  console.log('[Report] レポート生成完了');
+}
+
+async function evolveSources() {
+  console.log('[Evolve] ソース進化開始');
+
+  const allSources = await db.select().from(schema.sources)
+    .where(sql`${schema.sources.status} != 'stopped'`);
+
+  let promoted = 0, demoted = 0, stoppedCount = 0;
+
+  for (const source of allSources) {
+    const logs = await db.select().from(schema.adoptionLogs)
+      .where(eq(schema.adoptionLogs.sourceId, source.id));
+
+    const adopted = logs.filter(l => l.isAdopted === 1).length;
+    const notAdopted = logs.filter(l => l.isAdopted === 0).length;
+    const scoreDelta = logs.length === 0 ? -1 : adopted * 10 - notAdopted * 2;
+    const newScore = (source.score ?? 0) + scoreDelta;
+
+    let newStatus = source.status;
+    if (source.status === 'candidate' && newScore >= 30) { newStatus = 'active'; promoted++; }
+    else if (source.status === 'active' && newScore < 0) { newStatus = 'low-priority'; demoted++; }
+    else if (source.status === 'low-priority' && newScore < -20) { newStatus = 'stopped'; stoppedCount++; }
+
+    await db.update(schema.sources)
+      .set({ score: newScore, status: newStatus })
+      .where(eq(schema.sources.id, source.id));
+  }
+
+  console.log(`[Evolve] 昇格${promoted}, 降格${demoted}, 停止${stoppedCount}`);
+
+  // 新規キーワード候補の発見
+  const recentData = await db.select({ summary: schema.collectedData.summary })
+    .from(schema.collectedData)
+    .orderBy(desc(schema.collectedData.createdAt))
+    .limit(20);
+
+  if (recentData.length > 0) {
+    const { text } = await generateText({
+      model: google('gemini-3.1-flash-lite'),
+      prompt: `以下の記事サマリーから新興AIキーワードを5つ抽出してJSON配列のみで出力: ["kw1", "kw2", ...]
+
+${recentData.map(d => d.summary).join('\n')}`,
+    });
+
+    try {
+      const kws: string[] = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+      let added = 0;
+      for (const kw of kws) {
+        const res = await db.insert(schema.sources)
+          .values({ type: 'keyword', value: kw.trim(), status: 'candidate', score: 0 })
+          .onConflictDoNothing();
+        if (res.rowsAffected > 0) added++;
+      }
+      console.log(`[Evolve] 新規候補${added}件追加`);
+    } catch { /* ignore */ }
+  }
+}
+
+async function main() {
+  console.log('=== Daily Pipeline 開始 ===', new Date().toISOString());
+  await collectData(10);
+  await generateReport();
+  await evolveSources();
+  console.log('=== Daily Pipeline 完了 ===');
+  process.exit(0);
+}
+
+main().catch(e => { console.error(e); process.exit(1); });

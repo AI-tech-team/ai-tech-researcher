@@ -3,10 +3,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { Search, FileText, TrendingUp, Activity, Globe, LayoutGrid, Database, Terminal, BarChart3, MessageSquare, Send, Bot, User, ExternalLink, Hash, Clock, Sparkles } from 'lucide-react';
+import { Search, FileText, TrendingUp, Activity, Globe, LayoutGrid, Database, Terminal, BarChart3, Send, User, ExternalLink, Hash, Clock, Sparkles, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar as RechartsBar } from 'recharts';
-import { getSourcesData, getCollectedDataList, getReportsData } from './actions';
+import { getSourcesData, getCollectedDataList, getReportsData, addSource, deleteSource } from './actions';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'overview' | 'data' | 'reports' | 'sources'>('overview');
@@ -17,6 +17,8 @@ export default function Home() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [newKeyword, setNewKeyword] = useState('');
+  const [isEvolving, setIsEvolving] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Vercel AI SDK v3 chat hook with DefaultChatTransport
@@ -77,6 +79,38 @@ export default function Home() {
       alert("通信エラーが発生しました");
     } finally {
       setIsGeneratingReport(false);
+    }
+  };
+
+  const handleAddKeyword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newKeyword.trim()) return;
+    await addSource(newKeyword);
+    setNewKeyword('');
+    await loadData();
+  };
+
+  const handleDeleteSource = async (id: number) => {
+    await deleteSource(id);
+    await loadData();
+  };
+
+  const handleEvolve = async () => {
+    if (isEvolving) return;
+    setIsEvolving(true);
+    try {
+      const res = await fetch('/api/evolve', { method: 'POST' });
+      const result = await res.json();
+      if (result.success) {
+        await loadData();
+        alert(result.message);
+      } else {
+        alert("進化エラー: " + result.message);
+      }
+    } catch {
+      alert("通信エラーが発生しました");
+    } finally {
+      setIsEvolving(false);
     }
   };
 
@@ -349,52 +383,85 @@ export default function Home() {
           )}
 
           {activeTab === 'sources' && (
-            <motion.div 
+            <motion.div
               key="sources"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="glass-card overflow-hidden"
+              className="space-y-4"
             >
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="text-xs text-slate-400 uppercase bg-white/5 border-b border-white/5">
-                    <tr>
-                      <th className="px-6 py-4">種別</th>
-                      <th className="px-6 py-4">値 (キーワード / URL)</th>
-                      <th className="px-6 py-4">ステータス</th>
-                      <th className="px-6 py-4">スコア</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {isLoadingData ? (
-                      <tr><td colSpan={4} className="text-center py-8 text-sky-400"><Activity className="animate-pulse mx-auto" /></td></tr>
-                    ) : sourcesList.map(source => (
-                      <tr key={source.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                        <td className="px-6 py-4">
-                          <span className="flex items-center gap-2 text-slate-300">
-                            {source.type === 'keyword' ? <Hash size={16} className="text-sky-400"/> : <Globe size={16} className="text-emerald-400"/>}
-                            {source.type}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 font-medium text-white">{source.value}</td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(source.status)}`}>
-                            {source.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                              <div className="h-full bg-gradient-to-r from-sky-400 to-purple-500" style={{ width: `${Math.min(100, source.score * 10)}%` }} />
-                            </div>
-                            <span className="text-slate-400 font-mono">{source.score.toFixed(1)}</span>
-                          </div>
-                        </td>
+              <div className="flex gap-3">
+                <form onSubmit={handleAddKeyword} className="flex gap-2 flex-1">
+                  <input
+                    value={newKeyword}
+                    onChange={e => setNewKeyword(e.target.value)}
+                    placeholder="新規キーワードを追加..."
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-4 text-sm text-white focus:outline-none focus:border-sky-500/50"
+                  />
+                  <button type="submit" className="btn-primary flex items-center gap-2 px-4 py-2">
+                    <Plus size={16} /> 追加
+                  </button>
+                </form>
+                <button
+                  onClick={handleEvolve}
+                  disabled={isEvolving}
+                  className="flex items-center gap-2 bg-purple-500/20 border border-purple-500/30 text-purple-300 px-4 py-2 rounded-xl text-sm font-medium hover:bg-purple-500/30 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw size={16} className={isEvolving ? 'animate-spin' : ''} />
+                  {isEvolving ? '進化中...' : 'ソース自動進化'}
+                </button>
+              </div>
+
+              <div className="glass-card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="text-xs text-slate-400 uppercase bg-white/5 border-b border-white/5">
+                      <tr>
+                        <th className="px-6 py-4">種別</th>
+                        <th className="px-6 py-4">値 (キーワード / URL)</th>
+                        <th className="px-6 py-4">ステータス</th>
+                        <th className="px-6 py-4">スコア</th>
+                        <th className="px-6 py-4"></th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {isLoadingData ? (
+                        <tr><td colSpan={5} className="text-center py-8 text-sky-400"><Activity className="animate-pulse mx-auto" /></td></tr>
+                      ) : sourcesList.map(source => (
+                        <tr key={source.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                          <td className="px-6 py-4">
+                            <span className="flex items-center gap-2 text-slate-300">
+                              {source.type === 'keyword' ? <Hash size={16} className="text-sky-400"/> : <Globe size={16} className="text-emerald-400"/>}
+                              {source.type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 font-medium text-white">{source.value}</td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(source.status)}`}>
+                              {source.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                <div className="h-full bg-gradient-to-r from-sky-400 to-purple-500" style={{ width: `${Math.min(100, Math.max(0, source.score) * 10)}%` }} />
+                              </div>
+                              <span className="text-slate-400 font-mono">{(source.score ?? 0).toFixed(1)}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <button
+                              onClick={() => handleDeleteSource(source.id)}
+                              className="text-slate-600 hover:text-red-400 transition-colors"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </motion.div>
           )}
