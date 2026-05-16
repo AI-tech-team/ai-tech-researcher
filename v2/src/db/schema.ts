@@ -18,6 +18,8 @@ export const collectedData = sqliteTable("collected_data", {
   title: text("title"),
   url: text("url").unique(),
   summary: text("summary"),
+  category: text("category"),
+  isFavorited: integer("is_favorited").default(0),
   rawContent: text("raw_content"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),

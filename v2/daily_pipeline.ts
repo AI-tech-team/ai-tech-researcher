@@ -4,6 +4,7 @@ import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import { eq, sql, desc } from 'drizzle-orm';
 import { config } from 'dotenv';
+import nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
 
 config({ path: '.env.local' });
@@ -34,7 +35,7 @@ async function collectData(rounds = 10) {
         system: `あなたはAI技術情報収集エンジンです。
 与えられたキーワードでGoogle検索を行い、最新のAI技術に関する実際の記事を1つ見つけてください。
 以下のJSONフォーマットのみを出力してください：
-{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約"}`,
+{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ"}`,
         prompt: `対象キーワード: ${target.value}`,
       });
 
@@ -51,6 +52,7 @@ async function collectData(rounds = 10) {
         title: parsedData.title,
         url: parsedData.url,
         summary: parsedData.summary,
+        category: parsedData.category ?? null,
         rawContent: result.text,
         publishedAt: new Date().toISOString(),
       }).onConflictDoNothing();
@@ -60,7 +62,7 @@ async function collectData(rounds = 10) {
         .where(eq(schema.sources.id, target.id));
 
       collected++;
-      console.log(`  収集: ${parsedData.title}`);
+      console.log(`  収集: [${parsedData.category ?? '未分類'}] ${parsedData.title}`);
     } catch (e: any) {
       console.error(`  失敗 (${target.value}): ${e.message}`);
     }
@@ -69,17 +71,17 @@ async function collectData(rounds = 10) {
   console.log(`[Collect] ${collected}件完了`);
 }
 
-async function generateReport() {
+async function generateReport(): Promise<string | null> {
   console.log('[Report] レポート生成開始');
 
   const recentData = await db.select().from(schema.collectedData)
     .orderBy(desc(schema.collectedData.createdAt))
     .limit(10);
 
-  if (recentData.length === 0) { console.log('[Report] データなし、スキップ'); return; }
+  if (recentData.length === 0) { console.log('[Report] データなし、スキップ'); return null; }
 
   const contextStr = recentData
-    .map(d => `[${d.title}]\n${d.summary}\nURL: ${d.url}`)
+    .map(d => `[${d.category ?? '未分類'}] ${d.title}\n${d.summary}\nURL: ${d.url}`)
     .join('\n\n---\n\n');
 
   const { text } = await generateText({
@@ -97,6 +99,37 @@ async function generateReport() {
   });
 
   console.log('[Report] レポート生成完了');
+  return text;
+}
+
+async function sendEmail(reportContent: string) {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+
+  if (!user || !pass) {
+    console.log('[Email] GMAIL_USER/GMAIL_APP_PASSWORD未設定、スキップ');
+    return;
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user, pass },
+    });
+
+    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    await transporter.sendMail({
+      from: user,
+      to: user,
+      subject: `🤖 AI Tech Researcher デイリーレポート ${today}`,
+      text: reportContent,
+    });
+
+    console.log('[Email] レポート送信完了');
+  } catch (e: any) {
+    console.error(`[Email] 送信失敗: ${e.message}`);
+  }
 }
 
 async function evolveSources() {
@@ -159,7 +192,10 @@ ${recentData.map(d => d.summary).join('\n')}`,
 async function main() {
   console.log('=== Daily Pipeline 開始 ===', new Date().toISOString());
   await collectData(10);
-  await generateReport();
+  const reportContent = await generateReport();
+  if (reportContent) {
+    await sendEmail(reportContent);
+  }
   await evolveSources();
   console.log('=== Daily Pipeline 完了 ===');
   process.exit(0);

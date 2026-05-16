@@ -26,7 +26,7 @@ export async function POST() {
       system: `あなたはAI技術情報収集エンジンです。
 与えられたキーワードでGoogle検索を行い、最新のAI技術に関する実際の記事を1つ見つけてください。
 以下のJSONフォーマットのみを出力してください：
-{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約"}`,
+{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ"}`,
       prompt: `対象キーワード: ${targetSource.value}`,
     });
 
@@ -43,6 +43,7 @@ export async function POST() {
       title: parsedData.title,
       url: parsedData.url,
       summary: parsedData.summary,
+      category: parsedData.category ?? null,
       rawContent: result.text,
       publishedAt: new Date().toISOString(),
     }).onConflictDoNothing();

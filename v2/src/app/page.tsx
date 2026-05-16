@@ -3,16 +3,30 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { Search, FileText, TrendingUp, Activity, Globe, LayoutGrid, Database, Terminal, BarChart3, Send, User, ExternalLink, Hash, Clock, Sparkles, Plus, Trash2, RefreshCw } from 'lucide-react';
+import {
+  Search, FileText, TrendingUp, Activity, Globe, LayoutGrid, Database,
+  Terminal, BarChart3, Send, User, ExternalLink, Hash, Clock, Sparkles,
+  Plus, Trash2, RefreshCw, Star, Zap,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar as RechartsBar } from 'recharts';
-import { getSourcesData, getCollectedDataList, getReportsData, addSource, deleteSource } from './actions';
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, BarChart, Bar as RechartsBar,
+} from 'recharts';
+import {
+  getSourcesData, getCollectedDataList, getReportsData,
+  addSource, deleteSource, getActivityData, toggleFavorite, getSourcePerformance,
+} from './actions';
+
+type Tab = 'overview' | 'data' | 'reports' | 'sources' | 'performance';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'data' | 'reports' | 'sources'>('overview');
+  const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [sourcesList, setSourcesList] = useState<any[]>([]);
   const [collectedItems, setCollectedItems] = useState<any[]>([]);
   const [reportsList, setReportsList] = useState<any[]>([]);
+  const [activityData, setActivityData] = useState<{ name: string; count: number }[]>([]);
+  const [sourcePerformance, setSourcePerformance] = useState<any[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -22,29 +36,31 @@ export default function Home() {
   const [reportTypeFilter, setReportTypeFilter] = useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
   const [isGeneratingWeekly, setIsGeneratingWeekly] = useState(false);
   const [isGeneratingMonthly, setIsGeneratingMonthly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Vercel AI SDK v3 chat hook with DefaultChatTransport
   const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({ api: '/api/chat' }),
   });
   const isLoading = status === 'streaming' || status === 'submitted';
 
-
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setIsLoadingData(true);
-    const [sources, data, reportsData] = await Promise.all([
+    const [sources, data, reportsData, activity, performance] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
-      getReportsData()
+      getReportsData(),
+      getActivityData(),
+      getSourcePerformance(),
     ]);
     setSourcesList(sources);
     setCollectedItems(data);
     setReportsList(reportsData);
+    setActivityData(activity);
+    setSourcePerformance(performance);
     setIsLoadingData(false);
   }
 
@@ -59,7 +75,7 @@ export default function Home() {
       } else {
         alert("同期エラー: " + result.message);
       }
-    } catch (e) {
+    } catch {
       alert("通信エラーが発生しました");
     } finally {
       setIsSyncing(false);
@@ -74,11 +90,11 @@ export default function Home() {
       const result = await res.json();
       if (result.success) {
         await loadData();
-        setActiveTab('reports'); // 生成後レポートタブに移動
+        setActiveTab('reports');
       } else {
         alert("レポート生成エラー: " + result.message);
       }
-    } catch (e) {
+    } catch {
       alert("通信エラーが発生しました");
     } finally {
       setIsGeneratingReport(false);
@@ -155,29 +171,46 @@ export default function Home() {
     }
   };
 
-  const trendData = [
-    { name: '月', value: 40 },
-    { name: '火', value: 30 },
-    { name: '水', value: 65 },
-    { name: '木', value: 45 },
-    { name: '金', value: 85 },
-    { name: '土', value: 70 },
-    { name: '日', value: 90 },
-  ];
+  const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
+    setCollectedItems(prev =>
+      prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item)
+    );
+    await toggleFavorite(id, currentlyFavorited);
+  };
+
+  // 派生データ
+  const categories = ['all', ...Array.from(new Set(collectedItems.map(i => i.category).filter(Boolean))) as string[]];
+  const filteredItems = collectedItems.filter(item => {
+    const matchSearch = !searchQuery ||
+      item.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.summary?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
+    return matchSearch && matchCategory;
+  });
 
   const chartData = [
-    { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length || 120 },
-    { name: '候補', value: sourcesList.filter(s => s.status === 'candidate').length || 80 },
-    { name: '低優先度', value: sourcesList.filter(s => s.status === 'low-priority').length || 12 }
+    { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length },
+    { name: '候補', value: sourcesList.filter(s => s.status === 'candidate').length },
+    { name: '低優先度', value: sourcesList.filter(s => s.status === 'low-priority').length },
   ];
 
+  const scoreToPercent = (score: number) => Math.min(100, Math.max(0, (score + 20) * 2.5));
+
   const getStatusColor = (status: string) => {
-    switch(status) {
+    switch (status) {
       case 'active': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
       case 'candidate': return 'bg-sky-500/20 text-sky-400 border-sky-500/30';
       case 'low-priority': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
       default: return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
     }
+  };
+
+  const tabLabel: Record<Tab, string> = {
+    overview: '全体概要',
+    data: '収集データ',
+    reports: '調査レポート',
+    sources: '情報ソース管理',
+    performance: 'ソース分析',
   };
 
   return (
@@ -195,30 +228,21 @@ export default function Home() {
         </div>
 
         <nav className="flex flex-col gap-2">
-          <button 
-            onClick={() => setActiveTab('overview')}
-            className={`sidebar-item ${activeTab === 'overview' ? 'active' : ''}`}
-          >
-            <LayoutGrid size={20} /> 全体概要
-          </button>
-          <button 
-            onClick={() => setActiveTab('data')}
-            className={`sidebar-item ${activeTab === 'data' ? 'active' : ''}`}
-          >
-            <Globe size={20} /> 収集データ
-          </button>
-          <button 
-            onClick={() => setActiveTab('reports')}
-            className={`sidebar-item ${activeTab === 'reports' ? 'active' : ''}`}
-          >
-            <FileText size={20} /> 調査レポート
-          </button>
-          <button 
-            onClick={() => setActiveTab('sources')}
-            className={`sidebar-item ${activeTab === 'sources' ? 'active' : ''}`}
-          >
-            <Database size={20} /> 情報ソース管理
-          </button>
+          {([
+            ['overview', <LayoutGrid size={20} />, '全体概要'],
+            ['data', <Globe size={20} />, '収集データ'],
+            ['reports', <FileText size={20} />, '調査レポート'],
+            ['sources', <Database size={20} />, '情報ソース管理'],
+            ['performance', <BarChart3 size={20} />, 'ソース分析'],
+          ] as [Tab, React.ReactNode, string][]).map(([tab, icon, label]) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`sidebar-item ${activeTab === tab ? 'active' : ''}`}
+            >
+              {icon} {label}
+            </button>
+          ))}
         </nav>
 
         <div className="mt-auto p-4 rounded-2xl bg-white/5 border border-white/5">
@@ -234,42 +258,36 @@ export default function Home() {
       <main className="flex-1 p-8 overflow-y-auto">
         <header className="flex justify-between items-center mb-10">
           <div>
-            <h1 className="text-3xl font-bold font-outfit mb-1 capitalize">
-              {activeTab === 'overview' ? '全体概要' : activeTab === 'data' ? '収集データ' : activeTab === 'reports' ? '調査レポート' : '情報ソース管理'}
-            </h1>
+            <h1 className="text-3xl font-bold font-outfit mb-1">{tabLabel[activeTab]}</h1>
             <p className="text-slate-500 text-sm">自ら学習し、進化する次世代の情報収集基盤</p>
           </div>
-          <button 
+          <button
             onClick={handleSyncData}
             disabled={isSyncing}
             className={`btn-primary flex items-center gap-2 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
-            <Activity size={18} className={isSyncing ? 'animate-spin' : ''} /> {isSyncing ? '同期中...' : 'データ同期'}
+            <Activity size={18} className={isSyncing ? 'animate-spin' : ''} />
+            {isSyncing ? '同期中...' : 'データ同期'}
           </button>
         </header>
 
         <AnimatePresence mode="wait">
+          {/* ── 全体概要 ── */}
           {activeTab === 'overview' && (
-            <motion.div 
-              key="overview"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-8"
-            >
+            <motion.div key="overview" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
               <div className="grid grid-cols-4 gap-6">
                 {[
-                  { label: '有効な情報源', value: sourcesList.length || 212, color: 'text-sky-400', icon: <TrendingUp size={20}/> },
-                  { label: '収集データ件数', value: collectedItems.length || 0, color: 'text-purple-400', icon: <Globe size={20}/> },
-                  { label: '生成レポート数', value: reportsList.length || 0, color: 'text-emerald-400', icon: <FileText size={20}/> },
-                  { label: '追跡キーワード', value: sourcesList.filter(s => s.type === 'keyword').length || 212, color: 'text-amber-400', icon: <Search size={20}/> },
+                  { label: '有効な情報源', value: sourcesList.filter(s => s.status === 'active').length, color: 'text-sky-400', icon: <TrendingUp size={20} /> },
+                  { label: '収集データ件数', value: collectedItems.length, color: 'text-purple-400', icon: <Globe size={20} /> },
+                  { label: '生成レポート数', value: reportsList.length, color: 'text-emerald-400', icon: <FileText size={20} /> },
+                  { label: 'お気に入り数', value: collectedItems.filter(i => i.isFavorited).length, color: 'text-amber-400', icon: <Star size={20} /> },
                 ].map((stat, idx) => (
                   <div key={idx} className="glass-card">
                     <div className="flex justify-between items-start mb-4">
                       <div className={`p-2 rounded-lg bg-white/5 ${stat.color}`}>{stat.icon}</div>
                     </div>
                     <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{stat.label}</p>
-                    <h3 className="text-3xl font-bold font-outfit">{stat.value}</h3>
+                    <h3 className="text-3xl font-bold font-outfit">{isLoadingData ? '-' : stat.value}</h3>
                   </div>
                 ))}
               </div>
@@ -277,24 +295,21 @@ export default function Home() {
               <div className="grid grid-cols-3 gap-8">
                 <div className="col-span-2 glass-card h-[400px]">
                   <h3 className="text-lg font-bold font-outfit mb-6 flex items-center gap-2">
-                    <BarChart3 size={20} className="text-sky-400" /> 情報収集アクティビティ推移
+                    <BarChart3 size={20} className="text-sky-400" /> 収集アクティビティ（直近7日）
                   </h3>
                   <ResponsiveContainer width="100%" height="85%">
-                    <AreaChart data={trendData}>
+                    <AreaChart data={activityData}>
                       <defs>
-                        <linearGradient id="colorValue" x1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#38bdf8" stopOpacity={0}/>
+                        <linearGradient id="colorCount" x1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                       <XAxis dataKey="name" stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
-                      <YAxis stroke="#475569" fontSize={12} tickLine={false} axisLine={false} />
-                      <Tooltip 
-                        contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
-                        itemStyle={{ color: '#38bdf8' }}
-                      />
-                      <Area type="monotone" dataKey="value" stroke="#38bdf8" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
+                      <YAxis stroke="#475569" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }} itemStyle={{ color: '#38bdf8' }} />
+                      <Area type="monotone" dataKey="count" name="収集件数" stroke="#38bdf8" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -307,10 +322,8 @@ export default function Home() {
                     <BarChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                       <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
-                      <Tooltip 
-                        contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
-                      />
-                      <RechartsBar dataKey="value" fill="#818cf8" radius={[4, 4, 0, 0]} />
+                      <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }} />
+                      <RechartsBar dataKey="value" name="件数" fill="#818cf8" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -318,34 +331,73 @@ export default function Home() {
             </motion.div>
           )}
 
+          {/* ── 収集データ ── */}
           {activeTab === 'data' && (
-            <motion.div 
-              key="data"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
-            >
+            <motion.div key="data" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+              {/* 検索 + カテゴリフィルター */}
+              <div className="flex flex-col gap-3">
+                <div className="relative">
+                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="タイトル・サマリーを検索..."
+                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-9 pr-4 text-sm text-white focus:outline-none focus:border-sky-500/50"
+                  />
+                </div>
+                {categories.length > 1 && (
+                  <div className="flex flex-wrap gap-2">
+                    {categories.map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setCategoryFilter(cat)}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${categoryFilter === cat ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+                      >
+                        {cat === 'all' ? '全て' : cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-slate-500">{filteredItems.length}件表示</p>
+              </div>
+
               {isLoadingData ? (
                 <div className="flex justify-center items-center py-20 text-sky-400">
                   <Activity className="animate-pulse" size={32} />
                 </div>
-              ) : collectedItems.length > 0 ? (
+              ) : filteredItems.length > 0 ? (
                 <div className="grid grid-cols-1 gap-4">
-                  {collectedItems.map(item => (
+                  {filteredItems.map(item => (
                     <div key={item.id} className="glass-card group hover:border-sky-500/30">
                       <div className="flex justify-between items-start mb-2">
-                        <h4 className="text-lg font-bold text-white group-hover:text-sky-400 transition-colors">{item.title || '無題のデータ'}</h4>
-                        {item.url && (
-                          <a href={item.url} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-white">
-                            <ExternalLink size={16} />
-                          </a>
-                        )}
+                        <h4 className="text-lg font-bold text-white group-hover:text-sky-400 transition-colors flex-1 pr-4">{item.title || '無題のデータ'}</h4>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            onClick={() => handleToggleFavorite(item.id, !!item.isFavorited)}
+                            className="transition-colors"
+                            title={item.isFavorited ? 'お気に入り解除' : 'お気に入り登録'}
+                          >
+                            <Star
+                              size={18}
+                              className={item.isFavorited ? 'fill-amber-400 text-amber-400' : 'text-slate-600 hover:text-amber-400'}
+                            />
+                          </button>
+                          {item.url && (
+                            <a href={item.url} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-white">
+                              <ExternalLink size={16} />
+                            </a>
+                          )}
+                        </div>
                       </div>
                       <p className="text-slate-400 text-sm line-clamp-2 mb-4">{item.summary || 'サマリーはありません'}</p>
-                      <div className="flex items-center gap-4 text-xs font-medium">
+                      <div className="flex items-center gap-3 flex-wrap text-xs font-medium">
+                        {item.category && (
+                          <span className="px-2 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                            {item.category}
+                          </span>
+                        )}
                         <span className="flex items-center gap-1 text-sky-400 bg-sky-500/10 px-2 py-1 rounded-md">
-                          <Hash size={12} /> {item.sourceValue || '不明なソース'}
+                          <Hash size={12} /> {item.sourceValue || '不明'}
                         </span>
                         <span className="flex items-center gap-1 text-slate-500">
                           <Clock size={12} /> {new Date(item.createdAt).toLocaleString('ja-JP')}
@@ -357,20 +409,15 @@ export default function Home() {
               ) : (
                 <div className="glass-card text-center py-20 text-slate-400">
                   <Database size={48} className="mx-auto mb-4 opacity-20" />
-                  <p>まだ収集されたデータはありません。</p>
+                  <p>データが見つかりません。</p>
                 </div>
               )}
             </motion.div>
           )}
 
+          {/* ── 調査レポート ── */}
           {activeTab === 'reports' && (
-            <motion.div 
-              key="reports"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
-            >
+            <motion.div key="reports" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
               <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
                 <div className="flex gap-2">
                   {(['all', 'daily', 'weekly', 'monthly'] as const).map(t => (
@@ -384,30 +431,21 @@ export default function Home() {
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={handleGenerateReport}
-                    disabled={isGeneratingReport || collectedItems.length === 0}
-                    className={`bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-emerald-500/20 hover:opacity-90 transition-opacity ${isGeneratingReport || collectedItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <Sparkles size={16} className={isGeneratingReport ? 'animate-spin' : ''} />
-                    {isGeneratingReport ? '生成中...' : '日次'}
-                  </button>
-                  <button
-                    onClick={handleGenerateWeekly}
-                    disabled={isGeneratingWeekly || collectedItems.length === 0}
-                    className={`bg-gradient-to-r from-sky-500 to-blue-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity ${isGeneratingWeekly || collectedItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <Sparkles size={16} className={isGeneratingWeekly ? 'animate-spin' : ''} />
-                    {isGeneratingWeekly ? '生成中...' : '週次'}
-                  </button>
-                  <button
-                    onClick={handleGenerateMonthly}
-                    disabled={isGeneratingMonthly || collectedItems.length === 0}
-                    className={`bg-gradient-to-r from-purple-500 to-violet-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-purple-500/20 hover:opacity-90 transition-opacity ${isGeneratingMonthly || collectedItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <Sparkles size={16} className={isGeneratingMonthly ? 'animate-spin' : ''} />
-                    {isGeneratingMonthly ? '生成中...' : '月次'}
-                  </button>
+                  {[
+                    { label: '日次', loading: isGeneratingReport, handler: handleGenerateReport, color: 'from-emerald-500 to-teal-500 shadow-emerald-500/20' },
+                    { label: '週次', loading: isGeneratingWeekly, handler: handleGenerateWeekly, color: 'from-sky-500 to-blue-500 shadow-sky-500/20' },
+                    { label: '月次', loading: isGeneratingMonthly, handler: handleGenerateMonthly, color: 'from-purple-500 to-violet-500 shadow-purple-500/20' },
+                  ].map(btn => (
+                    <button
+                      key={btn.label}
+                      onClick={btn.handler}
+                      disabled={btn.loading || collectedItems.length === 0}
+                      className={`bg-gradient-to-r ${btn.color} text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <Sparkles size={16} className={btn.loading ? 'animate-spin' : ''} />
+                      {btn.loading ? '生成中...' : btn.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -415,13 +453,11 @@ export default function Home() {
                 <div className="flex justify-center items-center py-20 text-emerald-400">
                   <Activity className="animate-pulse" size={32} />
                 </div>
-              ) : reportsList.length > 0 ? (
+              ) : reportsList.filter(r => reportTypeFilter === 'all' || r.type === reportTypeFilter).length > 0 ? (
                 <div className="space-y-8">
-                  {reportsList.filter(r => reportTypeFilter === 'all' || r.type === reportTypeFilter).map((report) => (
+                  {reportsList.filter(r => reportTypeFilter === 'all' || r.type === reportTypeFilter).map(report => (
                     <div key={report.id} className="glass-card border-emerald-500/20 relative overflow-hidden">
-                      <div className="absolute top-0 right-0 p-4 opacity-10">
-                        <FileText size={100} />
-                      </div>
+                      <div className="absolute top-0 right-0 p-4 opacity-10"><FileText size={100} /></div>
                       <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4 relative z-10">
                         <h3 className="text-xl font-bold text-white flex items-center gap-2">
                           <span className="text-emerald-400">■</span>
@@ -430,9 +466,7 @@ export default function Home() {
                             {report.type}
                           </span>
                         </h3>
-                        <span className="text-sm text-slate-400 bg-white/5 px-3 py-1 rounded-full">
-                          {report.reportDate}
-                        </span>
+                        <span className="text-sm text-slate-400 bg-white/5 px-3 py-1 rounded-full">{report.reportDate}</span>
                       </div>
                       <div className="prose prose-invert max-w-none relative z-10 whitespace-pre-wrap text-slate-300 leading-relaxed text-sm">
                         {report.content.split('\n').map((line: string, i: number) => {
@@ -450,20 +484,15 @@ export default function Home() {
                 <div className="text-slate-400 text-center py-20 glass-card border-dashed">
                   <FileText size={48} className="mx-auto mb-4 opacity-20" />
                   <p className="mb-2">レポートはまだ生成されていません。</p>
-                  <p className="text-xs text-slate-500">上のボタンをクリックして、収集されたデータからAIにレポートを書かせてください。</p>
+                  <p className="text-xs text-slate-500">上のボタンをクリックしてレポートを生成してください。</p>
                 </div>
               )}
             </motion.div>
           )}
 
+          {/* ── 情報ソース管理 ── */}
           {activeTab === 'sources' && (
-            <motion.div
-              key="sources"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-4"
-            >
+            <motion.div key="sources" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
               <div className="flex gap-3">
                 <form onSubmit={handleAddKeyword} className="flex gap-2 flex-1">
                   <input
@@ -492,7 +521,7 @@ export default function Home() {
                     <thead className="text-xs text-slate-400 uppercase bg-white/5 border-b border-white/5">
                       <tr>
                         <th className="px-6 py-4">種別</th>
-                        <th className="px-6 py-4">値 (キーワード / URL)</th>
+                        <th className="px-6 py-4">値</th>
                         <th className="px-6 py-4">ステータス</th>
                         <th className="px-6 py-4">スコア</th>
                         <th className="px-6 py-4"></th>
@@ -505,7 +534,7 @@ export default function Home() {
                         <tr key={source.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
                           <td className="px-6 py-4">
                             <span className="flex items-center gap-2 text-slate-300">
-                              {source.type === 'keyword' ? <Hash size={16} className="text-sky-400"/> : <Globe size={16} className="text-emerald-400"/>}
+                              {source.type === 'keyword' ? <Hash size={16} className="text-sky-400" /> : <Globe size={16} className="text-emerald-400" />}
                               {source.type}
                             </span>
                           </td>
@@ -518,18 +547,88 @@ export default function Home() {
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
                               <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                                <div className="h-full bg-gradient-to-r from-sky-400 to-purple-500" style={{ width: `${Math.min(100, Math.max(0, source.score) * 10)}%` }} />
+                                <div
+                                  className="h-full bg-gradient-to-r from-sky-400 to-purple-500"
+                                  style={{ width: `${scoreToPercent(source.score ?? 0)}%` }}
+                                />
                               </div>
                               <span className="text-slate-400 font-mono">{(source.score ?? 0).toFixed(1)}</span>
                             </div>
                           </td>
                           <td className="px-6 py-4">
-                            <button
-                              onClick={() => handleDeleteSource(source.id)}
-                              className="text-slate-600 hover:text-red-400 transition-colors"
-                            >
+                            <button onClick={() => handleDeleteSource(source.id)} className="text-slate-600 hover:text-red-400 transition-colors">
                               <Trash2 size={15} />
                             </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── ソース分析 ── */}
+          {activeTab === 'performance' && (
+            <motion.div key="performance" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+              <div className="grid grid-cols-3 gap-6 mb-2">
+                {[
+                  { label: '総収集件数', value: collectedItems.length, color: 'text-sky-400' },
+                  { label: 'お気に入り登録', value: collectedItems.filter(i => i.isFavorited).length, color: 'text-amber-400' },
+                  { label: '稼働中キーワード', value: sourcesList.filter(s => s.status === 'active').length, color: 'text-emerald-400' },
+                ].map((s, i) => (
+                  <div key={i} className="glass-card text-center py-6">
+                    <p className="text-slate-500 text-xs uppercase tracking-wider mb-2">{s.label}</p>
+                    <p className={`text-4xl font-bold font-outfit ${s.color}`}>{s.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="glass-card overflow-hidden">
+                <h3 className="text-lg font-bold font-outfit px-6 pt-6 pb-4 flex items-center gap-2">
+                  <Zap size={20} className="text-amber-400" /> キーワード別パフォーマンス（収集数順）
+                </h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="text-xs text-slate-400 uppercase bg-white/5 border-b border-white/5">
+                      <tr>
+                        <th className="px-6 py-4">キーワード</th>
+                        <th className="px-6 py-4">ステータス</th>
+                        <th className="px-6 py-4">スコア</th>
+                        <th className="px-6 py-4">収集数</th>
+                        <th className="px-6 py-4">最終ヒット</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {isLoadingData ? (
+                        <tr><td colSpan={5} className="text-center py-8 text-sky-400"><Activity className="animate-pulse mx-auto" /></td></tr>
+                      ) : sourcePerformance.map((src: any) => (
+                        <tr key={src.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                          <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
+                            <Hash size={14} className="text-sky-400 flex-shrink-0" />
+                            {src.value}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(src.status)}`}>
+                              {src.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-12 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                <div className="h-full bg-gradient-to-r from-sky-400 to-purple-500" style={{ width: `${scoreToPercent(src.score ?? 0)}%` }} />
+                              </div>
+                              <span className="text-slate-400 font-mono text-xs">{(src.score ?? 0).toFixed(1)}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`font-bold font-mono ${Number(src.collectedCount) > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                              {src.collectedCount ?? 0}件
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-slate-400 text-xs">
+                            {src.lastHitAt ? new Date(src.lastHitAt).toLocaleDateString('ja-JP') : '-'}
                           </td>
                         </tr>
                       ))}
@@ -542,7 +641,7 @@ export default function Home() {
         </AnimatePresence>
       </main>
 
-      {/* Right Sidebar - Gemini */}
+      {/* Right Sidebar - Gemini Chat */}
       <aside className="w-80 border-l border-white/5 bg-black/20 flex flex-col flex-shrink-0 relative">
         <div className="absolute inset-0 bg-gradient-to-b from-sky-500/5 to-purple-500/5 pointer-events-none" />
         <div className="p-6 border-b border-white/5 flex items-center gap-3 relative z-10 bg-black/40 backdrop-blur-md">
@@ -551,7 +650,7 @@ export default function Home() {
           </div>
           <div>
             <h3 className="font-bold font-outfit text-transparent bg-clip-text bg-gradient-to-r from-sky-400 to-purple-400">Gemini</h3>
-            <p className="text-[10px] text-slate-400">Powered by 3.0 Flash</p>
+            <p className="text-[10px] text-slate-400">2.5 Flash Lite · DB文脈あり</p>
           </div>
         </div>
 
@@ -559,11 +658,10 @@ export default function Home() {
           {messages.length === 0 && (
             <div className="text-center text-slate-500 text-sm mt-10">
               <Sparkles size={32} className="mx-auto mb-3 text-sky-400/50" />
-              <p>私はGeminiです。<br/>データベースにある情報や<br/>最先端の技術について聞いてください。</p>
+              <p>収集データや最新AI技術について<br/>何でも質問してください。</p>
             </div>
           )}
           {messages.map(m => {
-            // v3 UIMessage: parts配列 or content文字列に対応
             const textContent = Array.isArray((m as any).parts)
               ? (m as any).parts.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('')
               : (m as any).content ?? '';
@@ -572,9 +670,7 @@ export default function Home() {
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${m.role === 'user' ? 'bg-white/10 text-slate-300' : 'bg-gradient-to-br from-sky-400 to-purple-500 text-white shadow-md'}`}>
                   {m.role === 'user' ? <User size={16} /> : <Sparkles size={16} />}
                 </div>
-                <div className={`p-3 rounded-2xl max-w-[80%] text-sm leading-relaxed ${
-                  m.role === 'user' ? 'bg-white/10 text-slate-200 rounded-tr-sm' : 'bg-gradient-to-br from-sky-500/10 to-purple-500/10 border border-white/5 text-slate-200 rounded-tl-sm'
-                }`}>
+                <div className={`p-3 rounded-2xl max-w-[80%] text-sm leading-relaxed ${m.role === 'user' ? 'bg-white/10 text-slate-200 rounded-tr-sm' : 'bg-gradient-to-br from-sky-500/10 to-purple-500/10 border border-white/5 text-slate-200 rounded-tl-sm'}`}>
                   {textContent}
                 </div>
               </div>
@@ -592,11 +688,12 @@ export default function Home() {
               </div>
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         <div className="p-4 border-t border-white/5 bg-black/40 backdrop-blur-md relative z-10">
           <form
-            onSubmit={(e) => {
+            onSubmit={e => {
               e.preventDefault();
               if (!chatInput.trim() || isLoading) return;
               sendMessage({ text: chatInput });
@@ -606,7 +703,7 @@ export default function Home() {
           >
             <input
               value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
+              onChange={e => setChatInput(e.target.value)}
               placeholder="Geminiに質問する..."
               className="w-full bg-white/5 border border-white/10 rounded-full py-3 pl-4 pr-12 text-sm text-white focus:outline-none focus:border-purple-500/50 transition-colors shadow-inner"
             />
