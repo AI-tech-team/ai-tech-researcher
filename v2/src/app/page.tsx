@@ -19,6 +19,9 @@ export default function Home() {
   const [chatInput, setChatInput] = useState('');
   const [newKeyword, setNewKeyword] = useState('');
   const [isEvolving, setIsEvolving] = useState(false);
+  const [reportTypeFilter, setReportTypeFilter] = useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
+  const [isGeneratingWeekly, setIsGeneratingWeekly] = useState(false);
+  const [isGeneratingMonthly, setIsGeneratingMonthly] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Vercel AI SDK v3 chat hook with DefaultChatTransport
@@ -93,6 +96,44 @@ export default function Home() {
   const handleDeleteSource = async (id: number) => {
     await deleteSource(id);
     await loadData();
+  };
+
+  const handleGenerateWeekly = async () => {
+    if (isGeneratingWeekly) return;
+    setIsGeneratingWeekly(true);
+    try {
+      const res = await fetch('/api/report/weekly', { method: 'POST' });
+      const result = await res.json();
+      if (result.success) {
+        await loadData();
+        setReportTypeFilter('weekly');
+      } else {
+        alert("週次レポートエラー: " + result.message);
+      }
+    } catch {
+      alert("通信エラーが発生しました");
+    } finally {
+      setIsGeneratingWeekly(false);
+    }
+  };
+
+  const handleGenerateMonthly = async () => {
+    if (isGeneratingMonthly) return;
+    setIsGeneratingMonthly(true);
+    try {
+      const res = await fetch('/api/report/monthly', { method: 'POST' });
+      const result = await res.json();
+      if (result.success) {
+        await loadData();
+        setReportTypeFilter('monthly');
+      } else {
+        alert("月次レポートエラー: " + result.message);
+      }
+    } catch {
+      alert("通信エラーが発生しました");
+    } finally {
+      setIsGeneratingMonthly(false);
+    }
   };
 
   const handleEvolve = async () => {
@@ -330,15 +371,44 @@ export default function Home() {
               exit={{ opacity: 0, x: -20 }}
               className="space-y-6"
             >
-              <div className="flex justify-end mb-6">
-                <button 
-                  onClick={handleGenerateReport}
-                  disabled={isGeneratingReport || collectedItems.length === 0}
-                  className={`bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-emerald-500/20 hover:opacity-90 transition-opacity ${isGeneratingReport || collectedItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <Sparkles size={18} className={isGeneratingReport ? 'animate-spin' : ''} />
-                  {isGeneratingReport ? 'AIがレポート執筆中...' : '最新レポートをAI生成'}
-                </button>
+              <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+                <div className="flex gap-2">
+                  {(['all', 'daily', 'weekly', 'monthly'] as const).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setReportTypeFilter(t)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${reportTypeFilter === t ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+                    >
+                      {t === 'all' ? '全て' : t === 'daily' ? '日次' : t === 'weekly' ? '週次' : '月次'}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleGenerateReport}
+                    disabled={isGeneratingReport || collectedItems.length === 0}
+                    className={`bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-emerald-500/20 hover:opacity-90 transition-opacity ${isGeneratingReport || collectedItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Sparkles size={16} className={isGeneratingReport ? 'animate-spin' : ''} />
+                    {isGeneratingReport ? '生成中...' : '日次'}
+                  </button>
+                  <button
+                    onClick={handleGenerateWeekly}
+                    disabled={isGeneratingWeekly || collectedItems.length === 0}
+                    className={`bg-gradient-to-r from-sky-500 to-blue-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity ${isGeneratingWeekly || collectedItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Sparkles size={16} className={isGeneratingWeekly ? 'animate-spin' : ''} />
+                    {isGeneratingWeekly ? '生成中...' : '週次'}
+                  </button>
+                  <button
+                    onClick={handleGenerateMonthly}
+                    disabled={isGeneratingMonthly || collectedItems.length === 0}
+                    className={`bg-gradient-to-r from-purple-500 to-violet-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg shadow-purple-500/20 hover:opacity-90 transition-opacity ${isGeneratingMonthly || collectedItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <Sparkles size={16} className={isGeneratingMonthly ? 'animate-spin' : ''} />
+                    {isGeneratingMonthly ? '生成中...' : '月次'}
+                  </button>
+                </div>
               </div>
 
               {isLoadingData ? (
@@ -347,14 +417,18 @@ export default function Home() {
                 </div>
               ) : reportsList.length > 0 ? (
                 <div className="space-y-8">
-                  {reportsList.map((report) => (
+                  {reportsList.filter(r => reportTypeFilter === 'all' || r.type === reportTypeFilter).map((report) => (
                     <div key={report.id} className="glass-card border-emerald-500/20 relative overflow-hidden">
                       <div className="absolute top-0 right-0 p-4 opacity-10">
                         <FileText size={100} />
                       </div>
                       <div className="flex justify-between items-center mb-6 border-b border-white/5 pb-4 relative z-10">
                         <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                          <span className="text-emerald-400">■</span> エグゼクティブ・サマリーレポート
+                          <span className="text-emerald-400">■</span>
+                          {report.type === 'weekly' ? '週次サマリーレポート' : report.type === 'monthly' ? '月次サマリーレポート' : 'デイリーレポート'}
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${report.type === 'weekly' ? 'bg-sky-500/20 text-sky-400' : report.type === 'monthly' ? 'bg-purple-500/20 text-purple-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                            {report.type}
+                          </span>
                         </h3>
                         <span className="text-sm text-slate-400 bg-white/5 px-3 py-1 rounded-full">
                           {report.reportDate}
