@@ -29,7 +29,8 @@ async function collectData(rounds = 10) {
 
     try {
       const result = await generateText({
-        model: google('gemini-3.1-flash-lite', { useSearchGrounding: true }),
+        model: google('gemini-2.5-flash-lite'),
+        tools: { google_search: google.tools.googleSearch({}) },
         system: `あなたはAI技術情報収集エンジンです。
 与えられたキーワードでGoogle検索を行い、最新のAI技術に関する実際の記事を1つ見つけてください。
 以下のJSONフォーマットのみを出力してください：
@@ -42,12 +43,8 @@ async function collectData(rounds = 10) {
         const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
         parsedData = JSON.parse(jsonStr);
       } catch {
-        const src = result.sources?.[0];
-        if (!src) { console.warn(`  スキップ (${target.value}): URLなし`); continue; }
-        parsedData = { title: src.title || target.value, url: src.url, summary: result.text.substring(0, 200) };
+        console.warn(`  スキップ (${target.value}): JSON解析失敗`); continue;
       }
-
-      if (result.sources?.[0]?.url) parsedData.url = result.sources[0].url;
 
       await db.insert(schema.collectedData).values({
         sourceId: target.id,
@@ -86,7 +83,7 @@ async function generateReport() {
     .join('\n\n---\n\n');
 
   const { text } = await generateText({
-    model: google('gemini-3.1-flash-lite'),
+    model: google('gemini-2.5-flash-lite'),
     system: `AIテック情報のデイリーレポートをMarkdown形式で作成してください。
 エンジニア向けに具体的・実践的なトーンで1200文字程度。
 箇条書きや絵文字を活用して読みやすくしてください。`,
@@ -139,7 +136,7 @@ async function evolveSources() {
 
   if (recentData.length > 0) {
     const { text } = await generateText({
-      model: google('gemini-3.1-flash-lite'),
+      model: google('gemini-2.5-flash-lite'),
       prompt: `以下の記事サマリーから新興AIキーワードを5つ抽出してJSON配列のみで出力: ["kw1", "kw2", ...]
 
 ${recentData.map(d => d.summary).join('\n')}`,

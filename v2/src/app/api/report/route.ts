@@ -19,7 +19,7 @@ export async function POST() {
     const contextStr = recentData.map(d => `[タイトル: ${d.title}]\n要約: ${d.summary}\nURL: ${d.url}`).join('\n\n---\n\n');
 
     const { text } = await generateText({
-      model: google('gemini-3.1-flash-lite'),
+      model: google('gemini-2.5-flash-lite'),
       system: `あなたはAIテック情報収集システムのレポーティングエンジンです。
 以下の「収集された最新データ」を元に、2026年5月現在の『AIモデル・AI技術の最前線』に特化したデイリーレポート（Markdown形式）を作成してください。
 最新のAI技術動向を常に把握したいエンジニア・研究者が、10分読むだけで最新のAIモデル（GPT-5, Claude 4, Llama 4, Gemini 3.1等）の動向や最先端のユースケースを効率よくキャッチアップできるよう、具体的・実用的なトーンで執筆してください。

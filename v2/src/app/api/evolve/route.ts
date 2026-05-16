@@ -41,7 +41,7 @@ export async function POST() {
     let newKeywordsCount = 0;
     if (recentData.length > 0) {
       const { text } = await generateText({
-        model: google('gemini-3.1-flash-lite'),
+        model: google('gemini-2.5-flash-lite'),
         prompt: `以下の記事サマリー群から、新興AIキーワードを5つ抽出してJSON配列のみで出力してください: ["kw1", "kw2", ...]
 
 ${recentData.map(d => d.summary).join('\n')}`,

@@ -12,7 +12,7 @@ const genAI = new GoogleGenerativeAI(apiKey || "");
 
 export function getModel(systemInstruction?: string) {
   return genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-3.1-flash-lite",
     systemInstruction: systemInstruction,
   });
 }

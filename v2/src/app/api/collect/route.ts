@@ -19,9 +19,10 @@ export async function POST() {
 
     const targetSource = sourceList[0];
 
-    // Gemini Grounding で実際のWeb検索
+    // Gemini + Google Search ツールで実際のWeb検索
     const result = await generateText({
-      model: google('gemini-3.1-flash-lite', { useSearchGrounding: true }),
+      model: google('gemini-2.5-flash-lite'),
+      tools: { google_search: google.tools.googleSearch({}) },
       system: `あなたはAI技術情報収集エンジンです。
 与えられたキーワードでGoogle検索を行い、最新のAI技術に関する実際の記事を1つ見つけてください。
 以下のJSONフォーマットのみを出力してください：
@@ -34,21 +35,7 @@ export async function POST() {
       const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
       parsedData = JSON.parse(jsonStr);
     } catch {
-      // JSONパース失敗時はGrounding sourcesからURLを補完
-      const groundingSrc = result.sources?.[0];
-      if (!groundingSrc) {
-        return Response.json({ success: false, message: 'AIからの応答の解析に失敗しました。' }, { status: 500 });
-      }
-      parsedData = {
-        title: groundingSrc.title || targetSource.value,
-        url: groundingSrc.url,
-        summary: result.text.substring(0, 200),
-      };
-    }
-
-    // Grounding sourceのURLで上書き（より確実な実URL）
-    if (result.sources?.[0]?.url) {
-      parsedData.url = result.sources[0].url;
+      return Response.json({ success: false, message: 'AIからの応答の解析に失敗しました。' }, { status: 500 });
     }
 
     await db.insert(collectedData).values({

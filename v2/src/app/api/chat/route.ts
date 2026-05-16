@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   const modelMessages = await convertToModelMessages(messages);
 
   const result = streamText({
-    model: google('gemini-3.1-flash-lite'),
+    model: google('gemini-2.5-flash-lite'),
     messages: modelMessages,
     system: `You are the "Research Copilot", an AI assistant for the AI Tech Researcher dashboard.
 Your job is to answer questions about the latest AI trends.
