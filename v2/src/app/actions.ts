@@ -26,8 +26,12 @@ export async function getSourcesData() {
 }
 
 export async function addSource(value: string, type: string = 'keyword') {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 100) {
+    return { success: false, message: 'キーワードは1〜100文字にしてください' };
+  }
   try {
-    await db.insert(sources).values({ type, value: value.trim(), status: 'active', score: 0 }).onConflictDoNothing();
+    await db.insert(sources).values({ type, value: trimmed, status: 'active', score: 0 }).onConflictDoNothing();
     revalidatePath('/');
     return { success: true };
   } catch (error) {
@@ -222,15 +226,16 @@ export async function getModelMentionData() {
 }
 
 export async function semanticSearch(query: string) {
-  if (!query.trim()) return [];
+  const sanitized = query.trim().slice(0, 200);
+  if (!sanitized) return [];
   try {
     const { text } = await generateText({
       model: google('gemini-2.5-flash-lite'),
       prompt: `以下の検索クエリを、DBのtitleとsummary検索に使える日本語・英語キーワード6個以内に展開してください。JSON配列のみ出力: ["kw1", "kw2", ...]
-クエリ: ${query}`,
+クエリ: ${sanitized}`,
     });
 
-    let keywords: string[] = [query];
+    let keywords: string[] = [sanitized];
     try {
       keywords = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
     } catch { /* fallback to original query */ }
