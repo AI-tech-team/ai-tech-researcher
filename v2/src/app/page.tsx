@@ -6,7 +6,7 @@ import { DefaultChatTransport } from 'ai';
 import {
   Search, FileText, TrendingUp, Activity, Globe, LayoutGrid, Database,
   Terminal, BarChart3, Send, User, ExternalLink, Hash, Clock, Sparkles,
-  Plus, Trash2, RefreshCw, Star, Zap,
+  Plus, Trash2, RefreshCw, Star, Zap, Bookmark, Brain, Award,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -16,9 +16,21 @@ import {
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, getSourcePerformance,
+  getCategoryTrendData, getModelMentionData, semanticSearch, toggleReadLater, getKeywordCategoryMatrix,
 } from './actions';
 
-type Tab = 'overview' | 'data' | 'reports' | 'sources' | 'performance';
+type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'sources' | 'performance';
+
+const CATEGORY_COLORS: Record<string, string> = {
+  'LLM推論': '#38bdf8',
+  'エージェント': '#818cf8',
+  'ツール/フレームワーク': '#34d399',
+  'ハードウェア': '#fb923c',
+  'ビジネス応用': '#f472b6',
+  '研究/論文': '#a78bfa',
+  'その他': '#94a3b8',
+};
+const CATEGORY_LIST = Object.keys(CATEGORY_COLORS);
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
@@ -27,6 +39,9 @@ export default function Home() {
   const [reportsList, setReportsList] = useState<any[]>([]);
   const [activityData, setActivityData] = useState<{ name: string; count: number }[]>([]);
   const [sourcePerformance, setSourcePerformance] = useState<any[]>([]);
+  const [categoryTrendData, setCategoryTrendData] = useState<any[]>([]);
+  const [modelMentionData, setModelMentionData] = useState<{ model: string; count: number }[]>([]);
+  const [kwMatrix, setKwMatrix] = useState<{ keywords: string[]; categories: string[]; matrix: any[]; maxCount: number }>({ keywords: [], categories: [], matrix: [], maxCount: 1 });
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -38,6 +53,11 @@ export default function Home() {
   const [isGeneratingMonthly, setIsGeneratingMonthly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [interestTags, setInterestTags] = useState<string[]>([]);
+  const [newInterestTag, setNewInterestTag] = useState('');
+  const [isSemanticSearching, setIsSemanticSearching] = useState(false);
+  const [semanticResults, setSemanticResults] = useState<any[] | null>(null);
+  const [sortByImportance, setSortByImportance] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { messages, sendMessage, status } = useChat({
@@ -45,22 +65,36 @@ export default function Home() {
   });
   const isLoading = status === 'streaming' || status === 'submitted';
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+    try {
+      const saved = localStorage.getItem('interestTags');
+      if (saved) setInterestTags(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => { setSemanticResults(null); }, [searchQuery]);
 
   async function loadData() {
     setIsLoadingData(true);
-    const [sources, data, reportsData, activity, performance] = await Promise.all([
+    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
       getActivityData(),
       getSourcePerformance(),
+      getCategoryTrendData(),
+      getModelMentionData(),
+      getKeywordCategoryMatrix(),
     ]);
-    setSourcesList(sources);
+    setSourcesList(srcs);
     setCollectedItems(data);
     setReportsList(reportsData);
     setActivityData(activity);
     setSourcePerformance(performance);
+    setCategoryTrendData(catTrend);
+    setModelMentionData(modelMentions);
+    setKwMatrix(matrix as any);
     setIsLoadingData(false);
   }
 
@@ -70,16 +104,9 @@ export default function Home() {
     try {
       const res = await fetch('/api/collect', { method: 'POST' });
       const result = await res.json();
-      if (result.success) {
-        await loadData();
-      } else {
-        alert("同期エラー: " + result.message);
-      }
-    } catch {
-      alert("通信エラーが発生しました");
-    } finally {
-      setIsSyncing(false);
-    }
+      if (result.success) { await loadData(); } else { alert("同期エラー: " + result.message); }
+    } catch { alert("通信エラーが発生しました"); }
+    finally { setIsSyncing(false); }
   };
 
   const handleGenerateReport = async () => {
@@ -88,17 +115,9 @@ export default function Home() {
     try {
       const res = await fetch('/api/report', { method: 'POST' });
       const result = await res.json();
-      if (result.success) {
-        await loadData();
-        setActiveTab('reports');
-      } else {
-        alert("レポート生成エラー: " + result.message);
-      }
-    } catch {
-      alert("通信エラーが発生しました");
-    } finally {
-      setIsGeneratingReport(false);
-    }
+      if (result.success) { await loadData(); setActiveTab('reports'); } else { alert("レポート生成エラー: " + result.message); }
+    } catch { alert("通信エラーが発生しました"); }
+    finally { setIsGeneratingReport(false); }
   };
 
   const handleAddKeyword = async (e: React.FormEvent) => {
@@ -120,17 +139,9 @@ export default function Home() {
     try {
       const res = await fetch('/api/report/weekly', { method: 'POST' });
       const result = await res.json();
-      if (result.success) {
-        await loadData();
-        setReportTypeFilter('weekly');
-      } else {
-        alert("週次レポートエラー: " + result.message);
-      }
-    } catch {
-      alert("通信エラーが発生しました");
-    } finally {
-      setIsGeneratingWeekly(false);
-    }
+      if (result.success) { await loadData(); setReportTypeFilter('weekly'); } else { alert("週次レポートエラー: " + result.message); }
+    } catch { alert("通信エラーが発生しました"); }
+    finally { setIsGeneratingWeekly(false); }
   };
 
   const handleGenerateMonthly = async () => {
@@ -139,17 +150,9 @@ export default function Home() {
     try {
       const res = await fetch('/api/report/monthly', { method: 'POST' });
       const result = await res.json();
-      if (result.success) {
-        await loadData();
-        setReportTypeFilter('monthly');
-      } else {
-        alert("月次レポートエラー: " + result.message);
-      }
-    } catch {
-      alert("通信エラーが発生しました");
-    } finally {
-      setIsGeneratingMonthly(false);
-    }
+      if (result.success) { await loadData(); setReportTypeFilter('monthly'); } else { alert("月次レポートエラー: " + result.message); }
+    } catch { alert("通信エラーが発生しました"); }
+    finally { setIsGeneratingMonthly(false); }
   };
 
   const handleEvolve = async () => {
@@ -158,35 +161,69 @@ export default function Home() {
     try {
       const res = await fetch('/api/evolve', { method: 'POST' });
       const result = await res.json();
-      if (result.success) {
-        await loadData();
-        alert(result.message);
-      } else {
-        alert("進化エラー: " + result.message);
-      }
-    } catch {
-      alert("通信エラーが発生しました");
-    } finally {
-      setIsEvolving(false);
-    }
+      if (result.success) { await loadData(); alert(result.message); } else { alert("進化エラー: " + result.message); }
+    } catch { alert("通信エラーが発生しました"); }
+    finally { setIsEvolving(false); }
   };
 
   const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
-    setCollectedItems(prev =>
-      prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item)
-    );
+    setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
     await toggleFavorite(id, currentlyFavorited);
+  };
+
+  const handleToggleReadLater = async (id: number, current: boolean) => {
+    const newVal = current ? 0 : 1;
+    setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isReadLater: newVal } : item));
+    if (semanticResults) setSemanticResults(prev => prev ? prev.map(item => item.id === id ? { ...item, isReadLater: newVal } : item) : null);
+    await toggleReadLater(id, current);
+  };
+
+  const handleSemanticSearch = async () => {
+    if (!searchQuery.trim() || isSemanticSearching) return;
+    setIsSemanticSearching(true);
+    try {
+      const results = await semanticSearch(searchQuery);
+      setSemanticResults(results as any[]);
+    } catch { alert('AI検索に失敗しました'); }
+    finally { setIsSemanticSearching(false); }
+  };
+
+  const addInterestTag = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!newInterestTag.trim()) return;
+    const updated = [...interestTags, newInterestTag.trim()];
+    setInterestTags(updated);
+    localStorage.setItem('interestTags', JSON.stringify(updated));
+    setNewInterestTag('');
+  };
+
+  const removeInterestTag = (tag: string) => {
+    const updated = interestTags.filter(t => t !== tag);
+    setInterestTags(updated);
+    localStorage.setItem('interestTags', JSON.stringify(updated));
   };
 
   // 派生データ
   const categories = ['all', ...Array.from(new Set(collectedItems.map(i => i.category).filter(Boolean))) as string[]];
-  const filteredItems = collectedItems.filter(item => {
-    const matchSearch = !searchQuery ||
+  const baseItems = semanticResults ?? collectedItems;
+  const filteredItems = baseItems.filter(item => {
+    const matchSearch = !searchQuery || semanticResults != null ||
       item.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.summary?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
     return matchSearch && matchCategory;
   });
+  const sortedItems = [...filteredItems].sort((a, b) => {
+    if (sortByImportance) return (b.importanceScore ?? 5) - (a.importanceScore ?? 5);
+    if (interestTags.length > 0) {
+      const aMatch = interestTags.some(tag => [a.title, a.summary, a.category].some(f => f?.toLowerCase().includes(tag.toLowerCase())));
+      const bMatch = interestTags.some(tag => [b.title, b.summary, b.category].some(f => f?.toLowerCase().includes(tag.toLowerCase())));
+      if (aMatch && !bMatch) return -1;
+      if (!aMatch && bMatch) return 1;
+    }
+    return 0;
+  });
+  const readLaterItems = collectedItems.filter(i => i.isReadLater);
 
   const chartData = [
     { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length },
@@ -208,9 +245,54 @@ export default function Home() {
   const tabLabel: Record<Tab, string> = {
     overview: '全体概要',
     data: '収集データ',
+    readlater: '後で読む',
     reports: '調査レポート',
     sources: '情報ソース管理',
     performance: 'ソース分析',
+  };
+
+  const ArticleCard = ({ item, showReadLater = true }: { item: any; showReadLater?: boolean }) => {
+    const isInterestMatch = interestTags.length > 0 && interestTags.some(tag =>
+      [item.title, item.summary, item.category].some(f => f?.toLowerCase().includes(tag.toLowerCase()))
+    );
+    return (
+      <div className="glass-card group hover:border-sky-500/30">
+        <div className="flex justify-between items-start mb-2">
+          <h4 className="text-lg font-bold text-white group-hover:text-sky-400 transition-colors flex-1 pr-4">{item.title || '無題のデータ'}</h4>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {isInterestMatch && <span className="text-[10px] px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full">おすすめ</span>}
+            {item.importanceScore >= 8 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-md border font-bold flex items-center gap-1 ${item.importanceScore >= 9 ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-orange-500/10 text-orange-400 border-orange-500/20'}`}>
+                <Award size={10} />{item.importanceScore}
+              </span>
+            )}
+            <button onClick={() => handleToggleFavorite(item.id, !!item.isFavorited)} title={item.isFavorited ? 'お気に入り解除' : 'お気に入り'}>
+              <Star size={16} className={item.isFavorited ? 'fill-amber-400 text-amber-400' : 'text-slate-600 hover:text-amber-400'} />
+            </button>
+            {showReadLater && (
+              <button onClick={() => handleToggleReadLater(item.id, !!item.isReadLater)} title={item.isReadLater ? '後で読むを解除' : '後で読む'}>
+                <Bookmark size={16} className={item.isReadLater ? 'fill-sky-400 text-sky-400' : 'text-slate-600 hover:text-sky-400'} />
+              </button>
+            )}
+            {item.url && <a href={item.url} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-white"><ExternalLink size={16} /></a>}
+          </div>
+        </div>
+        <p className="text-slate-400 text-sm line-clamp-2 mb-4">{item.summary || 'サマリーはありません'}</p>
+        <div className="flex items-center gap-3 flex-wrap text-xs font-medium">
+          {item.category && (
+            <span className="px-2 py-1 rounded-md border" style={{ backgroundColor: `${CATEGORY_COLORS[item.category] ?? '#94a3b8'}15`, color: CATEGORY_COLORS[item.category] ?? '#94a3b8', borderColor: `${CATEGORY_COLORS[item.category] ?? '#94a3b8'}30` }}>
+              {item.category}
+            </span>
+          )}
+          <span className="flex items-center gap-1 text-sky-400 bg-sky-500/10 px-2 py-1 rounded-md">
+            <Hash size={12} /> {item.sourceValue || '不明'}
+          </span>
+          <span className="flex items-center gap-1 text-slate-500">
+            <Clock size={12} /> {new Date(item.createdAt).toLocaleString('ja-JP')}
+          </span>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -231,15 +313,12 @@ export default function Home() {
           {([
             ['overview', <LayoutGrid size={20} />, '全体概要'],
             ['data', <Globe size={20} />, '収集データ'],
+            ['readlater', <Bookmark size={20} />, `後で読む${readLaterItems.length > 0 ? ` (${readLaterItems.length})` : ''}`],
             ['reports', <FileText size={20} />, '調査レポート'],
             ['sources', <Database size={20} />, '情報ソース管理'],
             ['performance', <BarChart3 size={20} />, 'ソース分析'],
           ] as [Tab, React.ReactNode, string][]).map(([tab, icon, label]) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`sidebar-item ${activeTab === tab ? 'active' : ''}`}
-            >
+            <button key={tab} onClick={() => setActiveTab(tab)} className={`sidebar-item ${activeTab === tab ? 'active' : ''}`}>
               {icon} {label}
             </button>
           ))}
@@ -261,17 +340,14 @@ export default function Home() {
             <h1 className="text-3xl font-bold font-outfit mb-1">{tabLabel[activeTab]}</h1>
             <p className="text-slate-500 text-sm">自ら学習し、進化する次世代の情報収集基盤</p>
           </div>
-          <button
-            onClick={handleSyncData}
-            disabled={isSyncing}
-            className={`btn-primary flex items-center gap-2 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
+          <button onClick={handleSyncData} disabled={isSyncing} className={`btn-primary flex items-center gap-2 ${isSyncing ? 'opacity-50 cursor-not-allowed' : ''}`}>
             <Activity size={18} className={isSyncing ? 'animate-spin' : ''} />
             {isSyncing ? '同期中...' : 'データ同期'}
           </button>
         </header>
 
         <AnimatePresence mode="wait">
+
           {/* ── 全体概要 ── */}
           {activeTab === 'overview' && (
             <motion.div key="overview" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
@@ -293,7 +369,7 @@ export default function Home() {
               </div>
 
               <div className="grid grid-cols-3 gap-8">
-                <div className="col-span-2 glass-card h-[400px]">
+                <div className="col-span-2 glass-card h-[340px]">
                   <h3 className="text-lg font-bold font-outfit mb-6 flex items-center gap-2">
                     <BarChart3 size={20} className="text-sky-400" /> 収集アクティビティ（直近7日）
                   </h3>
@@ -314,7 +390,7 @@ export default function Home() {
                   </ResponsiveContainer>
                 </div>
 
-                <div className="glass-card h-[400px]">
+                <div className="glass-card h-[340px]">
                   <h3 className="text-lg font-bold font-outfit mb-6 flex items-center gap-2">
                     <Database size={20} className="text-purple-400" /> ソース健全性
                   </h3>
@@ -328,88 +404,149 @@ export default function Home() {
                   </ResponsiveContainer>
                 </div>
               </div>
+
+              <div className="grid grid-cols-3 gap-8">
+                <div className="col-span-2 glass-card h-[340px]">
+                  <h3 className="text-lg font-bold font-outfit mb-6 flex items-center gap-2">
+                    <TrendingUp size={20} className="text-emerald-400" /> カテゴリ別トレンド（直近7日）
+                  </h3>
+                  <ResponsiveContainer width="100%" height="85%">
+                    <AreaChart data={categoryTrendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                      <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
+                      <YAxis stroke="#475569" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
+                      <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }} />
+                      {CATEGORY_LIST.map(cat => (
+                        <Area key={cat} type="monotone" dataKey={cat} stackId="1" stroke={CATEGORY_COLORS[cat]} fill={CATEGORY_COLORS[cat]} fillOpacity={0.6} />
+                      ))}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="glass-card h-[340px]">
+                  <h3 className="text-lg font-bold font-outfit mb-4 flex items-center gap-2">
+                    <Brain size={20} className="text-pink-400" /> モデル言及頻度（30日）
+                  </h3>
+                  {modelMentionData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="85%">
+                      <BarChart data={modelMentionData} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                        <XAxis type="number" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
+                        <YAxis type="category" dataKey="model" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} width={65} />
+                        <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }} />
+                        <RechartsBar dataKey="count" name="言及数" fill="#f472b6" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-[80%] text-slate-500 text-sm">データなし（30日分蓄積後に表示）</div>
+                  )}
+                </div>
+              </div>
             </motion.div>
           )}
 
           {/* ── 収集データ ── */}
           {activeTab === 'data' && (
-            <motion.div key="data" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-              {/* 検索 + カテゴリフィルター */}
-              <div className="flex flex-col gap-3">
-                <div className="relative">
+            <motion.div key="data" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
+              {/* 検索 + AI検索 */}
+              <div className="flex gap-2">
+                <div className="relative flex-1">
                   <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSemanticSearch()}
                     placeholder="タイトル・サマリーを検索..."
                     className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-9 pr-4 text-sm text-white focus:outline-none focus:border-sky-500/50"
                   />
                 </div>
-                {categories.length > 1 && (
-                  <div className="flex flex-wrap gap-2">
-                    {categories.map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setCategoryFilter(cat)}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${categoryFilter === cat ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
-                      >
-                        {cat === 'all' ? '全て' : cat}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <p className="text-xs text-slate-500">{filteredItems.length}件表示</p>
+                <button
+                  onClick={handleSemanticSearch}
+                  disabled={isSemanticSearching || !searchQuery.trim()}
+                  className="flex items-center gap-2 bg-purple-500/20 border border-purple-500/30 text-purple-300 px-4 py-2 rounded-xl text-sm font-medium hover:bg-purple-500/30 transition-colors disabled:opacity-50"
+                  title="Geminiがクエリを意味解析して検索"
+                >
+                  <Brain size={16} className={isSemanticSearching ? 'animate-pulse' : ''} />
+                  AI検索
+                </button>
+              </div>
+
+              {/* 興味タグ */}
+              <div className="flex items-center gap-2 flex-wrap p-3 rounded-xl bg-white/3 border border-white/5">
+                <span className="text-xs text-slate-500 font-medium flex-shrink-0">興味タグ:</span>
+                {interestTags.map(tag => (
+                  <span key={tag} className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs flex items-center gap-1">
+                    {tag}
+                    <button onClick={() => removeInterestTag(tag)} className="hover:text-red-400 ml-0.5 leading-none">×</button>
+                  </span>
+                ))}
+                <form onSubmit={addInterestTag} className="flex gap-1">
+                  <input
+                    value={newInterestTag}
+                    onChange={e => setNewInterestTag(e.target.value)}
+                    placeholder="+ タグ追加"
+                    className="bg-transparent border-b border-white/20 text-xs text-slate-400 focus:outline-none focus:border-amber-500/50 w-24 px-1 py-0.5"
+                  />
+                </form>
+                {interestTags.length > 0 && <span className="text-[10px] text-amber-400/60 ml-1">マッチした記事を優先表示</span>}
+              </div>
+
+              {/* カテゴリフィルター + ソート */}
+              <div className="flex flex-wrap items-center gap-2">
+                {categories.map(cat => (
+                  <button key={cat} onClick={() => setCategoryFilter(cat)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors ${categoryFilter === cat ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
+                    {cat === 'all' ? '全て' : cat}
+                  </button>
+                ))}
+                <div className="ml-auto flex items-center gap-2">
+                  <button onClick={() => setSortByImportance(!sortByImportance)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${sortByImportance ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
+                    <Award size={12} /> 重要度順
+                  </button>
+                  {semanticResults != null && (
+                    <button onClick={() => setSemanticResults(null)} className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1">
+                      AI検索: {semanticResults.length}件 ×
+                    </button>
+                  )}
+                  <p className="text-xs text-slate-500">{sortedItems.length}件</p>
+                </div>
               </div>
 
               {isLoadingData ? (
                 <div className="flex justify-center items-center py-20 text-sky-400">
                   <Activity className="animate-pulse" size={32} />
                 </div>
-              ) : filteredItems.length > 0 ? (
+              ) : sortedItems.length > 0 ? (
                 <div className="grid grid-cols-1 gap-4">
-                  {filteredItems.map(item => (
-                    <div key={item.id} className="glass-card group hover:border-sky-500/30">
-                      <div className="flex justify-between items-start mb-2">
-                        <h4 className="text-lg font-bold text-white group-hover:text-sky-400 transition-colors flex-1 pr-4">{item.title || '無題のデータ'}</h4>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <button
-                            onClick={() => handleToggleFavorite(item.id, !!item.isFavorited)}
-                            className="transition-colors"
-                            title={item.isFavorited ? 'お気に入り解除' : 'お気に入り登録'}
-                          >
-                            <Star
-                              size={18}
-                              className={item.isFavorited ? 'fill-amber-400 text-amber-400' : 'text-slate-600 hover:text-amber-400'}
-                            />
-                          </button>
-                          {item.url && (
-                            <a href={item.url} target="_blank" rel="noreferrer" className="text-slate-400 hover:text-white">
-                              <ExternalLink size={16} />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-slate-400 text-sm line-clamp-2 mb-4">{item.summary || 'サマリーはありません'}</p>
-                      <div className="flex items-center gap-3 flex-wrap text-xs font-medium">
-                        {item.category && (
-                          <span className="px-2 py-1 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                            {item.category}
-                          </span>
-                        )}
-                        <span className="flex items-center gap-1 text-sky-400 bg-sky-500/10 px-2 py-1 rounded-md">
-                          <Hash size={12} /> {item.sourceValue || '不明'}
-                        </span>
-                        <span className="flex items-center gap-1 text-slate-500">
-                          <Clock size={12} /> {new Date(item.createdAt).toLocaleString('ja-JP')}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                  {sortedItems.map(item => <ArticleCard key={item.id} item={item} />)}
                 </div>
               ) : (
                 <div className="glass-card text-center py-20 text-slate-400">
                   <Database size={48} className="mx-auto mb-4 opacity-20" />
                   <p>データが見つかりません。</p>
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* ── 後で読む ── */}
+          {activeTab === 'readlater' && (
+            <motion.div key="readlater" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
+              {isLoadingData ? (
+                <div className="flex justify-center items-center py-20 text-sky-400"><Activity className="animate-pulse" size={32} /></div>
+              ) : readLaterItems.length > 0 ? (
+                <>
+                  <p className="text-xs text-slate-500">{readLaterItems.length}件のブックマーク</p>
+                  <div className="grid grid-cols-1 gap-4">
+                    {readLaterItems.map(item => <ArticleCard key={item.id} item={item} showReadLater={true} />)}
+                  </div>
+                </>
+              ) : (
+                <div className="glass-card text-center py-20 text-slate-400">
+                  <Bookmark size={48} className="mx-auto mb-4 opacity-20" />
+                  <p className="mb-2">ブックマークした記事がありません。</p>
+                  <p className="text-xs text-slate-500">収集データタブの記事カードにある <Bookmark size={12} className="inline" /> ボタンで登録できます。</p>
                 </div>
               )}
             </motion.div>
@@ -421,11 +558,8 @@ export default function Home() {
               <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
                 <div className="flex gap-2">
                   {(['all', 'daily', 'weekly', 'monthly'] as const).map(t => (
-                    <button
-                      key={t}
-                      onClick={() => setReportTypeFilter(t)}
-                      className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${reportTypeFilter === t ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
-                    >
+                    <button key={t} onClick={() => setReportTypeFilter(t)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors ${reportTypeFilter === t ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
                       {t === 'all' ? '全て' : t === 'daily' ? '日次' : t === 'weekly' ? '週次' : '月次'}
                     </button>
                   ))}
@@ -436,12 +570,8 @@ export default function Home() {
                     { label: '週次', loading: isGeneratingWeekly, handler: handleGenerateWeekly, color: 'from-sky-500 to-blue-500 shadow-sky-500/20' },
                     { label: '月次', loading: isGeneratingMonthly, handler: handleGenerateMonthly, color: 'from-purple-500 to-violet-500 shadow-purple-500/20' },
                   ].map(btn => (
-                    <button
-                      key={btn.label}
-                      onClick={btn.handler}
-                      disabled={btn.loading || collectedItems.length === 0}
-                      className={`bg-gradient-to-r ${btn.color} text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
+                    <button key={btn.label} onClick={btn.handler} disabled={btn.loading || collectedItems.length === 0}
+                      className={`bg-gradient-to-r ${btn.color} text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed`}>
                       <Sparkles size={16} className={btn.loading ? 'animate-spin' : ''} />
                       {btn.loading ? '生成中...' : btn.label}
                     </button>
@@ -450,9 +580,7 @@ export default function Home() {
               </div>
 
               {isLoadingData ? (
-                <div className="flex justify-center items-center py-20 text-emerald-400">
-                  <Activity className="animate-pulse" size={32} />
-                </div>
+                <div className="flex justify-center items-center py-20 text-emerald-400"><Activity className="animate-pulse" size={32} /></div>
               ) : reportsList.filter(r => reportTypeFilter === 'all' || r.type === reportTypeFilter).length > 0 ? (
                 <div className="space-y-8">
                   {reportsList.filter(r => reportTypeFilter === 'all' || r.type === reportTypeFilter).map(report => (
@@ -495,21 +623,12 @@ export default function Home() {
             <motion.div key="sources" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
               <div className="flex gap-3">
                 <form onSubmit={handleAddKeyword} className="flex gap-2 flex-1">
-                  <input
-                    value={newKeyword}
-                    onChange={e => setNewKeyword(e.target.value)}
-                    placeholder="新規キーワードを追加..."
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-4 text-sm text-white focus:outline-none focus:border-sky-500/50"
-                  />
-                  <button type="submit" className="btn-primary flex items-center gap-2 px-4 py-2">
-                    <Plus size={16} /> 追加
-                  </button>
+                  <input value={newKeyword} onChange={e => setNewKeyword(e.target.value)} placeholder="新規キーワードを追加..."
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl py-2 px-4 text-sm text-white focus:outline-none focus:border-sky-500/50" />
+                  <button type="submit" className="btn-primary flex items-center gap-2 px-4 py-2"><Plus size={16} /> 追加</button>
                 </form>
-                <button
-                  onClick={handleEvolve}
-                  disabled={isEvolving}
-                  className="flex items-center gap-2 bg-purple-500/20 border border-purple-500/30 text-purple-300 px-4 py-2 rounded-xl text-sm font-medium hover:bg-purple-500/30 transition-colors disabled:opacity-50"
-                >
+                <button onClick={handleEvolve} disabled={isEvolving}
+                  className="flex items-center gap-2 bg-purple-500/20 border border-purple-500/30 text-purple-300 px-4 py-2 rounded-xl text-sm font-medium hover:bg-purple-500/30 transition-colors disabled:opacity-50">
                   <RefreshCw size={16} className={isEvolving ? 'animate-spin' : ''} />
                   {isEvolving ? '進化中...' : 'ソース自動進化'}
                 </button>
@@ -532,34 +651,18 @@ export default function Home() {
                         <tr><td colSpan={5} className="text-center py-8 text-sky-400"><Activity className="animate-pulse mx-auto" /></td></tr>
                       ) : sourcesList.map(source => (
                         <tr key={source.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4">
-                            <span className="flex items-center gap-2 text-slate-300">
-                              {source.type === 'keyword' ? <Hash size={16} className="text-sky-400" /> : <Globe size={16} className="text-emerald-400" />}
-                              {source.type}
-                            </span>
-                          </td>
+                          <td className="px-6 py-4"><span className="flex items-center gap-2 text-slate-300">{source.type === 'keyword' ? <Hash size={16} className="text-sky-400" /> : <Globe size={16} className="text-emerald-400" />}{source.type}</span></td>
                           <td className="px-6 py-4 font-medium text-white">{source.value}</td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(source.status)}`}>
-                              {source.status}
-                            </span>
-                          </td>
+                          <td className="px-6 py-4"><span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(source.status)}`}>{source.status}</span></td>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
                               <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-gradient-to-r from-sky-400 to-purple-500"
-                                  style={{ width: `${scoreToPercent(source.score ?? 0)}%` }}
-                                />
+                                <div className="h-full bg-gradient-to-r from-sky-400 to-purple-500" style={{ width: `${scoreToPercent(source.score ?? 0)}%` }} />
                               </div>
                               <span className="text-slate-400 font-mono">{(source.score ?? 0).toFixed(1)}</span>
                             </div>
                           </td>
-                          <td className="px-6 py-4">
-                            <button onClick={() => handleDeleteSource(source.id)} className="text-slate-600 hover:text-red-400 transition-colors">
-                              <Trash2 size={15} />
-                            </button>
-                          </td>
+                          <td className="px-6 py-4"><button onClick={() => handleDeleteSource(source.id)} className="text-slate-600 hover:text-red-400 transition-colors"><Trash2 size={15} /></button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -605,15 +708,8 @@ export default function Home() {
                         <tr><td colSpan={5} className="text-center py-8 text-sky-400"><Activity className="animate-pulse mx-auto" /></td></tr>
                       ) : sourcePerformance.map((src: any) => (
                         <tr key={src.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                          <td className="px-6 py-4 font-medium text-white flex items-center gap-2">
-                            <Hash size={14} className="text-sky-400 flex-shrink-0" />
-                            {src.value}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(src.status)}`}>
-                              {src.status}
-                            </span>
-                          </td>
+                          <td className="px-6 py-4 font-medium text-white flex items-center gap-2"><Hash size={14} className="text-sky-400 flex-shrink-0" />{src.value}</td>
+                          <td className="px-6 py-4"><span className={`px-2.5 py-1 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(src.status)}`}>{src.status}</span></td>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2">
                               <div className="w-12 h-1.5 bg-white/10 rounded-full overflow-hidden">
@@ -622,20 +718,45 @@ export default function Home() {
                               <span className="text-slate-400 font-mono text-xs">{(src.score ?? 0).toFixed(1)}</span>
                             </div>
                           </td>
-                          <td className="px-6 py-4">
-                            <span className={`font-bold font-mono ${Number(src.collectedCount) > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
-                              {src.collectedCount ?? 0}件
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-slate-400 text-xs">
-                            {src.lastHitAt ? new Date(src.lastHitAt).toLocaleDateString('ja-JP') : '-'}
-                          </td>
+                          <td className="px-6 py-4"><span className={`font-bold font-mono ${Number(src.collectedCount) > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>{src.collectedCount ?? 0}件</span></td>
+                          <td className="px-6 py-4 text-slate-400 text-xs">{src.lastHitAt ? new Date(src.lastHitAt).toLocaleDateString('ja-JP') : '-'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               </div>
+
+              {/* キーワード × カテゴリ 共起ヒートマップ */}
+              {kwMatrix.keywords.length > 0 && (
+                <div className="glass-card">
+                  <h3 className="text-lg font-bold font-outfit px-6 pt-6 pb-4 flex items-center gap-2">
+                    <TrendingUp size={20} className="text-emerald-400" /> キーワード×カテゴリ 共起ヒートマップ
+                  </h3>
+                  <div className="px-6 pb-6 overflow-x-auto">
+                    <div className="flex items-center gap-1 mb-2 ml-32">
+                      {kwMatrix.categories.map(cat => (
+                        <div key={cat} className="w-16 text-[9px] text-slate-500 text-center truncate" title={cat}>{cat.replace('/フレームワーク', '').replace('ビジネス応用', 'ビジネス').replace('研究/論文', '研究')}</div>
+                      ))}
+                    </div>
+                    {kwMatrix.matrix.map((row: any) => (
+                      <div key={row.keyword} className="flex items-center gap-1 mb-1">
+                        <div className="w-32 text-xs text-slate-300 truncate font-medium pr-2" title={row.keyword}>{row.keyword}</div>
+                        {row.data.map((cnt: number, ci: number) => {
+                          const intensity = cnt > 0 ? Math.min(1, cnt / kwMatrix.maxCount) : 0;
+                          return (
+                            <div key={ci} className="w-16 h-7 rounded flex items-center justify-center text-xs font-bold"
+                              style={{ backgroundColor: `rgba(99,102,241,${intensity * 0.85})`, color: intensity > 0.4 ? 'white' : '#64748b' }}
+                              title={`${kwMatrix.categories[ci]}: ${cnt}件`}>
+                              {cnt > 0 ? cnt : ''}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -658,7 +779,7 @@ export default function Home() {
           {messages.length === 0 && (
             <div className="text-center text-slate-500 text-sm mt-10">
               <Sparkles size={32} className="mx-auto mb-3 text-sky-400/50" />
-              <p>収集データや最新AI技術について<br/>何でも質問してください。</p>
+              <p>収集データや最新AI技術について<br />何でも質問してください。</p>
             </div>
           )}
           {messages.map(m => {
@@ -682,9 +803,9 @@ export default function Home() {
                 <Sparkles size={16} className="animate-pulse" />
               </div>
               <div className="p-3 rounded-2xl bg-white/5 text-slate-400 text-sm rounded-tl-sm flex items-center gap-2 border border-white/5">
-                <div className="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce"></div>
-                <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                <div className="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                <div className="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce" />
+                <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                <div className="w-1.5 h-1.5 bg-sky-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
               </div>
             </div>
           )}
@@ -692,26 +813,11 @@ export default function Home() {
         </div>
 
         <div className="p-4 border-t border-white/5 bg-black/40 backdrop-blur-md relative z-10">
-          <form
-            onSubmit={e => {
-              e.preventDefault();
-              if (!chatInput.trim() || isLoading) return;
-              sendMessage({ text: chatInput });
-              setChatInput('');
-            }}
-            className="relative"
-          >
-            <input
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              placeholder="Geminiに質問する..."
-              className="w-full bg-white/5 border border-white/10 rounded-full py-3 pl-4 pr-12 text-sm text-white focus:outline-none focus:border-purple-500/50 transition-colors shadow-inner"
-            />
-            <button
-              type="submit"
-              disabled={isLoading || !chatInput.trim()}
-              className="absolute right-1.5 top-1.5 p-2 bg-gradient-to-r from-sky-500 to-purple-500 text-white rounded-full hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
-            >
+          <form onSubmit={e => { e.preventDefault(); if (!chatInput.trim() || isLoading) return; sendMessage({ text: chatInput }); setChatInput(''); }} className="relative">
+            <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Geminiに質問する..."
+              className="w-full bg-white/5 border border-white/10 rounded-full py-3 pl-4 pr-12 text-sm text-white focus:outline-none focus:border-purple-500/50 transition-colors shadow-inner" />
+            <button type="submit" disabled={isLoading || !chatInput.trim()}
+              className="absolute right-1.5 top-1.5 p-2 bg-gradient-to-r from-sky-500 to-purple-500 text-white rounded-full hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed shadow-md">
               <Send size={14} />
             </button>
           </form>

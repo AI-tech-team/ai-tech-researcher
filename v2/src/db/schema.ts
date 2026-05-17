@@ -20,6 +20,8 @@ export const collectedData = sqliteTable("collected_data", {
   summary: text("summary"),
   category: text("category"),
   isFavorited: integer("is_favorited").default(0),
+  isReadLater: integer("is_read_later").default(0),
+  importanceScore: integer("importance_score").default(5),
   rawContent: text("raw_content"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
