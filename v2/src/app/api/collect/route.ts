@@ -26,7 +26,8 @@ export async function POST() {
       system: `あなたはAI技術情報収集エンジンです。
 与えられたキーワードでGoogle検索を行い、最新のAI技術に関する実際の記事を1つ見つけてください。
 以下のJSONフォーマットのみを出力してください：
-{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ"}`,
+{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8}
+importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価してください。`,
       prompt: `対象キーワード: ${targetSource.value}`,
     });
 
@@ -38,12 +39,24 @@ export async function POST() {
       return Response.json({ success: false, message: 'AIからの応答の解析に失敗しました。' }, { status: 500 });
     }
 
+    // タイトル重複チェック
+    if (parsedData.title) {
+      const existing = await db.select({ id: collectedData.id })
+        .from(collectedData)
+        .where(eq(collectedData.title, parsedData.title))
+        .limit(1);
+      if (existing.length > 0) {
+        return Response.json({ success: false, message: '同じタイトルの記事が既に存在します。' }, { status: 409 });
+      }
+    }
+
     await db.insert(collectedData).values({
       sourceId: targetSource.id,
       title: parsedData.title,
       url: parsedData.url,
       summary: parsedData.summary,
       category: parsedData.category ?? null,
+      importanceScore: parsedData.importance ?? 5,
       rawContent: result.text,
       publishedAt: new Date().toISOString(),
     }).onConflictDoNothing();
