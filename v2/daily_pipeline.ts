@@ -84,12 +84,14 @@ async function generateReport(): Promise<string | null> {
     .map(d => `[${d.category ?? '未分類'}] ${d.title}\n${d.summary}\nURL: ${d.url}`)
     .join('\n\n---\n\n');
 
+  const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+
   const { text } = await generateText({
     model: google('gemini-2.5-flash-lite'),
     system: `AIテック情報のデイリーレポートをMarkdown形式で作成してください。
 エンジニア向けに具体的・実践的なトーンで1200文字程度。
 箇条書きや絵文字を活用して読みやすくしてください。`,
-    prompt: `【収集データ】\n${contextStr}`,
+    prompt: `今日の日付: ${today}\n\n【収集データ】\n${contextStr}`,
   });
 
   await db.insert(schema.reports).values({
