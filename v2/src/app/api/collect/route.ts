@@ -19,16 +19,20 @@ export async function POST() {
 
     const targetSource = sourceList[0];
 
+    const today = new Date().toISOString().split('T')[0];
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
     // Gemini + Google Search ツールで実際のWeb検索
     const result = await generateText({
       model: google('gemini-2.5-flash-lite'),
       tools: { google_search: google.tools.googleSearch({}) },
       system: `あなたはAI技術情報収集エンジンです。
-与えられたキーワードでGoogle検索を行い、最新のAI技術に関する実際の記事を1つ見つけてください。
+与えられたキーワードでGoogle検索を行い、過去7日以内（${sevenDaysAgo}〜${today}）に公開・更新されたAI技術に関する実際の記事を1つ見つけてください。
+古い記事・既知の情報は除外し、必ず最新の内容を選んでください。
 以下のJSONフォーマットのみを出力してください：
 {"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8}
 importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価してください。`,
-      prompt: `対象キーワード: ${targetSource.value}`,
+      prompt: `対象キーワード: ${targetSource.value}\n検索対象期間: ${sevenDaysAgo}〜${today}`,
     });
 
     let parsedData;
