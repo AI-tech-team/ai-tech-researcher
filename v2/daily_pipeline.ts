@@ -6,6 +6,7 @@ import { eq, sql, desc } from 'drizzle-orm';
 import { config } from 'dotenv';
 import nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
+import { inArray } from 'drizzle-orm';
 
 config({ path: '.env.local' });
 
@@ -15,9 +16,10 @@ const client = createClient({
 });
 const db = drizzle(client, { schema });
 
-async function collectData(rounds = 10) {
+async function collectData(rounds = 10): Promise<{ collected: number; failed: number }> {
   console.log(`[Collect] ${rounds}ラウンド開始`);
   let collected = 0;
+  let failed = 0;
 
   for (let i = 0; i < rounds; i++) {
     const sourceList = await db.select().from(schema.sources)
@@ -39,7 +41,8 @@ async function collectData(rounds = 10) {
 与えられたキーワードでGoogle検索を行い、過去7日以内（${sevenDaysAgo}〜${today}）に公開・更新されたAI技術に関する実際の記事を1つ見つけてください。
 古い記事・既知の情報は除外し、必ず最新の内容を選んでください。
 以下のJSONフォーマットのみを出力してください：
-{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ"}`,
+{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8, "tags": ["tag1", "tag2"]}
+importanceは1〜10でAI技術的重要度を評価。tagsは3〜5個の短いキーワード。`,
         prompt: `対象キーワード: ${target.value}\n検索対象期間: ${sevenDaysAgo}〜${today}`,
       });
 
@@ -48,8 +51,14 @@ async function collectData(rounds = 10) {
         const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
         parsedData = JSON.parse(jsonStr);
       } catch {
-        console.warn(`  スキップ (${target.value}): JSON解析失敗`); continue;
+        console.warn(`  スキップ (${target.value}): JSON解析失敗`);
+        failed++;
+        continue;
       }
+
+      const tagsJson = Array.isArray(parsedData.tags) && parsedData.tags.length > 0
+        ? JSON.stringify(parsedData.tags.slice(0, 5).map((t: any) => String(t).trim()))
+        : null;
 
       await db.insert(schema.collectedData).values({
         sourceId: target.id,
@@ -57,6 +66,8 @@ async function collectData(rounds = 10) {
         url: parsedData.url,
         summary: parsedData.summary,
         category: parsedData.category ?? null,
+        importanceScore: parsedData.importance ?? 5,
+        tags: tagsJson,
         rawContent: result.text,
         publishedAt: new Date().toISOString(),
       }).onConflictDoNothing();
@@ -69,10 +80,12 @@ async function collectData(rounds = 10) {
       console.log(`  収集: [${parsedData.category ?? '未分類'}] ${parsedData.title}`);
     } catch (e: any) {
       console.error(`  失敗 (${target.value}): ${e.message}`);
+      failed++;
     }
   }
 
-  console.log(`[Collect] ${collected}件完了`);
+  console.log(`[Collect] ${collected}件完了, ${failed}件失敗`);
+  return { collected, failed };
 }
 
 async function generateReport(): Promise<string | null> {
@@ -195,14 +208,34 @@ ${recentData.map(d => d.summary).join('\n')}`,
   }
 }
 
+async function logPipeline(collected: number, failed: number, durationMs: number) {
+  try {
+    await db.insert(schema.pipelineLogs).values({
+      date: new Date().toISOString().split('T')[0],
+      collected,
+      failed,
+      durationMs,
+    });
+    console.log(`[Log] パイプライン記録: 収集${collected}件, 失敗${failed}件, ${Math.round(durationMs / 1000)}秒`);
+  } catch (e: any) {
+    console.warn('[Log] ログ記録失敗(非クリティカル):', e.message);
+  }
+}
+
 async function main() {
+  const startTime = Date.now();
   console.log('=== Daily Pipeline 開始 ===', new Date().toISOString());
-  await collectData(10);
+
+  const { collected, failed } = await collectData(10);
   const reportContent = await generateReport();
   if (reportContent) {
     await sendEmail(reportContent);
   }
   await evolveSources();
+
+  const durationMs = Date.now() - startTime;
+  await logPipeline(collected, failed, durationMs);
+
   console.log('=== Daily Pipeline 完了 ===');
   process.exit(0);
 }

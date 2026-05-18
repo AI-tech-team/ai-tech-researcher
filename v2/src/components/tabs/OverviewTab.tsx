@@ -1,12 +1,12 @@
 "use client";
 
-import { TrendingUp, Globe, FileText, Star, BarChart3, Database, Brain } from 'lucide-react';
+import { TrendingUp, Globe, FileText, Star, BarChart3, Database, Brain, Flame, ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar as RechartsBar,
 } from 'recharts';
 import { SkeletonStat } from '@/components/Skeleton';
-import type { CollectedItem, Source, Report } from '@/types';
+import type { CollectedItem, Source, Report, TrendingKeyword } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8',
@@ -31,12 +31,13 @@ interface OverviewTabProps {
   activityData: { name: string; count: number }[];
   categoryTrendData: any[];
   modelMentionData: { model: string; count: number }[];
+  trendingKeywords: TrendingKeyword[];
   isLoadingData: boolean;
 }
 
 export function OverviewTab({
   sourcesList, collectedItems, reportsList, activityData,
-  categoryTrendData, modelMentionData, isLoadingData,
+  categoryTrendData, modelMentionData, trendingKeywords, isLoadingData,
 }: OverviewTabProps) {
   const chartData = [
     { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length },
@@ -53,6 +54,42 @@ export function OverviewTab({
 
   return (
     <div className="space-y-8">
+
+      {/* Trending Keywords */}
+      {trendingKeywords.length > 0 && (
+        <div className="glass-card border-orange-500/20">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
+            <Flame size={16} className="text-orange-400" /> 急上昇トレンド（前週比）
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {trendingKeywords.map(kw => {
+              const isUp = kw.delta > 0;
+              const isFlat = kw.delta === 0;
+              return (
+                <div key={kw.keyword} className={`p-3 rounded-xl border flex flex-col gap-1 ${
+                  isUp ? 'bg-orange-500/10 border-orange-500/20' :
+                  isFlat ? 'bg-white/5 border-white/10' :
+                  'bg-slate-500/10 border-slate-500/20'
+                }`}>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-bold text-white truncate" title={kw.keyword}>{kw.keyword}</span>
+                    {isUp ? <ArrowUpRight size={13} className="text-orange-400 flex-shrink-0" /> :
+                     isFlat ? <Minus size={13} className="text-slate-500 flex-shrink-0" /> :
+                     <ArrowDownRight size={13} className="text-slate-500 flex-shrink-0" />}
+                  </div>
+                  <span className={`text-lg font-bold font-outfit ${isUp ? 'text-orange-400' : 'text-slate-400'}`}>
+                    {kw.thisWeek}件
+                  </span>
+                  <span className="text-[10px] text-slate-500">
+                    {isUp ? `+${kw.delta}` : kw.delta === 0 ? '±0' : kw.delta} vs 前週
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {isLoadingData

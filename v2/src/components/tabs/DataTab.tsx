@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { Search, Brain, Award, Database } from 'lucide-react';
+import { useState } from 'react';
+import { Search, Brain, Award, Database, Eye, Tag } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { SkeletonCard } from '@/components/Skeleton';
 import { semanticSearch } from '@/app/actions';
@@ -15,21 +15,29 @@ interface DataTabProps {
   onInterestTagsChange: (tags: string[]) => void;
   onToggleFavorite: (id: number, current: boolean) => void;
   onToggleReadLater: (id: number, current: boolean) => void;
+  onMarkAsRead: (id: number, current: boolean) => void;
 }
 
 export function DataTab({
   collectedItems, isLoadingData, interestTags, onInterestTagsChange,
-  onToggleFavorite, onToggleReadLater,
+  onToggleFavorite, onToggleReadLater, onMarkAsRead,
 }: DataTabProps) {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [tagFilter, setTagFilter] = useState('all');
   const [newInterestTag, setNewInterestTag] = useState('');
   const [isSemanticSearching, setIsSemanticSearching] = useState(false);
   const [semanticResults, setSemanticResults] = useState<CollectedItem[] | null>(null);
   const [sortByImportance, setSortByImportance] = useState(false);
+  const [unreadOnly, setUnreadOnly] = useState(false);
 
   const categories = ['all', ...Array.from(new Set(collectedItems.map(i => i.category).filter(Boolean))) as string[]];
+
+  // 全記事のタグを集約
+  const allTags = Array.from(new Set(
+    collectedItems.flatMap(i => i.tags ?? []).filter(Boolean)
+  )).sort();
 
   const baseItems = semanticResults ?? collectedItems;
   const filteredItems = baseItems.filter(item => {
@@ -37,7 +45,9 @@ export function DataTab({
       item.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.summary?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
-    return matchSearch && matchCategory;
+    const matchTag = tagFilter === 'all' || (item.tags ?? []).includes(tagFilter);
+    const matchUnread = !unreadOnly || !item.isRead;
+    return matchSearch && matchCategory && matchTag && matchUnread;
   });
 
   const sortedItems = [...filteredItems].sort((a, b) => {
@@ -50,6 +60,8 @@ export function DataTab({
     }
     return 0;
   });
+
+  const unreadCount = collectedItems.filter(i => !i.isRead).length;
 
   const handleSemanticSearch = async () => {
     if (!searchQuery.trim() || isSemanticSearching) return;
@@ -136,6 +148,28 @@ export function DataTab({
         )}
       </div>
 
+      {/* Tag filter */}
+      {allTags.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Tag size={13} className="text-slate-500 flex-shrink-0" />
+          <button
+            onClick={() => setTagFilter('all')}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${tagFilter === 'all' ? 'bg-indigo-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+          >
+            全タグ
+          </button>
+          {allTags.slice(0, 12).map(tag => (
+            <button
+              key={tag}
+              onClick={() => setTagFilter(tag === tagFilter ? 'all' : tag)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${tagFilter === tag ? 'bg-indigo-500/80 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Filters + sort */}
       <div className="flex flex-wrap items-center gap-2">
         {categories.map(cat => (
@@ -145,6 +179,12 @@ export function DataTab({
           </button>
         ))}
         <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setUnreadOnly(!unreadOnly)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${unreadOnly ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+          >
+            <Eye size={12} /> 未読のみ{unreadCount > 0 && ` (${unreadCount})`}
+          </button>
           <button
             onClick={() => setSortByImportance(!sortByImportance)}
             className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${sortByImportance ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
@@ -174,6 +214,7 @@ export function DataTab({
               interestTags={interestTags}
               onToggleFavorite={onToggleFavorite}
               onToggleReadLater={handleToggleReadLaterLocal}
+              onMarkAsRead={onMarkAsRead}
             />
           ))}
         </div>

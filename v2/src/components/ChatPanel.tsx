@@ -76,6 +76,12 @@ export function ChatPanel() {
                 <div className="text-center text-slate-500 text-xs mt-8 px-4 leading-relaxed">
                   <Sparkles size={26} className="mx-auto mb-3 text-sky-400/40" />
                   収集データや最新AI技術について<br />何でも質問してください。
+                  <div className="mt-4 p-2.5 rounded-xl bg-white/5 border border-white/5 text-left space-y-1.5">
+                    <p className="text-[10px] text-slate-400 font-medium">使えるコマンド:</p>
+                    <p className="text-[10px] text-sky-400"><code>#deep テーマ</code> — 深掘りリサーチ</p>
+                    <p className="text-[10px] text-purple-400">「○○を後で読むに追加して」</p>
+                    <p className="text-[10px] text-amber-400">「○○をお気に入りに追加して」</p>
+                  </div>
                 </div>
               )}
               {messages.map(m => {

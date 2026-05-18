@@ -17,10 +17,11 @@ import { SourcesTab } from '@/components/tabs/SourcesTab';
 import { PerformanceTab } from '@/components/tabs/PerformanceTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
-  addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater,
-  getSourcePerformance, getCategoryTrendData, getModelMentionData, getKeywordCategoryMatrix,
+  addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
+  getSourcePerformance, getSourceROI, getCategoryTrendData, getModelMentionData,
+  getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs,
 } from './actions';
-import type { CollectedItem, Source, Report, SourcePerformance } from '@/types';
+import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword } from '@/types';
 
 type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'sources' | 'performance';
 
@@ -56,12 +57,14 @@ export default function Home() {
   const [collectedItems, setCollectedItems] = useState<CollectedItem[]>([]);
   const [reportsList, setReportsList] = useState<Report[]>([]);
   const [activityData, setActivityData] = useState<{ name: string; count: number }[]>([]);
-  const [sourcePerformance, setSourcePerformance] = useState<SourcePerformance[]>([]);
+  const [sourcePerformance, setSourcePerformance] = useState<any[]>([]);
   const [categoryTrendData, setCategoryTrendData] = useState<any[]>([]);
   const [modelMentionData, setModelMentionData] = useState<{ model: string; count: number }[]>([]);
   const [kwMatrix, setKwMatrix] = useState<{ keywords: string[]; categories: string[]; matrix: any[]; maxCount: number }>({
     keywords: [], categories: [], matrix: [], maxCount: 1,
   });
+  const [trendingKeywords, setTrendingKeywords] = useState<TrendingKeyword[]>([]);
+  const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [interestTags, setInterestTags] = useState<string[]>([]);
@@ -77,24 +80,28 @@ export default function Home() {
 
   async function loadData() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix] = await Promise.all([
+    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
       getActivityData(),
-      getSourcePerformance(),
+      getSourceROI(),
       getCategoryTrendData(),
       getModelMentionData(),
       getKeywordCategoryMatrix(),
+      getTrendingKeywords(),
+      getPipelineLogs(),
     ]);
     setSourcesList(srcs as Source[]);
     setCollectedItems(data as CollectedItem[]);
     setReportsList(reportsData as Report[]);
     setActivityData(activity);
-    setSourcePerformance(performance as SourcePerformance[]);
+    setSourcePerformance(performance as any[]);
     setCategoryTrendData(catTrend);
     setModelMentionData(modelMentions);
     setKwMatrix(matrix as any);
+    setTrendingKeywords(trending);
+    setPipelineLogs(logs);
     setIsLoadingData(false);
   }
 
@@ -127,6 +134,11 @@ export default function Home() {
     await toggleReadLater(id, current);
   };
 
+  const handleMarkAsRead = async (id: number, currentIsRead: boolean) => {
+    setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isRead: currentIsRead ? 0 : 1 } : item));
+    await markAsRead(id, currentIsRead);
+  };
+
   const handleAddSource = async (keyword: string) => {
     await addSource(keyword);
     await loadData();
@@ -145,10 +157,11 @@ export default function Home() {
   };
 
   const readLaterCount = collectedItems.filter(i => i.isReadLater).length;
+  const unreadCount = collectedItems.filter(i => !i.isRead).length;
 
   const navItems: [Tab, React.ReactNode, string][] = [
     ['overview', <LayoutGrid size={19} />, '全体概要'],
-    ['data', <Globe size={19} />, '収集データ'],
+    ['data', <Globe size={19} />, `収集データ${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
     ['readlater', <Bookmark size={19} />, `後で読む${readLaterCount > 0 ? ` (${readLaterCount})` : ''}`],
     ['reports', <FileText size={19} />, '調査レポート'],
     ['sources', <Database size={19} />, '情報ソース管理'],
@@ -170,14 +183,15 @@ export default function Home() {
         <motion.div key="overview" {...SLIDE}>
           <OverviewTab sourcesList={sourcesList} collectedItems={collectedItems} reportsList={reportsList}
             activityData={activityData} categoryTrendData={categoryTrendData} modelMentionData={modelMentionData}
-            isLoadingData={isLoadingData} />
+            trendingKeywords={trendingKeywords} isLoadingData={isLoadingData} />
         </motion.div>
       )}
       {activeTab === 'data' && (
         <motion.div key="data" {...SLIDE}>
           <DataTab collectedItems={collectedItems} isLoadingData={isLoadingData}
             interestTags={interestTags} onInterestTagsChange={setInterestTags}
-            onToggleFavorite={handleToggleFavorite} onToggleReadLater={handleToggleReadLater} />
+            onToggleFavorite={handleToggleFavorite} onToggleReadLater={handleToggleReadLater}
+            onMarkAsRead={handleMarkAsRead} />
         </motion.div>
       )}
       {activeTab === 'readlater' && (
@@ -202,7 +216,8 @@ export default function Home() {
       {activeTab === 'performance' && (
         <motion.div key="performance" {...SLIDE}>
           <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}
-            sourcePerformance={sourcePerformance} kwMatrix={kwMatrix} isLoadingData={isLoadingData} />
+            sourcePerformance={sourcePerformance} kwMatrix={kwMatrix}
+            pipelineLogs={pipelineLogs} isLoadingData={isLoadingData} />
         </motion.div>
       )}
     </AnimatePresence>
@@ -287,7 +302,11 @@ export default function Home() {
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-white/10 flex safe-area-inset-bottom">
         {mobileNavItems.map(([tab, icon]) => {
           const isActive = activeTab === tab;
-          const count = tab === 'readlater' && readLaterCount > 0 ? readLaterCount : null;
+          const count = tab === 'readlater' && readLaterCount > 0
+            ? readLaterCount
+            : tab === 'data' && unreadCount > 0
+              ? unreadCount
+              : null;
           return (
             <button
               key={tab}

@@ -21,7 +21,9 @@ export const collectedData = sqliteTable("collected_data", {
   category: text("category"),
   isFavorited: integer("is_favorited").default(0),
   isReadLater: integer("is_read_later").default(0),
+  isRead: integer("is_read").default(0),
   importanceScore: integer("importance_score").default(5),
+  tags: text("tags"), // JSON array: '["tag1","tag2"]'
   rawContent: text("raw_content"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
@@ -40,5 +42,14 @@ export const adoptionLogs = sqliteTable("adoption_logs", {
   reportId: integer("report_id").references(() => reports.id),
   sourceId: integer("source_id").references(() => sources.id),
   isAdopted: integer("is_adopted"), // 1 or 0
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const pipelineLogs = sqliteTable("pipeline_logs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  date: text("date").notNull(), // YYYY-MM-DD
+  collected: integer("collected").default(0),
+  failed: integer("failed").default(0),
+  durationMs: integer("duration_ms").default(0),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });

@@ -61,9 +61,15 @@ export function MobileChatModal({ isOpen, onClose }: MobileChatModalProps) {
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 && (
-              <div className="text-center text-slate-500 text-sm mt-16 leading-relaxed">
+              <div className="text-center text-slate-500 text-sm mt-16 leading-relaxed px-4">
                 <Sparkles size={36} className="mx-auto mb-4 text-sky-400/40" />
                 収集データや最新AI技術について<br />何でも質問してください。
+                <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/5 text-left space-y-2">
+                  <p className="text-xs text-slate-400 font-medium">使えるコマンド:</p>
+                  <p className="text-xs text-sky-400"><code>#deep テーマ</code> — 深掘りリサーチ</p>
+                  <p className="text-xs text-purple-400">「○○を後で読むに追加して」</p>
+                  <p className="text-xs text-amber-400">「○○をお気に入りに追加して」</p>
+                </div>
               </div>
             )}
             {messages.map(m => {
