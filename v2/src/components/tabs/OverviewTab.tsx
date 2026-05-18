@@ -54,23 +54,23 @@ export function OverviewTab({
   return (
     <div className="space-y-8">
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {isLoadingData
           ? Array.from({ length: 4 }).map((_, i) => <SkeletonStat key={i} />)
           : stats.map((stat, idx) => (
             <div key={idx} className="glass-card">
-              <div className={`p-2 rounded-lg bg-white/5 ${stat.color} inline-flex mb-4`}>{stat.icon}</div>
-              <p className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">{stat.label}</p>
-              <h3 className="text-3xl font-bold font-outfit">{stat.value}</h3>
+              <div className={`p-2 rounded-lg bg-white/5 ${stat.color} inline-flex mb-3`}>{stat.icon}</div>
+              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">{stat.label}</p>
+              <h3 className="text-2xl md:text-3xl font-bold font-outfit">{stat.value}</h3>
             </div>
           ))
         }
       </div>
 
       {/* Row 1 */}
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 glass-card" style={{ height: '280px' }}>
-          <h3 className="text-sm font-bold font-outfit mb-4 flex items-center gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2 glass-card h-[220px] md:h-[260px]">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
             <BarChart3 size={16} className="text-sky-400" /> 収集アクティビティ（直近7日）
           </h3>
           <ResponsiveContainer width="100%" height="85%">
@@ -90,8 +90,8 @@ export function OverviewTab({
           </ResponsiveContainer>
         </div>
 
-        <div className="glass-card" style={{ height: '280px' }}>
-          <h3 className="text-sm font-bold font-outfit mb-4 flex items-center gap-2">
+        <div className="glass-card h-[220px] md:h-[260px]">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
             <Database size={16} className="text-purple-400" /> ソース健全性
           </h3>
           <ResponsiveContainer width="100%" height="85%">
@@ -106,9 +106,9 @@ export function OverviewTab({
       </div>
 
       {/* Row 2 */}
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 glass-card" style={{ height: '280px' }}>
-          <h3 className="text-sm font-bold font-outfit mb-4 flex items-center gap-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2 glass-card h-[220px] md:h-[260px]">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
             <TrendingUp size={16} className="text-emerald-400" /> カテゴリ別トレンド（直近7日）
           </h3>
           <ResponsiveContainer width="100%" height="85%">
@@ -124,8 +124,8 @@ export function OverviewTab({
           </ResponsiveContainer>
         </div>
 
-        <div className="glass-card" style={{ height: '280px' }}>
-          <h3 className="text-sm font-bold font-outfit mb-4 flex items-center gap-2">
+        <div className="glass-card h-[220px] md:h-[260px]">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
             <Brain size={16} className="text-pink-400" /> モデル言及頻度（30日）
           </h3>
           {modelMentionData.length > 0 ? (
