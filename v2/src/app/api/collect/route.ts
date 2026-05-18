@@ -6,64 +6,91 @@ import { eq, sql } from 'drizzle-orm';
 
 export const maxDuration = 60;
 
-// URL型ソース: 直接フェッチして記事を抽出
-async function collectFromUrl(targetSource: typeof sources.$inferSelect, today: string) {
-  // 日付ベースのダイジェストサイト対応（例: techdrip.net/YYYY-MM-DD）
-  const fetchUrl = `${targetSource.value.replace(/\/$/, '')}/${today}`;
+// techdrip.net の tag → システムカテゴリ変換
+const TECHDRIP_CAT_MAP: Record<string, string | null> = {
+  'AI':     'エージェント',
+  'LLM':    'LLM推論',
+  '開発手法': 'ツール/フレームワーク',
+  'OSS':    'ツール/フレームワーク',
+  'セキュリティ': 'ビジネス応用',
+  'クラウド': 'ハードウェア',
+  '研究':   '研究/論文',
+  'キャリア': 'ビジネス応用',
+  '業界':   'ビジネス応用',
+  'ガジェット': 'ハードウェア',
+  'エンタメ': null, // スキップ
+};
 
-  let pageText = '';
-  try {
-    const res = await fetch(fetchUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
-      signal: AbortSignal.timeout(15000),
-    });
-    pageText = await res.text();
-  } catch {
-    // 日付パスが404ならルートを試みる
+function parseTechDripScore(scoreStr: string): number {
+  const num = parseInt(scoreStr.replace(/[^\d]/g, ''), 10);
+  if (isNaN(num)) return 5;
+  if (num >= 400) return 10;
+  if (num >= 200) return 9;
+  if (num >= 100) return 8;
+  if (num >= 50)  return 7;
+  if (num >= 20)  return 6;
+  return 5;
+}
+
+// ITEMS_BY_DATE 形式のページから記事を一括抽出
+async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, today: string) {
+  const res = await fetch(targetSource.value, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+    signal: AbortSignal.timeout(15000),
+  });
+  const html = await res.text();
+
+  const match = html.match(/const ITEMS_BY_DATE = (\{[\s\S]*?\});\s*\n/);
+  if (!match) throw new Error('ITEMS_BY_DATE が見つかりません');
+
+  const itemsByDate: Record<string, any[]> = JSON.parse(match[1]);
+
+  // 日付キーは "2026-5-18" 形式（ゼロ埋めなし）
+  const d = new Date(today);
+  const dateKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  const items: any[] = itemsByDate[dateKey] ?? [];
+
+  if (items.length === 0) {
+    return { inserted: 0, skipped: 0, message: `${dateKey} の記事なし` };
+  }
+
+  let inserted = 0;
+  let skipped = 0;
+
+  for (const item of items) {
+    if (item.src === 'gareso') { skipped++; continue; }
+
+    const category = TECHDRIP_CAT_MAP[item.tag ?? ''];
+    if (category === null) { skipped++; continue; } // エンタメ等はスキップ
+
+    const tags = JSON.stringify([item.src, item.domain].filter(Boolean).slice(0, 3));
+    const importanceScore = parseTechDripScore(item.score ?? '');
+    const summary = [item.summary, item.comment_summary].filter(Boolean).join('\n\n').slice(0, 600) || item.title;
+
     try {
-      const res = await fetch(targetSource.value, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
-        signal: AbortSignal.timeout(15000),
-      });
-      pageText = await res.text();
-    } catch (e: any) {
-      throw new Error(`URLフェッチ失敗: ${e.message}`);
+      const result = await db.insert(collectedData).values({
+        sourceId: targetSource.id,
+        title: item.title,
+        url: item.url,
+        summary,
+        category: category ?? 'その他',
+        importanceScore,
+        tags,
+        publishedAt: new Date().toISOString(),
+        rawContent: JSON.stringify(item),
+      }).onConflictDoNothing();
+
+      if (result.rowsAffected > 0) inserted++;
+      else skipped++;
+    } catch {
+      skipped++;
     }
   }
 
-  if (!pageText || pageText.length < 100) {
-    throw new Error('ページコンテンツが空または短すぎます');
-  }
-
-  // HTMLを簡易テキスト化（タグ除去）
-  const plainText = pageText
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 8000);
-
-  if (plainText.length < 50) {
-    throw new Error('有効なテキストコンテンツが見つかりません');
-  }
-
-  const { text } = await generateText({
-    model: google('gemini-2.5-flash-lite'),
-    system: `あなたはWebページから最も重要なAI・技術記事を1件抽出するエキスパートです。
-以下のJSONフォーマットのみを出力してください：
-{"title": "記事タイトル", "url": "記事の実際のURL（元のページURL可）", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8, "tags": ["tag1", "tag2", "tag3"]}
-記事がない場合は {"error": "記事なし"} を返してください。`,
-    prompt: `ページURL: ${fetchUrl}\nページ内容:\n${plainText}`,
-  });
-
-  const jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-  const parsed = JSON.parse(jsonStr);
-  if (parsed.error) throw new Error(parsed.error);
-  return { parsed, rawText: text };
+  return { inserted, skipped, message: `${inserted}件追加、${skipped}件スキップ` };
 }
 
-// キーワード型ソース: Gemini Groundingで検索
+// キーワード型: Gemini Groundingで検索
 async function collectFromKeyword(targetSource: typeof sources.$inferSelect, today: string, sevenDaysAgo: string) {
   const result = await generateText({
     model: google('gemini-2.5-flash-lite'),
@@ -74,12 +101,12 @@ async function collectFromKeyword(targetSource: typeof sources.$inferSelect, tod
 以下のJSONフォーマットのみを出力してください：
 {"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8, "tags": ["タグ1", "タグ2", "タグ3"]}
 importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価してください。
-tagsは記事内容を表す英語または日本語の短いキーワードを3〜5個選んでください（例: "open-source", "multimodal", "benchmark", "fine-tuning"）。`,
+tagsは記事内容を表す英語または日本語の短いキーワードを3〜5個選んでください。`,
     prompt: `対象キーワード: ${targetSource.value}\n検索対象期間: ${sevenDaysAgo}〜${today}`,
   });
 
   const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
-  return { parsed: JSON.parse(jsonStr), rawText: result.text };
+  return JSON.parse(jsonStr);
 }
 
 export async function POST() {
@@ -97,15 +124,27 @@ export async function POST() {
     const today = new Date().toISOString().split('T')[0];
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    let parsedData: any;
-    let rawText: string;
-
-    try {
-      if (targetSource.type === 'url') {
-        ({ parsed: parsedData, rawText } = await collectFromUrl(targetSource, today));
-      } else {
-        ({ parsed: parsedData, rawText } = await collectFromKeyword(targetSource, today, sevenDaysAgo));
+    // URL型ソース（techdrip.net等）: 一括取得
+    if (targetSource.type === 'url') {
+      try {
+        const result = await collectFromTechDrip(targetSource, today);
+        await db.update(sources)
+          .set({ lastHitAt: new Date().toISOString() })
+          .where(eq(sources.id, targetSource.id));
+        return Response.json({
+          success: true,
+          message: `[${targetSource.value}] ${result.message}`,
+          inserted: result.inserted,
+        });
+      } catch (e: any) {
+        return Response.json({ success: false, message: `URL収集失敗: ${e.message}` }, { status: 500 });
       }
+    }
+
+    // キーワード型ソース
+    let parsedData: any;
+    try {
+      parsedData = await collectFromKeyword(targetSource, today, sevenDaysAgo);
     } catch (e: any) {
       return Response.json({ success: false, message: `収集失敗: ${e.message}` }, { status: 500 });
     }
@@ -133,7 +172,7 @@ export async function POST() {
       category: parsedData.category ?? null,
       importanceScore: parsedData.importance ?? 5,
       tags: tagsJson,
-      rawContent: rawText,
+      rawContent: JSON.stringify(parsedData),
       publishedAt: new Date().toISOString(),
     }).onConflictDoNothing();
 
