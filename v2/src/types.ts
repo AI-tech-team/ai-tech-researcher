@@ -6,7 +6,9 @@ export interface CollectedItem {
   category: string | null;
   isFavorited: number | null;
   isReadLater: number | null;
+  isRead: number | null;
   importanceScore: number | null;
+  tags: string[] | null;
   publishedAt: string | null;
   createdAt: string;
   sourceValue: string | null;
@@ -32,6 +34,28 @@ export interface Report {
 
 export interface SourcePerformance extends Source {
   collectedCount: number;
+}
+
+export interface SourceROI extends Source {
+  collectedCount: number;
+  avgImportance: number;
+  roi: number;
+}
+
+export interface PipelineLog {
+  id: number;
+  date: string;
+  collected: number;
+  failed: number;
+  durationMs: number;
+  createdAt: string | null;
+}
+
+export interface TrendingKeyword {
+  keyword: string;
+  thisWeek: number;
+  lastWeek: number;
+  delta: number;
 }
 
 export type ToastType = 'success' | 'error' | 'info';

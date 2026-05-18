@@ -1,7 +1,7 @@
 "use client";
 
 import React, { Fragment, useState } from 'react';
-import { FileText, Sparkles, Activity } from 'lucide-react';
+import { FileText, Sparkles, Activity, Download } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import type { Report } from '@/types';
 
@@ -103,6 +103,18 @@ interface ReportsTabProps {
   onReload: () => Promise<void>;
 }
 
+function downloadMarkdown(report: Report) {
+  const typeLabel = report.type === 'weekly' ? '週次' : report.type === 'monthly' ? '月次' : '日次';
+  const filename = `AIResearcher_${typeLabel}_${report.reportDate}.md`;
+  const blob = new Blob([report.content ?? ''], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ReportsTab({ reportsList, isLoadingData, collectedItemsCount, onReload }: ReportsTabProps) {
   const { toast } = useToast();
   const [reportTypeFilter, setReportTypeFilter] = useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
@@ -187,7 +199,16 @@ export function ReportsTab({ reportsList, isLoadingData, collectedItemsCount, on
                     {report.type}
                   </span>
                 </h3>
-                <span className="text-sm text-slate-400 bg-white/5 px-3 py-1 rounded-full flex-shrink-0">{report.reportDate}</span>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-sm text-slate-400 bg-white/5 px-3 py-1 rounded-full">{report.reportDate}</span>
+                  <button
+                    onClick={() => downloadMarkdown(report)}
+                    title="Markdownでエクスポート"
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                  >
+                    <Download size={14} />
+                  </button>
+                </div>
               </div>
               <div>{renderMarkdown(report.content ?? '')}</div>
             </div>

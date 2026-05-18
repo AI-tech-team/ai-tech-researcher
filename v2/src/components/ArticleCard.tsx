@@ -1,6 +1,6 @@
 "use client";
 
-import { Star, Bookmark, ExternalLink, Hash, Clock, Award } from 'lucide-react';
+import { Star, Bookmark, ExternalLink, Hash, Clock, Award, Eye, EyeOff } from 'lucide-react';
 import type { CollectedItem } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -18,20 +18,30 @@ interface ArticleCardProps {
   interestTags: string[];
   onToggleFavorite: (id: number, current: boolean) => void;
   onToggleReadLater: (id: number, current: boolean) => void;
+  onMarkAsRead?: (id: number, current: boolean) => void;
   showReadLater?: boolean;
 }
 
-export function ArticleCard({ item, interestTags, onToggleFavorite, onToggleReadLater, showReadLater = true }: ArticleCardProps) {
+export function ArticleCard({
+  item, interestTags, onToggleFavorite, onToggleReadLater, onMarkAsRead, showReadLater = true,
+}: ArticleCardProps) {
   const isInterestMatch = interestTags.length > 0 && interestTags.some(tag =>
     [item.title, item.summary, item.category].some(f => f?.toLowerCase().includes(tag.toLowerCase()))
   );
   const color = CATEGORY_COLORS[item.category ?? ''] ?? '#94a3b8';
   const score = item.importanceScore ?? 0;
+  const isRead = !!item.isRead;
+
+  const handleLinkClick = () => {
+    if (onMarkAsRead && !isRead) {
+      onMarkAsRead(item.id, false);
+    }
+  };
 
   return (
-    <div className="glass-card group hover:border-sky-500/30">
+    <div className={`glass-card group hover:border-sky-500/30 transition-opacity ${isRead ? 'opacity-60' : ''}`}>
       <div className="flex justify-between items-start mb-2">
-        <h4 className="text-base font-bold text-white group-hover:text-sky-400 transition-colors flex-1 pr-4 leading-snug">
+        <h4 className={`text-base font-bold group-hover:text-sky-400 transition-colors flex-1 pr-4 leading-snug ${isRead ? 'text-slate-400' : 'text-white'}`}>
           {item.title || '無題のデータ'}
         </h4>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -44,6 +54,18 @@ export function ArticleCard({ item, interestTags, onToggleFavorite, onToggleRead
             }`}>
               <Award size={9} />{score}
             </span>
+          )}
+          {onMarkAsRead && (
+            <button
+              onClick={() => onMarkAsRead(item.id, isRead)}
+              title={isRead ? '未読に戻す' : '既読にする'}
+              className="p-1 rounded hover:bg-white/5 transition-colors"
+            >
+              {isRead
+                ? <EyeOff size={15} className="text-slate-600 hover:text-slate-400 transition-colors" />
+                : <Eye size={15} className="text-slate-600 hover:text-emerald-400 transition-colors" />
+              }
+            </button>
           )}
           <button
             onClick={() => onToggleFavorite(item.id, !!item.isFavorited)}
@@ -66,6 +88,7 @@ export function ArticleCard({ item, interestTags, onToggleFavorite, onToggleRead
               href={item.url}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={handleLinkClick}
               className="p-1 rounded text-slate-500 hover:text-white transition-colors"
             >
               <ExternalLink size={15} />
@@ -74,7 +97,17 @@ export function ArticleCard({ item, interestTags, onToggleFavorite, onToggleRead
         </div>
       </div>
 
-      <p className="text-slate-400 text-sm line-clamp-2 mb-4">{item.summary || 'サマリーはありません'}</p>
+      <p className="text-slate-400 text-sm line-clamp-2 mb-3">{item.summary || 'サマリーはありません'}</p>
+
+      {item.tags && item.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-3">
+          {item.tags.map(tag => (
+            <span key={tag} className="text-[10px] px-1.5 py-0.5 bg-white/5 text-slate-500 border border-white/10 rounded-full">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 flex-wrap text-xs font-medium">
         {item.category && (
