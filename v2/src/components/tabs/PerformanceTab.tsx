@@ -34,11 +34,11 @@ export function PerformanceTab({
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-3 gap-4">
         {stats.map((s, i) => (
-          <div key={i} className="glass-card text-center py-6">
-            <p className="text-slate-500 text-xs uppercase tracking-wider mb-2">{s.label}</p>
-            <p className={`text-4xl font-bold font-outfit ${s.color}`}>{isLoadingData ? '-' : s.value}</p>
+          <div key={i} className="glass-card text-center py-4 md:py-6">
+            <p className="text-slate-500 text-[10px] md:text-xs uppercase tracking-wider mb-1 md:mb-2">{s.label}</p>
+            <p className={`text-2xl md:text-4xl font-bold font-outfit ${s.color}`}>{isLoadingData ? '-' : s.value}</p>
           </div>
         ))}
       </div>
