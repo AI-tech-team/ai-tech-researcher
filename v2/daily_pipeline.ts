@@ -16,11 +16,72 @@ const client = createClient({
 });
 const db = drizzle(client, { schema });
 
+const TECHDRIP_CAT_MAP: Record<string, string | null> = {
+  'AI': 'エージェント', 'LLM': 'LLM推論', '開発手法': 'ツール/フレームワーク',
+  'OSS': 'ツール/フレームワーク', 'セキュリティ': 'ビジネス応用', 'クラウド': 'ハードウェア',
+  '研究': '研究/論文', 'キャリア': 'ビジネス応用', '業界': 'ビジネス応用',
+  'ガジェット': 'ハードウェア', 'エンタメ': null,
+};
+
+function parseTechDripScore(scoreStr: string): number {
+  const num = parseInt(scoreStr.replace(/[^\d]/g, ''), 10);
+  if (isNaN(num)) return 5;
+  if (num >= 400) return 10; if (num >= 200) return 9; if (num >= 100) return 8;
+  if (num >= 50) return 7;   if (num >= 20) return 6;  return 5;
+}
+
 async function collectData(rounds = 10): Promise<{ collected: number; failed: number }> {
   console.log(`[Collect] ${rounds}ラウンド開始`);
   let collected = 0;
   let failed = 0;
+  const today = new Date().toISOString().split('T')[0];
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
+  // URL型ソース（techdrip.net等）を先に処理
+  const urlSources = await db.select().from(schema.sources)
+    .where(eq(schema.sources.type, 'url') as any)
+    .limit(10);
+
+  for (const target of urlSources) {
+    if (target.status !== 'active') continue;
+    try {
+      const res = await fetch(target.value, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+        signal: AbortSignal.timeout(15000),
+      });
+      const html = await res.text();
+      const match = html.match(/const ITEMS_BY_DATE = (\{[\s\S]*?\});\s*\n/);
+      if (!match) { console.warn(`  スキップ (${target.value}): ITEMS_BY_DATE なし`); continue; }
+
+      const itemsByDate: Record<string, any[]> = JSON.parse(match[1]);
+      const d = new Date(today);
+      const dateKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+      const items: any[] = itemsByDate[dateKey] ?? [];
+
+      let batchInserted = 0;
+      for (const item of items) {
+        if (item.src === 'gareso') continue;
+        const category = TECHDRIP_CAT_MAP[item.tag ?? ''];
+        if (category === null) continue;
+        const summary = [item.summary, item.comment_summary].filter(Boolean).join('\n\n').slice(0, 600) || item.title;
+        const tags = JSON.stringify([item.src, item.domain].filter(Boolean).slice(0, 3));
+        const r = await db.insert(schema.collectedData).values({
+          sourceId: target.id, title: item.title, url: item.url, summary,
+          category: category ?? 'その他', importanceScore: parseTechDripScore(item.score ?? ''),
+          tags, rawContent: JSON.stringify(item), publishedAt: new Date().toISOString(),
+        }).onConflictDoNothing();
+        if (r.rowsAffected > 0) { batchInserted++; collected++; }
+      }
+
+      await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
+      console.log(`  [${target.value}] ${dateKey}: ${batchInserted}件追加`);
+    } catch (e: any) {
+      console.error(`  URL収集失敗 (${target.value}): ${e.message}`);
+      failed++;
+    }
+  }
+
+  // キーワード型ソース
   for (let i = 0; i < rounds; i++) {
     const sourceList = await db.select().from(schema.sources)
       .where(eq(schema.sources.status, 'active'))
@@ -29,75 +90,34 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
 
     if (sourceList.length === 0) break;
     const target = sourceList[0];
+    if (target.type === 'url') continue; // 既に処理済み
 
     try {
-      const today = new Date().toISOString().split('T')[0];
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-      let parsedData: any;
-      let rawText: string;
-
-      if (target.type === 'url') {
-        // URL型: 直接フェッチして抽出
-        const fetchUrl = `${target.value.replace(/\/$/, '')}/${today}`;
-        let pageText = '';
-        try {
-          const res = await fetch(fetchUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' }, signal: AbortSignal.timeout(15000) });
-          pageText = await res.text();
-        } catch {
-          const res = await fetch(target.value, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' }, signal: AbortSignal.timeout(15000) });
-          pageText = await res.text();
-        }
-        const plainText = pageText.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 8000);
-        if (plainText.length < 50) { console.warn(`  スキップ (${target.value}): コンテンツなし`); failed++; continue; }
-
-        const { text } = await generateText({
-          model: google('gemini-2.5-flash-lite'),
-          system: `Webページから最も重要なAI・技術記事を1件抽出し、以下JSONのみ出力: {"title":"","url":"","summary":"200字要約","category":"LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他","importance":8,"tags":["tag1","tag2"]} 記事なし→{"error":"記事なし"}`,
-          prompt: `ページ: ${fetchUrl}\n内容:\n${plainText}`,
-        });
-        const j = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-        if (j.error) { console.warn(`  スキップ (${target.value}): ${j.error}`); failed++; continue; }
-        parsedData = j;
-        rawText = text;
-      } else {
-        // キーワード型: Gemini Grounding
-        const result = await generateText({
-          model: google('gemini-2.5-flash-lite'),
-          tools: { google_search: google.tools.googleSearch({}) },
-          system: `あなたはAI技術情報収集エンジンです。
+      const result = await generateText({
+        model: google('gemini-2.5-flash-lite'),
+        tools: { google_search: google.tools.googleSearch({}) },
+        system: `あなたはAI技術情報収集エンジンです。
 与えられたキーワードでGoogle検索を行い、過去7日以内（${sevenDaysAgo}〜${today}）に公開・更新されたAI技術に関する実際の記事を1つ見つけてください。
 古い記事・既知の情報は除外し、必ず最新の内容を選んでください。
 以下のJSONフォーマットのみを出力してください：
 {"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8, "tags": ["tag1", "tag2"]}
 importanceは1〜10でAI技術的重要度を評価。tagsは3〜5個の短いキーワード。`,
-          prompt: `対象キーワード: ${target.value}\n検索対象期間: ${sevenDaysAgo}〜${today}`,
-        });
-        const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
-        parsedData = JSON.parse(jsonStr);
-        rawText = result.text;
-      }
+        prompt: `対象キーワード: ${target.value}\n検索対象期間: ${sevenDaysAgo}〜${today}`,
+      });
 
+      const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsedData = JSON.parse(jsonStr);
       const tagsJson = Array.isArray(parsedData.tags) && parsedData.tags.length > 0
-        ? JSON.stringify(parsedData.tags.slice(0, 5).map((t: any) => String(t).trim()))
-        : null;
+        ? JSON.stringify(parsedData.tags.slice(0, 5).map((t: any) => String(t).trim())) : null;
 
       await db.insert(schema.collectedData).values({
-        sourceId: target.id,
-        title: parsedData.title,
-        url: parsedData.url,
-        summary: parsedData.summary,
-        category: parsedData.category ?? null,
-        importanceScore: parsedData.importance ?? 5,
-        tags: tagsJson,
-        rawContent: rawText,
-        publishedAt: new Date().toISOString(),
+        sourceId: target.id, title: parsedData.title, url: parsedData.url,
+        summary: parsedData.summary, category: parsedData.category ?? null,
+        importanceScore: parsedData.importance ?? 5, tags: tagsJson,
+        rawContent: result.text, publishedAt: new Date().toISOString(),
       }).onConflictDoNothing();
 
-      await db.update(schema.sources)
-        .set({ lastHitAt: new Date().toISOString() })
-        .where(eq(schema.sources.id, target.id));
-
+      await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
       collected++;
       console.log(`  収集: [${parsedData.category ?? '未分類'}] ${parsedData.title}`);
     } catch (e: any) {
