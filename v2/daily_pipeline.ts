@@ -276,7 +276,7 @@ async function evolveSources() {
       ? (now.getTime() - new Date(lastAdoptedAt).getTime()) / 86400000
       : Infinity;
 
-    let newStatus = source.status;
+    let newStatus: string = source.status ?? 'candidate';
 
     if (source.status === 'candidate') {
       // 14日で3回ヒット + レポート採用 → active
