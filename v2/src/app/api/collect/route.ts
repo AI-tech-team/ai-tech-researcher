@@ -122,17 +122,39 @@ async function collectFromKeyword(targetSource: typeof sources.$inferSelect, tod
     model: google('gemini-2.5-flash-lite'),
     tools: { google_search: google.tools.googleSearch({}) },
     system: `あなたはAI技術情報収集エンジンです。
-与えられたキーワードでGoogle検索を行い、過去7日以内（${sevenDaysAgo}〜${today}）に公開・更新されたAI技術に関する実際の記事を1つ見つけてください。
-古い記事・既知の情報は除外し、必ず最新の内容を選んでください。
+与えられたキーワードでGoogle検索を行い、${sevenDaysAgo}〜${today} の期間に公開されたAI技術記事を1つ見つけてください。
+
+【必須制約】
+- 検索クエリに "after:${sevenDaysAgo}" を含めること
+- 公開日が ${sevenDaysAgo} より古い記事は絶対に使用しない
+- URLは検索結果に実在するURLのみ使用する（推測・生成禁止）
+- 公開日が不明な場合は別の記事を探す
+
 以下のJSONフォーマットのみを出力してください：
-{"title": "記事タイトル", "url": "実際の記事URL", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8, "tags": ["タグ1", "タグ2", "タグ3"]}
-importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価してください。
-tagsは記事内容を表す英語または日本語の短いキーワードを3〜5個選んでください。`,
+{"title": "記事タイトル", "url": "実際の記事URL", "publishedAt": "YYYY-MM-DD", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8, "tags": ["タグ1", "タグ2", "タグ3"]}
+importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価。tagsは3〜5個。`,
     prompt: `対象キーワード: ${targetSource.value}\n検索対象期間: ${sevenDaysAgo}〜${today}`,
   });
 
   const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
-  return JSON.parse(jsonStr);
+  const parsedData = JSON.parse(jsonStr);
+
+  // グラウンディングの実URLでハルシネーションを上書き
+  const googleMeta = (result.providerMetadata?.google ?? (result as any).experimental_providerMetadata?.google) as any;
+  const groundingChunks: any[] = googleMeta?.groundingMetadata?.groundingChunks ?? [];
+  const groundingUrl = groundingChunks.find((c: any) => c.web?.uri)?.web?.uri;
+  if (groundingUrl) parsedData.url = groundingUrl;
+
+  // 鮮度チェック: 14日以上前の記事は破棄
+  if (parsedData.publishedAt) {
+    const pubDate = new Date(parsedData.publishedAt);
+    const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    if (pubDate < cutoff) {
+      throw new Error(`古い記事のためスキップ (${parsedData.publishedAt}): ${parsedData.url}`);
+    }
+  }
+
+  return parsedData;
 }
 
 export async function POST() {
@@ -199,7 +221,7 @@ export async function POST() {
       importanceScore: parsedData.importance ?? 5,
       tags: tagsJson,
       rawContent: JSON.stringify(parsedData),
-      publishedAt: new Date().toISOString(),
+      publishedAt: parsedData.publishedAt ? new Date(parsedData.publishedAt).toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
 
     await db.update(sources)
