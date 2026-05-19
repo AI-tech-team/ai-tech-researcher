@@ -56,12 +56,16 @@ async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, to
 
   let inserted = 0;
   let skipped = 0;
+  const deepFetchUrls: string[] = [];
 
   for (const item of items) {
     if (item.src === 'gareso') { skipped++; continue; }
 
     const category = TECHDRIP_CAT_MAP[item.tag ?? ''];
-    if (category === null) { skipped++; continue; } // エンタメ等はスキップ
+    if (category === null) { skipped++; continue; }
+
+    const rawScore = parseInt((item.score ?? '').replace(/[^\d]/g, ''), 10);
+    if (isNaN(rawScore) || rawScore < 20) { skipped++; continue; } // Phase 1: 低品質スキップ
 
     const tags = JSON.stringify([item.src, item.domain].filter(Boolean).slice(0, 3));
     const importanceScore = parseTechDripScore(item.score ?? '');
@@ -77,14 +81,36 @@ async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, to
         importanceScore,
         tags,
         publishedAt: new Date().toISOString(),
-        rawContent: JSON.stringify(item),
       }).onConflictDoNothing();
 
-      if (result.rowsAffected > 0) inserted++;
-      else skipped++;
+      if (result.rowsAffected > 0) {
+        inserted++;
+        if (rawScore >= 100 && item.url) deepFetchUrls.push(item.url);
+      } else skipped++;
     } catch {
       skipped++;
     }
+  }
+
+  // Phase 2: 高スコア記事の元URL から全文取得（最大3件）
+  for (const url of deepFetchUrls.slice(0, 3)) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+        signal: AbortSignal.timeout(8000),
+      });
+      const html = await res.text();
+      const fullText = html
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 5000);
+      await db.update(collectedData)
+        .set({ rawContent: fullText })
+        .where(eq(collectedData.url, url));
+    } catch { /* ignore */ }
   }
 
   return { inserted, skipped, message: `${inserted}件追加、${skipped}件スキップ` };
