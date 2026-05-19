@@ -1,5 +1,5 @@
 import { google } from '@ai-sdk/google';
-import { streamText, convertToModelMessages, tool } from 'ai';
+import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { db } from '@/db';
 import { collectedData, sources } from '@/db/schema';
@@ -28,7 +28,7 @@ export async function POST(req: Request) {
 エンジニア向けの詳細な分析レポートを日本語Markdown形式で作成してください。
 構成: ## 概要 / ## 主要な動向（5件以上） / ## 技術的詳細 / ## 今後の展望`,
       prompt: `テーマ「${theme}」について深掘りリサーチしてください。最新の技術動向、重要な発表、実装例を含めて2000文字以上の詳細レポートを作成してください。`,
-      maxSteps: 3,
+      stopWhen: stepCountIs(3),
     });
     return result.toUIMessageStreamResponse();
   }
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   const result = streamText({
     model: google('gemini-2.5-flash-lite'),
     messages: modelMessages,
-    maxSteps: 3,
+    stopWhen: stepCountIs(3),
     system: `あなたは"Research Copilot"、AI Tech Researcherダッシュボードのアシスタントです。
 以下は最近収集した最新AI技術情報です（各記事には[ID:数字]が付いています）：
 
@@ -58,7 +58,7 @@ ${context}
     tools: {
       search_articles: tool({
         description: 'DBの記事をキーワードで検索して、関連する記事ID・タイトル・要約を返す',
-        parameters: z.object({
+        inputSchema: z.object({
           keywords: z.string().describe('検索キーワード（スペース区切りで複数可）'),
         }),
         execute: async ({ keywords }) => {
@@ -85,7 +85,7 @@ ${context}
       }),
       toggle_read_later: tool({
         description: '記事IDを指定して「後で読む」リストへの追加・解除を行う',
-        parameters: z.object({
+        inputSchema: z.object({
           articleId: z.number().describe('対象の記事ID'),
         }),
         execute: async ({ articleId }) => {
@@ -99,7 +99,7 @@ ${context}
       }),
       toggle_favorite: tool({
         description: '記事IDを指定してお気に入りの追加・解除を行う',
-        parameters: z.object({
+        inputSchema: z.object({
           articleId: z.number().describe('対象の記事ID'),
         }),
         execute: async ({ articleId }) => {
