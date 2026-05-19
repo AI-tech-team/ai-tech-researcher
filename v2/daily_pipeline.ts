@@ -2,11 +2,10 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
-import { eq, sql, desc } from 'drizzle-orm';
+import { eq, sql, desc, count, and, gte } from 'drizzle-orm';
 import { config } from 'dotenv';
 import nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
-import { inArray } from 'drizzle-orm';
 
 config({ path: '.env.local' });
 
@@ -59,18 +58,48 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
       const items: any[] = itemsByDate[dateKey] ?? [];
 
       let batchInserted = 0;
+      const deepFetchUrls: string[] = [];
+
       for (const item of items) {
         if (item.src === 'gareso') continue;
         const category = TECHDRIP_CAT_MAP[item.tag ?? ''];
         if (category === null) continue;
+        const rawScore = parseInt((item.score ?? '').replace(/[^\d]/g, ''), 10);
+        if (isNaN(rawScore) || rawScore < 20) continue; // Phase 1: 低品質スキップ
         const summary = [item.summary, item.comment_summary].filter(Boolean).join('\n\n').slice(0, 600) || item.title;
         const tags = JSON.stringify([item.src, item.domain].filter(Boolean).slice(0, 3));
         const r = await db.insert(schema.collectedData).values({
           sourceId: target.id, title: item.title, url: item.url, summary,
           category: category ?? 'その他', importanceScore: parseTechDripScore(item.score ?? ''),
-          tags, rawContent: JSON.stringify(item), publishedAt: new Date().toISOString(),
+          tags, publishedAt: new Date().toISOString(),
         }).onConflictDoNothing();
-        if (r.rowsAffected > 0) { batchInserted++; collected++; }
+        if (r.rowsAffected > 0) {
+          batchInserted++;
+          collected++;
+          if (rawScore >= 100 && item.url) deepFetchUrls.push(item.url);
+        }
+      }
+
+      // Phase 2: 高スコア記事の元URL から全文取得
+      for (const url of deepFetchUrls) {
+        try {
+          const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+            signal: AbortSignal.timeout(10000),
+          });
+          const html = await res.text();
+          const fullText = html
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 5000);
+          await db.update(schema.collectedData)
+            .set({ rawContent: fullText })
+            .where(eq(schema.collectedData.url, url));
+          console.log(`    [深掘り] ${url.slice(0, 60)}`);
+        } catch { /* ignore */ }
       }
 
       await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
@@ -153,11 +182,25 @@ async function generateReport(): Promise<string | null> {
     prompt: `今日の日付: ${today}\n\n【収集データ】\n${contextStr}`,
   });
 
-  await db.insert(schema.reports).values({
+  const [insertedReport] = await db.insert(schema.reports).values({
     type: 'daily',
     content: text,
     reportDate: new Date().toISOString().split('T')[0],
-  });
+  }).returning({ id: schema.reports.id });
+
+  // 採用ソースをログ記録（ライフサイクル判定に使用）
+  const adoptedSourceIds = [...new Set(
+    recentData.map(d => d.sourceId).filter((id): id is number => id !== null)
+  )];
+  if (insertedReport?.id && adoptedSourceIds.length > 0) {
+    await db.insert(schema.adoptionLogs).values(
+      adoptedSourceIds.map(sourceId => ({
+        reportId: insertedReport.id,
+        sourceId,
+        isAdopted: 1 as const,
+      }))
+    );
+  }
 
   console.log('[Report] レポート生成完了');
   return text;
@@ -196,31 +239,71 @@ async function sendEmail(reportContent: string) {
 async function evolveSources() {
   console.log('[Evolve] ソース進化開始');
 
+  const now = new Date();
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
   const allSources = await db.select().from(schema.sources)
     .where(sql`${schema.sources.status} != 'stopped'`);
 
-  let promoted = 0, demoted = 0, stoppedCount = 0;
+  // バッチ取得: 14日以内のヒット数（ソース別）
+  const hitCounts = await db.select({
+    sourceId: schema.collectedData.sourceId,
+    cnt: count(),
+  })
+    .from(schema.collectedData)
+    .where(gte(schema.collectedData.createdAt, fourteenDaysAgo))
+    .groupBy(schema.collectedData.sourceId);
+  const hitCountMap = new Map(hitCounts.map(h => [h.sourceId, Number(h.cnt)]));
+
+  // バッチ取得: 最終採用日時（ソース別）
+  const lastAdoptions = await db.select({
+    sourceId: schema.adoptionLogs.sourceId,
+    lastAt: sql<string>`MAX(${schema.adoptionLogs.createdAt})`,
+  })
+    .from(schema.adoptionLogs)
+    .where(eq(schema.adoptionLogs.isAdopted, 1))
+    .groupBy(schema.adoptionLogs.sourceId);
+  const lastAdoptionMap = new Map(lastAdoptions.map(a => [a.sourceId, a.lastAt]));
+
+  let promoted = 0, demoted = 0, reactivated = 0, stoppedCount = 0;
+  const updates: Array<{ id: number; status: string }> = [];
 
   for (const source of allSources) {
-    const logs = await db.select().from(schema.adoptionLogs)
-      .where(eq(schema.adoptionLogs.sourceId, source.id));
-
-    const adopted = logs.filter(l => l.isAdopted === 1).length;
-    const notAdopted = logs.filter(l => l.isAdopted === 0).length;
-    const scoreDelta = logs.length === 0 ? -1 : adopted * 10 - notAdopted * 2;
-    const newScore = (source.score ?? 0) + scoreDelta;
+    const daysSinceCreated = (now.getTime() - new Date(source.createdAt ?? now).getTime()) / 86400000;
+    const hitCount14d = hitCountMap.get(source.id) ?? 0;
+    const lastAdoptedAt = lastAdoptionMap.get(source.id);
+    const daysSinceAdopted = lastAdoptedAt
+      ? (now.getTime() - new Date(lastAdoptedAt).getTime()) / 86400000
+      : Infinity;
 
     let newStatus = source.status;
-    if (source.status === 'candidate' && newScore >= 30) { newStatus = 'active'; promoted++; }
-    else if (source.status === 'active' && newScore < 0) { newStatus = 'low-priority'; demoted++; }
-    else if (source.status === 'low-priority' && newScore < -20) { newStatus = 'stopped'; stoppedCount++; }
 
-    await db.update(schema.sources)
-      .set({ score: newScore, status: newStatus })
-      .where(eq(schema.sources.id, source.id));
+    if (source.status === 'candidate') {
+      // 14日で3回ヒット + レポート採用 → active
+      if (hitCount14d >= 3 && lastAdoptedAt) {
+        newStatus = 'active'; promoted++;
+      // 30日間条件未達 → stopped
+      } else if (daysSinceCreated >= 30) {
+        newStatus = 'stopped'; stoppedCount++;
+      }
+    } else if (source.status === 'active') {
+      // 14日間レポート採用なし → low-priority
+      if (daysSinceAdopted >= 14) { newStatus = 'low-priority'; demoted++; }
+    } else if (source.status === 'low-priority') {
+      // 再びレポート採用 → active
+      if (daysSinceAdopted < 14) { newStatus = 'active'; reactivated++;
+      // 30日間採用なし → stopped
+      } else if (daysSinceAdopted >= 30) { newStatus = 'stopped'; stoppedCount++; }
+    }
+
+    if (newStatus !== source.status) updates.push({ id: source.id, status: newStatus });
   }
 
-  console.log(`[Evolve] 昇格${promoted}, 降格${demoted}, 停止${stoppedCount}`);
+  for (const u of updates) {
+    await db.update(schema.sources).set({ status: u.status }).where(eq(schema.sources.id, u.id));
+  }
+
+  console.log(`[Evolve] 昇格${promoted}, 降格${demoted}, 再活性化${reactivated}, 停止${stoppedCount}`);
 
   // 新規キーワード候補の発見
   const recentData = await db.select({ summary: schema.collectedData.summary })
