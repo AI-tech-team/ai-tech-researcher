@@ -217,7 +217,7 @@ export async function POST() {
       ? JSON.stringify(parsedData.tags.slice(0, 5).map((t: any) => String(t).trim()))
       : null;
 
-    await db.insert(collectedData).values({
+    const insertResult = await db.insert(collectedData).values({
       sourceId: targetSource.id,
       title: parsedData.title,
       url: parsedData.url,
@@ -228,6 +228,17 @@ export async function POST() {
       rawContent: JSON.stringify(parsedData),
       publishedAt: parsedData.publishedAt ? new Date(parsedData.publishedAt).toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
+
+    if (insertResult.rowsAffected > 0) {
+      // 高品質記事はソーススコアを即時ブースト（フィードバックループ）
+      const importance = parsedData.importance ?? 5;
+      if (importance >= 7) {
+        const boost = Math.min(2.0, (importance - 6) * 0.5);
+        await db.update(sources)
+          .set({ score: sql`COALESCE(${sources.score}, 0.0) + ${boost}` })
+          .where(eq(sources.id, targetSource.id));
+      }
+    }
 
     await db.update(sources)
       .set({ lastHitAt: new Date().toISOString() })
