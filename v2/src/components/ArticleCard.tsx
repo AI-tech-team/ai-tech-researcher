@@ -1,6 +1,7 @@
 "use client";
 
-import { Star, Bookmark, ExternalLink } from 'lucide-react';
+import { useState } from 'react';
+import { Star, Bookmark, ExternalLink, CheckCircle2 } from 'lucide-react';
 import type { CollectedItem } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -35,8 +36,15 @@ function timeAgo(dateStr: string): string {
 export function ArticleCard({
   item, interestTags, onToggleFavorite, onToggleReadLater, onMarkAsRead, showReadLater = true,
 }: ArticleCardProps) {
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+
   const color  = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
-  const score  = item.importanceScore ?? 0;
+  // 正規化スコアが利用可能で2以上差があれば表示、なければ生スコア
+  const displayScore = (item.normalizedImportanceScore != null &&
+    Math.abs((item.normalizedImportanceScore) - (item.importanceScore ?? 5)) >= 2)
+    ? item.normalizedImportanceScore
+    : (item.importanceScore ?? 0);
+  const rawScore = item.importanceScore ?? 0;
   const isRead = !!item.isRead;
   const isFav  = !!item.isFavorited;
   const isRL   = !!item.isReadLater;
@@ -44,30 +52,45 @@ export function ArticleCard({
     [item.title, item.summary, item.category].some(f => f?.toLowerCase().includes(tag.toLowerCase()))
   );
   const dateStr = item.publishedAt ?? item.createdAt;
+  const canExpand = (item.summary?.length ?? 0) > 100;
 
   return (
-    <div className={`article-row group ${isRead ? 'opacity-40' : ''}`}>
+    <div className="article-row group">
 
-      {/* Left accent bar (category color) */}
-      <div className="w-[3px] flex-shrink-0" style={{ background: color }} />
+      {/* Left accent bar — 既読時に薄くなる */}
+      <div
+        className="w-[3px] flex-shrink-0 transition-opacity duration-200"
+        style={{ background: color, opacity: isRead ? 0.3 : 1 }}
+      />
 
       <div className="flex-1 min-w-0 px-4 py-3 flex flex-col gap-1.5">
 
         {/* Row 1: category + badges + actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-[10px] font-bold tracking-widest uppercase"
-            style={{ color }}>
+            style={{ color: isRead ? `${color}70` : color }}>
             {item.category ?? 'OTHER'}
           </span>
 
-          {score >= 8 && (
+          {/* 既読バッジ */}
+          {isRead && (
+            <span className="flex items-center gap-0.5 font-mono text-[10px] text-emerald-700 border border-emerald-900/60 bg-emerald-950/50 px-1.5 py-px rounded-md">
+              <CheckCircle2 size={10} />
+              READ
+            </span>
+          )}
+
+          {displayScore >= 8 && (
             <span className="font-mono text-[10px] px-1.5 py-px rounded border font-bold flex-shrink-0"
               style={{
-                color: score >= 9 ? '#f87171' : '#fb923c',
-                borderColor: score >= 9 ? '#f8717128' : '#fb923c28',
-                background: score >= 9 ? '#f8717110' : '#fb923c10',
+                color: displayScore >= 9 ? '#f87171' : '#fb923c',
+                borderColor: displayScore >= 9 ? '#f8717128' : '#fb923c28',
+                background: displayScore >= 9 ? '#f8717110' : '#fb923c10',
               }}>
-              ★{score}
+              {/* 正規化スコアと生スコアが異なる場合は両方表示 */}
+              {item.normalizedImportanceScore != null && item.normalizedImportanceScore !== rawScore
+                ? `★${rawScore}→${item.normalizedImportanceScore}`
+                : `★${rawScore}`}
             </span>
           )}
 
@@ -77,12 +100,12 @@ export function ArticleCard({
             </span>
           )}
 
-          {/* Actions — always visible on mobile, hover on desktop */}
+          {/* Actions */}
           <div className="ml-auto flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-150">
             {onMarkAsRead && (
               <button
                 onClick={() => onMarkAsRead(item.id, isRead)}
-                title={isRead ? '未読に戻す' : '既読'}
+                title={isRead ? '未読に戻す' : '既読にする'}
                 className="px-2 py-1 font-mono text-[10px] rounded border transition-colors"
                 style={isRead
                   ? { color: '#64748b', borderColor: 'rgba(255,255,255,0.08)' }
@@ -117,19 +140,32 @@ export function ArticleCard({
           {item.title ?? '無題'}
         </h4>
 
-        {/* Row 3: summary */}
-        <p className="text-slate-500 text-xs leading-relaxed line-clamp-2">
-          {item.summary ?? 'サマリーなし'}
-        </p>
+        {/* Row 3: summary（タップで展開） */}
+        <div>
+          <p
+            onClick={() => canExpand && setSummaryExpanded(v => !v)}
+            className={`text-slate-500 text-xs leading-relaxed ${canExpand ? 'cursor-pointer' : ''} ${summaryExpanded ? '' : 'line-clamp-2'}`}
+          >
+            {item.summary ?? 'サマリーなし'}
+          </p>
+          {canExpand && (
+            <button
+              onClick={() => setSummaryExpanded(v => !v)}
+              className="font-mono text-[10px] text-slate-700 hover:text-slate-400 transition-colors mt-0.5"
+            >
+              {summaryExpanded ? '▴ 閉じる' : '▾ 続きを見る'}
+            </button>
+          )}
+        </div>
 
-        {/* Row 4: tags + source + date (monospace) */}
+        {/* Row 4: tags + source + date */}
         <div className="flex items-center gap-2 flex-wrap font-mono text-[10px] text-slate-700 mt-0.5">
           {item.tags?.slice(0, 3).map(tag => (
             <span key={tag} className="text-slate-600">#{tag}</span>
           ))}
           <span className="ml-auto flex items-center gap-2 text-slate-600">
             {item.sourceValue && (
-              <span style={{ color: `${color}90` }}>{item.sourceValue}</span>
+              <span style={{ color: isRead ? '#475569' : `${color}90` }}>{item.sourceValue}</span>
             )}
             <span>·</span>
             <span>{timeAgo(dateStr)}</span>

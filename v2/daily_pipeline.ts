@@ -53,6 +53,15 @@ const HN_AI_KEYWORDS = [
 // ── 構造化出力スキーマ ────────────────────────────────────────────────
 const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'] as const;
 
+const ClaimSchema = z.object({
+  claims: z.array(z.object({
+    subject: z.string().max(80),
+    predicate: z.string().max(80),
+    value: z.string().max(150),
+    confidence: z.enum(['high', 'medium', 'low']),
+  })).max(3),
+});
+
 const ArticleEvalSchema = z.object({
   items: z.array(z.object({
     importance: z.number().int().min(0).max(10),
@@ -1000,6 +1009,78 @@ async function sendFailureEmail(error: Error) {
   }
 }
 
+// ── クレーム抽出と矛盾検出（改善4）──────────────────────────────────
+async function runClaimExtraction() {
+  console.log('[Claims] クレーム抽出開始');
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  const targets = await db.select({
+    id: schema.collectedData.id,
+    title: schema.collectedData.title,
+    summary: schema.collectedData.summary,
+  })
+    .from(schema.collectedData)
+    .where(and(
+      gte(schema.collectedData.importanceScore, 7),
+      gte(schema.collectedData.createdAt, since),
+    ))
+    .limit(10);
+
+  if (targets.length === 0) { console.log('[Claims] 対象記事なし'); return; }
+
+  let extracted = 0, contradictions = 0;
+
+  for (const article of targets) {
+    try {
+      const { object } = await withRetry(() => generateObject({
+        model: google('gemini-2.5-flash-lite'),
+        schema: ClaimSchema,
+        prompt: `以下の記事から検証可能な具体的クレームを最大3つ抽出してください。
+クレームは subject（主語: モデル名・企業名等）+ predicate（述語: ベンチマーク名・性能指標等）+ value（具体的な値・内容）の形式で。
+数値・ベンチマーク・比較・性能改善を含むもの優先。「AIが進化した」等の汎用的主張は除外。
+クレームがない場合は空配列を返す。
+
+記事: ${article.title ?? ''}\n${article.summary ?? ''}`,
+      }));
+
+      for (const claim of object.claims) {
+        // 既存クレームと矛盾チェック（同じsubject+predicateで異なるvalue）
+        const existing = await db.select({
+          value: schema.claims.value,
+          confidence: schema.claims.confidence,
+        })
+          .from(schema.claims)
+          .where(and(
+            eq(schema.claims.subject, claim.subject),
+            eq(schema.claims.predicate, claim.predicate),
+            gte(schema.claims.createdAt, twoWeeksAgo),
+          ))
+          .limit(5);
+
+        const hasContradiction = existing.some(e =>
+          e.value.toLowerCase() !== claim.value.toLowerCase() &&
+          e.confidence === 'high' && claim.confidence === 'high'
+        );
+        if (hasContradiction) contradictions++;
+
+        await db.insert(schema.claims).values({
+          articleId: article.id,
+          subject: claim.subject,
+          predicate: claim.predicate,
+          value: claim.value,
+          confidence: claim.confidence,
+        }).onConflictDoNothing();
+        extracted++;
+      }
+    } catch (e: any) {
+      console.warn(`  [Claims] 抽出失敗 (article ${article.id}): ${e.message?.slice(0, 60)}`);
+    }
+  }
+
+  console.log(`[Claims] ${extracted}件抽出, ${contradictions}件矛盾検出`);
+}
+
 async function evolveSources() {
   console.log('[Evolve] ソース進化開始');
 
@@ -1202,6 +1283,89 @@ ${contextText}`,
   } catch (e: any) {
     console.warn('[Evolve] ドメイン発見失敗(非クリティカル):', e.message);
   }
+
+  // ── 改善2: 重要度スコアの相対化（30日分のパーセンタイル正規化）────────
+  try {
+    const thirtyDaysAgoISO = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const allScores = await db.select({
+      id: schema.collectedData.id,
+      score: schema.collectedData.importanceScore,
+    })
+      .from(schema.collectedData)
+      .where(gte(schema.collectedData.createdAt, thirtyDaysAgoISO));
+
+    if (allScores.length >= 10) {
+      const sorted = allScores.map(r => r.score ?? 5).sort((a, b) => a - b);
+      const n = sorted.length;
+      // 各スコア値（0-10）に対応する正規化スコアをマップ
+      const scoreToNorm = new Map<number, number>();
+      for (let s = 0; s <= 10; s++) {
+        const rank = sorted.filter(x => x <= s).length;
+        scoreToNorm.set(s, Math.max(1, Math.min(10, Math.round((rank / n) * 9) + 1)));
+      }
+      // スコア値ごとに一括UPDATE
+      for (const [raw, norm] of scoreToNorm) {
+        if (raw === norm) continue; // 変化なしはスキップ
+        await db.update(schema.collectedData)
+          .set({ normalizedImportanceScore: norm })
+          .where(and(
+            eq(schema.collectedData.importanceScore, raw),
+            gte(schema.collectedData.createdAt, thirtyDaysAgoISO),
+          ));
+      }
+      console.log(`[Evolve] スコア正規化: ${n}件処理`);
+    }
+  } catch (e: any) {
+    console.warn('[Evolve] スコア正規化失敗(非クリティカル):', e.message);
+  }
+
+  // ── 改善3: カバレッジギャップ検出と能動的補完 ────────────────────────
+  try {
+    const CAT_GAP_KEYWORDS: Record<string, string[]> = {
+      'LLM推論':              ['speculative decoding', 'vLLM optimization', 'inference benchmark'],
+      'エージェント':          ['AI agent framework', 'multi-agent LLM', 'autonomous AI workflow'],
+      'ツール/フレームワーク': ['LangChain update', 'Hugging Face PEFT', 'model fine-tuning'],
+      'ハードウェア':          ['NVIDIA AI chip', 'AI accelerator benchmark', 'TPU ML performance'],
+      'ビジネス応用':          ['enterprise LLM deployment', 'AI cost reduction', 'AI compliance'],
+      '研究/論文':             ['NeurIPS 2025 paper', 'AI alignment research', 'ICLR 2025'],
+    };
+    const oneWeekAgoISO = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const fourWeeksAgoISO = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000).toISOString();
+
+    const [historicalCounts, thisWeekCounts] = await Promise.all([
+      db.select({ category: schema.collectedData.category, cnt: count() })
+        .from(schema.collectedData)
+        .where(and(gte(schema.collectedData.createdAt, fourWeeksAgoISO), lt(schema.collectedData.createdAt, oneWeekAgoISO)))
+        .groupBy(schema.collectedData.category),
+      db.select({ category: schema.collectedData.category, cnt: count() })
+        .from(schema.collectedData)
+        .where(gte(schema.collectedData.createdAt, oneWeekAgoISO))
+        .groupBy(schema.collectedData.category),
+    ]);
+
+    const historicalAvg = new Map(historicalCounts.map(r => [r.category, Number(r.cnt) / 3]));
+    const thisWeek = new Map(thisWeekCounts.map(r => [r.category, Number(r.cnt)]));
+    let gapCount = 0;
+
+    for (const [cat, keywords] of Object.entries(CAT_GAP_KEYWORDS)) {
+      const avg = historicalAvg.get(cat) ?? 0;
+      const current = thisWeek.get(cat) ?? 0;
+      if (avg >= 3 && current < avg * 0.4) {
+        console.log(`[Evolve] ギャップ検出: ${cat} (期待${avg.toFixed(1)}/週 → 実績${current})`);
+        for (const kw of keywords.slice(0, 2)) {
+          const kwLower = kw.toLowerCase();
+          if (existingLower.has(kwLower)) continue;
+          const r = await db.insert(schema.sources)
+            .values({ type: 'keyword', value: kw, status: 'candidate', score: 2 })
+            .onConflictDoNothing();
+          if (r.rowsAffected > 0) { gapCount++; existingLower.add(kwLower); }
+        }
+      }
+    }
+    if (gapCount > 0) console.log(`[Evolve] カバレッジギャップ補完: ${gapCount}件追加`);
+  } catch (e: any) {
+    console.warn('[Evolve] カバレッジギャップ検出失敗(非クリティカル):', e.message);
+  }
 }
 
 async function logPipeline(collected: number, failed: number, durationMs: number) {
@@ -1254,6 +1418,8 @@ async function main() {
     const { collected, failed } = await collectData(10);
 
     if (pipelineMode !== 'collect') {
+      await runClaimExtraction();
+
       const reportContent = await generateReport();
       if (reportContent) await sendEmail(reportContent);
 

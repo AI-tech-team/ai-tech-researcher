@@ -19,9 +19,9 @@ import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
   getSourcePerformance, getSourceROI, getCategoryTrendData, getModelMentionData,
-  getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs,
+  getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
 } from './actions';
-import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword } from '@/types';
+import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword, ConflictingClaim } from '@/types';
 
 type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'settings';
 
@@ -64,6 +64,7 @@ export default function Home() {
     keywords: [], categories: [], matrix: [], maxCount: 1,
   });
   const [trendingKeywords, setTrendingKeywords] = useState<TrendingKeyword[]>([]);
+  const [conflictingClaims, setConflictingClaims] = useState<ConflictingClaim[]>([]);
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -80,7 +81,7 @@ export default function Home() {
 
   async function loadData() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs] = await Promise.all([
+    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
@@ -91,6 +92,7 @@ export default function Home() {
       getKeywordCategoryMatrix(),
       getTrendingKeywords(),
       getPipelineLogs(),
+      getConflictingClaims(),
     ]);
     setSourcesList(srcs as Source[]);
     setCollectedItems(data as CollectedItem[]);
@@ -102,6 +104,7 @@ export default function Home() {
     setKwMatrix(matrix as any);
     setTrendingKeywords(trending);
     setPipelineLogs(logs);
+    setConflictingClaims(conflicts as ConflictingClaim[]);
     setIsLoadingData(false);
   }
 
@@ -183,7 +186,7 @@ export default function Home() {
         <motion.div key="overview" {...SLIDE}>
           <OverviewTab sourcesList={sourcesList} collectedItems={collectedItems} reportsList={reportsList}
             activityData={activityData} categoryTrendData={categoryTrendData} modelMentionData={modelMentionData}
-            trendingKeywords={trendingKeywords} isLoadingData={isLoadingData} />
+            trendingKeywords={trendingKeywords} conflictingClaims={conflictingClaims} isLoadingData={isLoadingData} />
         </motion.div>
       )}
       {activeTab === 'data' && (

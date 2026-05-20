@@ -1,12 +1,12 @@
 'use server';
 
 import { db } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights } from '@/db/schema';
 import { desc, eq, count, gte, lte, sql, like, or, isNotNull, and } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
-import type { CollectedItem, PipelineLog, TrendingKeyword } from '@/types';
+import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight } from '@/types';
 
 // ─── 共通クエリヘルパー ───────────────────────────────────────────
 
@@ -29,12 +29,22 @@ const COLLECTED_SELECT = {
   isReadLater: collectedData.isReadLater,
   isRead: collectedData.isRead,
   importanceScore: collectedData.importanceScore,
+  normalizedImportanceScore: collectedData.normalizedImportanceScore,
   tags: collectedData.tags,
   publishedAt: collectedData.publishedAt,
   createdAt: collectedData.createdAt,
   sourceValue: sources.value,
   sourceType: sources.type,
 };
+
+// タイトルとカテゴリから固有技術キーワードを抽出（トピック重み更新用）
+function extractKeywords(title: string | null, category: string | null): string[] {
+  const kws: string[] = [];
+  if (category) kws.push(category);
+  // 英語の固有名詞・技術用語（先頭大文字 or 全大文字、3文字以上）
+  const terms = (title ?? '').match(/[A-Z][a-zA-Z0-9-]{2,}|[A-Z]{3,}/g) ?? [];
+  return [...new Set([...kws, ...terms.slice(0, 4)])];
+}
 
 // ─── データ取得 ───────────────────────────────────────────────────
 
@@ -383,15 +393,31 @@ export async function deleteSource(id: number) {
 export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
   try {
     const newValue = currentlyFavorited ? 0 : 1;
-    const [item] = await db.select({ sourceId: collectedData.sourceId }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
+    const [item] = await db.select({
+      sourceId: collectedData.sourceId,
+      title: collectedData.title,
+      category: collectedData.category,
+    }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
     await db.update(collectedData).set({ isFavorited: newValue }).where(eq(collectedData.id, id));
     if (item?.sourceId) {
       await db.insert(adoptionLogs).values({ sourceId: item.sourceId, isAdopted: newValue });
-      // お気に入り登録 +2 / 解除 -1（0未満にはしない）
       const delta = newValue === 1 ? 2.0 : -1.0;
       await db.update(sources)
         .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
         .where(eq(sources.id, item.sourceId));
+    }
+    // お気に入り = 強いシグナル
+    if (newValue === 1) {
+      const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
+      const now = new Date().toISOString();
+      for (const kw of kws) {
+        await db.insert(userTopicWeights)
+          .values({ keyword: kw, weight: 0.3, updatedAt: now })
+          .onConflictDoUpdate({
+            target: userTopicWeights.keyword,
+            set: { weight: sql`${userTopicWeights.weight} + 0.3`, updatedAt: now },
+          });
+      }
     }
     revalidatePath('/');
     return { success: true };
@@ -415,20 +441,97 @@ export async function toggleReadLater(id: number, current: boolean) {
 export async function markAsRead(id: number, currentIsRead: boolean) {
   try {
     await db.update(collectedData).set({ isRead: currentIsRead ? 0 : 1 }).where(eq(collectedData.id, id));
-    // 未読→既読（= 記事を開いた）のとき、ソーススコアを微加算
     if (!currentIsRead) {
-      const [item] = await db.select({ sourceId: collectedData.sourceId })
-        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+      const [item] = await db.select({
+        sourceId: collectedData.sourceId,
+        title: collectedData.title,
+        category: collectedData.category,
+      }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
+
       if (item?.sourceId) {
         await db.update(sources)
           .set({ score: sql`COALESCE(${sources.score}, 0.0) + 0.3` })
           .where(eq(sources.id, item.sourceId));
+      }
+      // トピック重みを加算（読了 = 弱いシグナル）
+      const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
+      const now = new Date().toISOString();
+      for (const kw of kws) {
+        await db.insert(userTopicWeights)
+          .values({ keyword: kw, weight: 0.1, updatedAt: now })
+          .onConflictDoUpdate({
+            target: userTopicWeights.keyword,
+            set: { weight: sql`${userTopicWeights.weight} + 0.1`, updatedAt: now },
+          });
       }
     }
     return { success: true };
   } catch (error) {
     console.error("Failed to mark as read:", error);
     return { success: false };
+  }
+}
+
+export async function getConflictingClaims(): Promise<ConflictingClaim[]> {
+  try {
+    const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+    const rows = await db.select({
+      id: claims.id,
+      articleId: claims.articleId,
+      subject: claims.subject,
+      predicate: claims.predicate,
+      value: claims.value,
+      confidence: claims.confidence,
+      createdAt: claims.createdAt,
+      articleTitle: collectedData.title,
+    })
+      .from(claims)
+      .leftJoin(collectedData, eq(claims.articleId, collectedData.id))
+      .where(and(
+        gte(claims.createdAt, twoWeeksAgo),
+        eq(claims.confidence, 'high'),
+      ))
+      .orderBy(desc(claims.createdAt));
+
+    // subject+predicateでグループ化して、値が複数あるものを矛盾として検出
+    const groups = new Map<string, Claim[]>();
+    for (const row of rows) {
+      const key = `${row.subject}||${row.predicate}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(row as Claim);
+    }
+
+    const conflicts: ConflictingClaim[] = [];
+    for (const [key, clms] of groups) {
+      const uniqueValues = new Set(clms.map(c => c.value.toLowerCase()));
+      if (uniqueValues.size > 1) {
+        const sepIdx = key.indexOf('||');
+        conflicts.push({
+          subject: key.slice(0, sepIdx),
+          predicate: key.slice(sepIdx + 2),
+          claims: clms.slice(0, 4),
+        });
+      }
+    }
+
+    return conflicts.slice(0, 5);
+  } catch (error) {
+    console.error("Failed to get conflicting claims:", error);
+    return [];
+  }
+}
+
+export async function getUserTopicWeights(): Promise<UserTopicWeight[]> {
+  try {
+    const rows = await db.select({ keyword: userTopicWeights.keyword, weight: userTopicWeights.weight })
+      .from(userTopicWeights)
+      .orderBy(desc(userTopicWeights.weight))
+      .limit(10);
+    return rows.map(r => ({ keyword: r.keyword, weight: r.weight ?? 0 }));
+  } catch (error) {
+    console.error("Failed to get user topic weights:", error);
+    return [];
   }
 }
 

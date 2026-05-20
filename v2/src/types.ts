@@ -8,6 +8,7 @@ export interface CollectedItem {
   isReadLater: number | null;
   isRead: number | null;
   importanceScore: number | null;
+  normalizedImportanceScore?: number | null;
   tags: string[] | null;
   publishedAt: string | null;
   createdAt: string;
@@ -56,6 +57,28 @@ export interface TrendingKeyword {
   thisWeek: number;
   lastWeek: number;
   delta: number;
+}
+
+export interface Claim {
+  id: number;
+  articleId: number | null;
+  subject: string;
+  predicate: string;
+  value: string;
+  confidence: string | null;
+  createdAt: string | null;
+  articleTitle?: string | null;
+}
+
+export interface ConflictingClaim {
+  subject: string;
+  predicate: string;
+  claims: Claim[];
+}
+
+export interface UserTopicWeight {
+  keyword: string;
+  weight: number;
 }
 
 export type ToastType = 'success' | 'error' | 'info';
