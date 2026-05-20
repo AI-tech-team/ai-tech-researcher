@@ -182,7 +182,7 @@ ${contextText}`,
         .from(collectedData)
         .where(and(
           gte(collectedData.createdAt, fourteenDaysAgo),
-          gte(collectedData.importanceScore, 8),
+          gte(collectedData.importanceScore, 9),
         ))
         .limit(30);
 
