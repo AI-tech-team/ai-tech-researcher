@@ -2,7 +2,7 @@ import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import { db } from '@/db';
 import { sources, collectedData } from '@/db/schema';
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, and } from 'drizzle-orm';
 
 export const maxDuration = 60;
 
@@ -165,7 +165,10 @@ importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価。tags
 export async function POST() {
   try {
     const sourceList = await db.select().from(sources)
-      .where(eq(sources.status, 'active'))
+      .where(and(
+        eq(sources.status, 'active'),
+        sql`${sources.type} IN ('url', 'keyword')`,
+      ))
       .orderBy(sql`RANDOM() * (1 + COALESCE(${sources.score}, 0)) DESC`)
       .limit(1);
 
