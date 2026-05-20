@@ -4,6 +4,11 @@ import { db } from '@/db';
 import { sources, collectedData, adoptionLogs } from '@/db/schema';
 import { eq, sql, desc, count, gte, and } from 'drizzle-orm';
 
+const DOMAIN_SKIP = new Set([
+  'google.com', 'youtube.com', 'wikipedia.org', 't.co', 'twitter.com', 'x.com',
+  'instagram.com', 'facebook.com', 'linkedin.com', 'techdrip.net', 'github.com',
+]);
+
 export const maxDuration = 60;
 
 const KW_STOPWORDS = new Set([
@@ -31,7 +36,7 @@ export async function POST() {
     }
 
     // バッチ取得: 14日以内のヒット数・平均重要度（ソース別）
-    const [hitCounts, avgImportances, adoptionCounts, lastAdoptions] = await Promise.all([
+    const [hitCounts, qualityStats, adoptionCounts, lastAdoptions] = await Promise.all([
       db.select({ sourceId: collectedData.sourceId, cnt: count() })
         .from(collectedData)
         .where(gte(collectedData.createdAt, fourteenDaysAgo))
@@ -39,6 +44,7 @@ export async function POST() {
       db.select({
         sourceId: collectedData.sourceId,
         avg: sql<number>`COALESCE(AVG(${collectedData.importanceScore}), 5)`,
+        max: sql<number>`COALESCE(MAX(${collectedData.importanceScore}), 5)`,
       })
         .from(collectedData)
         .where(gte(collectedData.createdAt, fourteenDaysAgo))
@@ -57,7 +63,8 @@ export async function POST() {
     ]);
 
     const hitCountMap = new Map(hitCounts.map(h => [h.sourceId, Number(h.cnt)]));
-    const avgImportanceMap = new Map(avgImportances.map(a => [a.sourceId, Number(a.avg)]));
+    const avgImportanceMap = new Map(qualityStats.map(a => [a.sourceId, Number(a.avg)]));
+    const maxImportanceMap = new Map(qualityStats.map(a => [a.sourceId, Number(a.max)]));
     const adoptionCountMap = new Map(adoptionCounts.map(a => [a.sourceId, Number(a.cnt)]));
     const lastAdoptionMap = new Map(lastAdoptions.map(a => [a.sourceId, a.lastAt]));
 
@@ -71,10 +78,12 @@ export async function POST() {
         ? (now.getTime() - new Date(lastAdoptedAt).getTime()) / 86400000
         : Infinity;
 
-      // 品質ベースのスコア: 平均重要度 × (1 + 採用回数 × 0.5)
+      // 品質ベースのスコア: (平均×0.6 + 最大×0.4) × (1 + 採用回数 × 0.5)
       const avgImportance = avgImportanceMap.get(source.id) ?? 5;
+      const maxImportance = maxImportanceMap.get(source.id) ?? avgImportance;
       const adoptionCount = adoptionCountMap.get(source.id) ?? 0;
-      const newScore = Math.round(avgImportance * (1 + adoptionCount * 0.5) * 10) / 10;
+      const qualityBase = avgImportance * 0.6 + maxImportance * 0.4;
+      const newScore = Math.round(qualityBase * (1 + adoptionCount * 0.5) * 10) / 10;
 
       let newStatus = source.status ?? 'candidate';
       if (source.status === 'candidate') {
@@ -166,10 +175,39 @@ ${contextText}`,
       console.warn('[Evolve] keyword discovery failed (non-critical):', e);
     }
 
+    // ── ドメイン自動発見（重要度8以上の記事から）──────────────────────
+    let newDomainsCount = 0;
+    try {
+      const highQualityUrls = await db.select({ url: collectedData.url })
+        .from(collectedData)
+        .where(and(
+          gte(collectedData.createdAt, fourteenDaysAgo),
+          gte(collectedData.importanceScore, 8),
+        ))
+        .limit(30);
+
+      for (const { url } of highQualityUrls) {
+        if (!url) continue;
+        try {
+          const hostname = new URL(url).hostname.replace(/^www\./, '');
+          if (DOMAIN_SKIP.has(hostname)) continue;
+          const allSrcCheck = await db.select({ value: sources.value })
+            .from(sources).where(eq(sources.value, hostname)).limit(1);
+          if (allSrcCheck.length > 0) continue;
+          const r = await db.insert(sources)
+            .values({ type: 'keyword', value: hostname, status: 'candidate', score: 2 })
+            .onConflictDoNothing();
+          if (r.rowsAffected > 0) newDomainsCount++;
+        } catch { }
+      }
+    } catch (e) {
+      console.warn('[Evolve] ドメイン発見失敗(非クリティカル):', e);
+    }
+
     return Response.json({
       success: true,
-      message: `進化完了: ${promoted}件昇格, ${demoted}件降格, ${reactivated}件再活性化, ${stoppedCount}件停止, ${newKeywordsCount}件新規候補追加`,
-      stats: { promoted, demoted, reactivated, stopped: stoppedCount, newKeywords: newKeywordsCount },
+      message: `進化完了: ${promoted}件昇格, ${demoted}件降格, ${reactivated}件再活性化, ${stoppedCount}件停止, ${newKeywordsCount}件新規候補追加, ${newDomainsCount}件新規ドメイン追加`,
+      stats: { promoted, demoted, reactivated, stopped: stoppedCount, newKeywords: newKeywordsCount, newDomains: newDomainsCount },
     });
   } catch (error: any) {
     console.error('[Evolve] error:', error);
