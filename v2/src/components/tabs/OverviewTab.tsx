@@ -1,12 +1,12 @@
 "use client";
 
-import { TrendingUp, Globe, FileText, Star, BarChart3, Database, Brain, Flame, ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react';
+import { TrendingUp, Globe, FileText, Star, BarChart3, Database, Brain, Flame, ArrowUpRight, ArrowDownRight, Minus, Zap } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar as RechartsBar,
 } from 'recharts';
 import { SkeletonStat } from '@/components/Skeleton';
-import type { CollectedItem, Source, Report, TrendingKeyword } from '@/types';
+import type { CollectedItem, Source, Report, TrendingKeyword, ConflictingClaim } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8',
@@ -32,12 +32,13 @@ interface OverviewTabProps {
   categoryTrendData: any[];
   modelMentionData: { model: string; count: number }[];
   trendingKeywords: TrendingKeyword[];
+  conflictingClaims: ConflictingClaim[];
   isLoadingData: boolean;
 }
 
 export function OverviewTab({
   sourcesList, collectedItems, reportsList, activityData,
-  categoryTrendData, modelMentionData, trendingKeywords, isLoadingData,
+  categoryTrendData, modelMentionData, trendingKeywords, conflictingClaims, isLoadingData,
 }: OverviewTabProps) {
   const chartData = [
     { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length },
@@ -141,6 +142,38 @@ export function OverviewTab({
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Conflicting Claims */}
+      {conflictingClaims.length > 0 && (
+        <div className="glass-card border-yellow-500/20">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
+            <Zap size={16} className="text-yellow-400" /> 今週の論点（矛盾するクレーム）
+          </h3>
+          <div className="flex flex-col gap-3">
+            {conflictingClaims.map((conflict, i) => (
+              <div key={i} className="rounded-xl border border-yellow-500/10 bg-yellow-500/5 p-3 flex flex-col gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-[10px] font-bold text-yellow-400 uppercase tracking-wider">{conflict.subject}</span>
+                  <span className="font-mono text-[10px] text-slate-500">/</span>
+                  <span className="font-mono text-[10px] text-slate-400">{conflict.predicate}</span>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  {conflict.claims.map((claim, j) => (
+                    <div key={j} className="flex items-start gap-2">
+                      <span className={`font-mono text-[9px] px-1.5 py-px rounded flex-shrink-0 mt-0.5 ${
+                        claim.confidence === 'high' ? 'bg-red-500/15 text-red-400 border border-red-500/20' :
+                        claim.confidence === 'medium' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20' :
+                        'bg-slate-500/15 text-slate-400 border border-slate-500/20'
+                      }`}>{claim.confidence?.toUpperCase()}</span>
+                      <span className="text-xs text-slate-300 leading-relaxed">{claim.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Row 2 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

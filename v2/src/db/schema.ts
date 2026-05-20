@@ -23,6 +23,7 @@ export const collectedData = sqliteTable("collected_data", {
   isReadLater: integer("is_read_later").default(0),
   isRead: integer("is_read").default(0),
   importanceScore: integer("importance_score").default(5),
+  normalizedImportanceScore: integer("normalized_importance_score"),
   tags: text("tags"), // JSON array: '["tag1","tag2"]'
   rawContent: text("raw_content"),
   publishedAt: text("published_at"),
@@ -52,4 +53,21 @@ export const pipelineLogs = sqliteTable("pipeline_logs", {
   failed: integer("failed").default(0),
   durationMs: integer("duration_ms").default(0),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const claims = sqliteTable("claims", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  articleId: integer("article_id").references(() => collectedData.id),
+  subject: text("subject").notNull(),
+  predicate: text("predicate").notNull(),
+  value: text("value").notNull(),
+  confidence: text("confidence").default('medium'), // 'high', 'medium', 'low'
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const userTopicWeights = sqliteTable("user_topic_weights", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  keyword: text("keyword").notNull().unique(),
+  weight: real("weight").default(0),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
