@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  LayoutGrid, Globe, Bookmark, FileText, Database,
+  LayoutGrid, Globe, Bookmark, FileText, Settings,
   BarChart3, Terminal, Sparkles, RefreshCw, Zap,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,7 +13,7 @@ import { OverviewTab } from '@/components/tabs/OverviewTab';
 import { DataTab } from '@/components/tabs/DataTab';
 import { ReadLaterTab } from '@/components/tabs/ReadLaterTab';
 import { ReportsTab } from '@/components/tabs/ReportsTab';
-import { SourcesTab } from '@/components/tabs/SourcesTab';
+import { SettingsTab } from '@/components/tabs/SettingsTab';
 import { PerformanceTab } from '@/components/tabs/PerformanceTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
@@ -23,15 +23,15 @@ import {
 } from './actions';
 import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword } from '@/types';
 
-type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'sources' | 'performance';
+type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'settings';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: '全体概要',
   data: '収集データ',
   readlater: '後で読む',
   reports: '調査レポート',
-  sources: '情報ソース管理',
   performance: 'ソース分析',
+  settings: '設定',
 };
 
 const TAB_SHORT: Record<Tab, string> = {
@@ -39,8 +39,8 @@ const TAB_SHORT: Record<Tab, string> = {
   data: 'データ',
   readlater: '後読み',
   reports: 'レポート',
-  sources: 'ソース',
   performance: '分析',
+  settings: '設定',
 };
 
 const SLIDE = {
@@ -164,8 +164,8 @@ export default function Home() {
     ['data', <Globe size={19} />, `収集データ${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
     ['readlater', <Bookmark size={19} />, `後で読む${readLaterCount > 0 ? ` (${readLaterCount})` : ''}`],
     ['reports', <FileText size={19} />, '調査レポート'],
-    ['sources', <Database size={19} />, '情報ソース管理'],
     ['performance', <BarChart3 size={19} />, 'ソース分析'],
+    ['settings', <Settings size={19} />, '設定'],
   ];
 
   const mobileNavItems: [Tab, React.ReactNode][] = [
@@ -173,8 +173,8 @@ export default function Home() {
     ['data', <Globe size={22} />],
     ['readlater', <Bookmark size={22} />],
     ['reports', <FileText size={22} />],
-    ['sources', <Database size={22} />],
     ['performance', <BarChart3 size={22} />],
+    ['settings', <Settings size={22} />],
   ];
 
   const tabContent = (
@@ -189,7 +189,7 @@ export default function Home() {
       {activeTab === 'data' && (
         <motion.div key="data" {...SLIDE}>
           <DataTab collectedItems={collectedItems} isLoadingData={isLoadingData}
-            interestTags={interestTags} onInterestTagsChange={setInterestTags}
+            interestTags={interestTags}
             onToggleFavorite={handleToggleFavorite} onToggleReadLater={handleToggleReadLater}
             onMarkAsRead={handleMarkAsRead} />
         </motion.div>
@@ -207,17 +207,19 @@ export default function Home() {
             collectedItemsCount={collectedItems.length} onReload={loadData} />
         </motion.div>
       )}
-      {activeTab === 'sources' && (
-        <motion.div key="sources" {...SLIDE}>
-          <SourcesTab sourcesList={sourcesList} isLoadingData={isLoadingData}
-            onAddSource={handleAddSource} onDeleteSource={handleDeleteSource} onEvolve={handleEvolve} />
-        </motion.div>
-      )}
       {activeTab === 'performance' && (
         <motion.div key="performance" {...SLIDE}>
           <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}
             sourcePerformance={sourcePerformance} kwMatrix={kwMatrix}
             pipelineLogs={pipelineLogs} isLoadingData={isLoadingData} />
+        </motion.div>
+      )}
+      {activeTab === 'settings' && (
+        <motion.div key="settings" {...SLIDE}>
+          <SettingsTab sourcesList={sourcesList} isLoadingData={isLoadingData}
+            interestTags={interestTags} onInterestTagsChange={setInterestTags}
+            onAddSource={handleAddSource} onDeleteSource={handleDeleteSource}
+            onEvolve={handleEvolve} onReload={loadData} />
         </motion.div>
       )}
     </AnimatePresence>

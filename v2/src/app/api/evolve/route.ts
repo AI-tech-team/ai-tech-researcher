@@ -2,12 +2,23 @@ import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import { db } from '@/db';
 import { sources, collectedData, adoptionLogs } from '@/db/schema';
-import { eq, sql, desc, inArray } from 'drizzle-orm';
+import { eq, sql, desc, count, gte, and } from 'drizzle-orm';
 
 export const maxDuration = 60;
 
+const KW_STOPWORDS = new Set([
+  'AI', 'LLM', 'ML', 'AGI', 'GPT', 'API',
+  '人工知能', '機械学習', '深層学習', 'ディープラーニング',
+  'モデル', '研究', '技術', 'データ', 'アルゴリズム', 'システム',
+  '学習', '最適化', 'ツール', 'フレームワーク', 'ライブラリ',
+]);
+
 export async function POST() {
   try {
+    const now = new Date();
+    const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
     const allSources = await db.select().from(sources)
       .where(sql`${sources.status} != 'stopped'`);
 
@@ -19,66 +30,136 @@ export async function POST() {
       });
     }
 
-    // 全adoption_logsを1クエリで取得（N+1 → 1+N に最適化）
-    const sourceIds = allSources.map(s => s.id);
-    const allLogs = await db.select({
-      sourceId: adoptionLogs.sourceId,
-      isAdopted: adoptionLogs.isAdopted,
-    }).from(adoptionLogs)
-      .where(inArray(adoptionLogs.sourceId, sourceIds));
+    // バッチ取得: 14日以内のヒット数・平均重要度（ソース別）
+    const [hitCounts, avgImportances, adoptionCounts, lastAdoptions] = await Promise.all([
+      db.select({ sourceId: collectedData.sourceId, cnt: count() })
+        .from(collectedData)
+        .where(gte(collectedData.createdAt, fourteenDaysAgo))
+        .groupBy(collectedData.sourceId),
+      db.select({
+        sourceId: collectedData.sourceId,
+        avg: sql<number>`COALESCE(AVG(${collectedData.importanceScore}), 5)`,
+      })
+        .from(collectedData)
+        .where(gte(collectedData.createdAt, fourteenDaysAgo))
+        .groupBy(collectedData.sourceId),
+      db.select({ sourceId: adoptionLogs.sourceId, cnt: count() })
+        .from(adoptionLogs)
+        .where(and(eq(adoptionLogs.isAdopted, 1), gte(adoptionLogs.createdAt, thirtyDaysAgo)))
+        .groupBy(adoptionLogs.sourceId),
+      db.select({
+        sourceId: adoptionLogs.sourceId,
+        lastAt: sql<string>`MAX(${adoptionLogs.createdAt})`,
+      })
+        .from(adoptionLogs)
+        .where(eq(adoptionLogs.isAdopted, 1))
+        .groupBy(adoptionLogs.sourceId),
+    ]);
 
-    // sourceIdでグループ化
-    const logMap = new Map<number, { adopted: number; notAdopted: number }>();
-    for (const log of allLogs) {
-      if (log.sourceId == null) continue;
-      const entry = logMap.get(log.sourceId) ?? { adopted: 0, notAdopted: 0 };
-      if (log.isAdopted === 1) entry.adopted++;
-      else entry.notAdopted++;
-      logMap.set(log.sourceId, entry);
-    }
+    const hitCountMap = new Map(hitCounts.map(h => [h.sourceId, Number(h.cnt)]));
+    const avgImportanceMap = new Map(avgImportances.map(a => [a.sourceId, Number(a.avg)]));
+    const adoptionCountMap = new Map(adoptionCounts.map(a => [a.sourceId, Number(a.cnt)]));
+    const lastAdoptionMap = new Map(lastAdoptions.map(a => [a.sourceId, a.lastAt]));
 
-    let promoted = 0, demoted = 0, stoppedCount = 0;
+    let promoted = 0, demoted = 0, reactivated = 0, stoppedCount = 0;
 
     for (const source of allSources) {
-      const logs = logMap.get(source.id) ?? { adopted: 0, notAdopted: 0 };
-      const total = logs.adopted + logs.notAdopted;
-      const scoreDelta = total === 0 ? -1 : logs.adopted * 10 - logs.notAdopted * 2;
-      const newScore = (source.score ?? 0) + scoreDelta;
+      const daysSinceCreated = (now.getTime() - new Date(source.createdAt ?? now).getTime()) / 86400000;
+      const hitCount14d = hitCountMap.get(source.id) ?? 0;
+      const lastAdoptedAt = lastAdoptionMap.get(source.id);
+      const daysSinceAdopted = lastAdoptedAt
+        ? (now.getTime() - new Date(lastAdoptedAt).getTime()) / 86400000
+        : Infinity;
 
-      let newStatus = source.status;
-      if (source.status === 'candidate' && newScore >= 30) { newStatus = 'active'; promoted++; }
-      else if (source.status === 'active' && newScore < 0) { newStatus = 'low-priority'; demoted++; }
-      else if (source.status === 'low-priority' && newScore < -20) { newStatus = 'stopped'; stoppedCount++; }
+      // 品質ベースのスコア: 平均重要度 × (1 + 採用回数 × 0.5)
+      const avgImportance = avgImportanceMap.get(source.id) ?? 5;
+      const adoptionCount = adoptionCountMap.get(source.id) ?? 0;
+      const newScore = Math.round(avgImportance * (1 + adoptionCount * 0.5) * 10) / 10;
+
+      let newStatus = source.status ?? 'candidate';
+      if (source.status === 'candidate') {
+        if (hitCount14d >= 3 && lastAdoptedAt) { newStatus = 'active'; promoted++; }
+        else if (daysSinceCreated >= 14) { newStatus = 'stopped'; stoppedCount++; }
+      } else if (source.status === 'active') {
+        if (daysSinceAdopted >= 14) { newStatus = 'low-priority'; demoted++; }
+      } else if (source.status === 'low-priority') {
+        if (daysSinceAdopted < 14) { newStatus = 'active'; reactivated++;
+        } else if (daysSinceAdopted >= 30) { newStatus = 'stopped'; stoppedCount++; }
+      }
 
       await db.update(sources)
         .set({ score: newScore, status: newStatus as any, updatedAt: new Date().toISOString() })
         .where(eq(sources.id, source.id));
     }
 
-    // 新規キーワード候補の発見（失敗しても全体は成功扱い）
+    // ── 新規キーワード候補の発見（品質強化版）────────────────────────
     let newKeywordsCount = 0;
     try {
-      const recentData = await db.select({ summary: collectedData.summary })
+      const highQualityData = await db.select({
+        summary: collectedData.summary,
+        title: collectedData.title,
+        importanceScore: collectedData.importanceScore,
+      })
         .from(collectedData)
-        .orderBy(desc(collectedData.createdAt))
-        .limit(20);
+        .where(and(
+          gte(collectedData.createdAt, fourteenDaysAgo),
+          gte(collectedData.importanceScore, 6),
+        ))
+        .orderBy(desc(collectedData.importanceScore))
+        .limit(15);
 
-      if (recentData.length > 0) {
+      if (highQualityData.length > 0) {
+        const allSourceValues = await db.select({ value: sources.value }).from(sources);
+        const existingLower = new Set(allSourceValues.map(s => s.value.toLowerCase()));
+
+        const contextText = highQualityData
+          .map(d => `[重要度:${d.importanceScore}] ${d.title ?? ''}: ${d.summary ?? ''}`)
+          .join('\n');
+        const allText = highQualityData
+          .map(d => `${d.title ?? ''} ${d.summary ?? ''}`)
+          .join(' ')
+          .toLowerCase();
+
         const { text } = await generateText({
           model: google('gemini-2.5-flash-lite'),
-          prompt: `以下の記事サマリー群から、新興AIキーワードを5つ抽出してJSON配列のみで出力してください: ["kw1", "kw2", ...]
+          prompt: `以下の高品質AI記事（重要度7以上）から、追跡すべき具体的なAI技術キーワードを最大5つ抽出してください。
 
-${recentData.map(d => d.summary).join('\n')}`,
+【抽出条件】
+- 特定のモデル名・アーキテクチャ名・手法名・ツール名・フレームワーク名のみ
+- 「AI」「LLM」「機械学習」「モデル」「研究」「技術」などの汎用語は含めない
+- 固有名詞・略語・製品名を優先（例: Mamba, FlashAttention, LoRA, Phi-4, GRPO）
+- 正式名称・最も一般的な表記で統一する
+
+JSON配列のみで出力: ["keyword1", "keyword2", ...]
+
+【記事】
+${contextText}`,
         });
 
-        const kws: string[] = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-        for (const kw of kws) {
+        const rawKws: string[] = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+        const addedThisRound = new Set<string>();
+
+        for (const kw of rawKws) {
           const trimmed = kw.trim();
-          if (!trimmed || trimmed.length > 100) continue;
+          if (!trimmed || trimmed.length < 3 || trimmed.length > 60) continue;
+          if (KW_STOPWORDS.has(trimmed)) continue;
+
+          const kwLower = trimmed.toLowerCase();
+          if (existingLower.has(kwLower)) continue;
+          if (addedThisRound.has(kwLower)) continue;
+
+          const escaped = kwLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const freq = (allText.match(new RegExp(escaped, 'g')) ?? []).length;
+          const initialScore = Math.min(10, freq * 1.5);
+
           const res = await db.insert(sources)
-            .values({ type: 'keyword', value: trimmed, status: 'candidate', score: 0 })
+            .values({ type: 'keyword', value: trimmed, status: 'candidate', score: initialScore })
             .onConflictDoNothing();
-          if (res.rowsAffected > 0) newKeywordsCount++;
+          if (res.rowsAffected > 0) {
+            newKeywordsCount++;
+            addedThisRound.add(kwLower);
+            existingLower.add(kwLower);
+          }
         }
       }
     } catch (e) {
@@ -87,8 +168,8 @@ ${recentData.map(d => d.summary).join('\n')}`,
 
     return Response.json({
       success: true,
-      message: `進化完了: ${promoted}件昇格, ${demoted}件降格, ${stoppedCount}件停止, ${newKeywordsCount}件新規候補追加`,
-      stats: { promoted, demoted, stopped: stoppedCount, newKeywords: newKeywordsCount },
+      message: `進化完了: ${promoted}件昇格, ${demoted}件降格, ${reactivated}件再活性化, ${stoppedCount}件停止, ${newKeywordsCount}件新規候補追加`,
+      stats: { promoted, demoted, reactivated, stopped: stoppedCount, newKeywords: newKeywordsCount },
     });
   } catch (error: any) {
     console.error('[Evolve] error:', error);

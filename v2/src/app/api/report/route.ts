@@ -2,39 +2,56 @@ import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
 import { db } from '@/db';
 import { collectedData, reports } from '@/db/schema';
-import { desc, sql } from 'drizzle-orm';
+import { desc, gte } from 'drizzle-orm';
 
 export const maxDuration = 60;
 
 export async function POST() {
   try {
-    // 最新の収集データを取得
-    const recentData = await db.select().from(collectedData).orderBy(desc(collectedData.createdAt)).limit(10);
-    
+    // 直近7日間の重要度TOP15を取得
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const recentData = await db.select().from(collectedData)
+      .where(gte(collectedData.createdAt, sevenDaysAgo))
+      .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
+      .limit(15);
+
     if (recentData.length === 0) {
       return Response.json({ success: false, message: 'レポートの元になる収集データがありません。' }, { status: 400 });
     }
 
-    // レポート生成用のプロンプト構築
-    const contextStr = recentData.map(d => `[タイトル: ${d.title}]\n要約: ${d.summary}\nURL: ${d.url}`).join('\n\n---\n\n');
+    const contextStr = recentData
+      .map(d => `[重要度:${d.importanceScore ?? 5}/10][${d.category ?? '未分類'}] ${d.title}\n${d.summary}\nURL: ${d.url}\n公開日: ${d.publishedAt?.split('T')[0] ?? '不明'}`)
+      .join('\n\n---\n\n');
 
-    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
 
     const { text } = await generateText({
       model: google('gemini-2.5-flash-lite'),
-      system: `あなたはAIテック情報収集システムのレポーティングエンジンです。
-以下の「収集された最新データ」を元に、『AIモデル・AI技術の最前線』に特化したデイリーレポート（Markdown形式）を作成してください。
-最新のAI技術動向を常に把握したいエンジニア・研究者が、10分読むだけで最新のAIモデルの動向や最先端のユースケースを効率よくキャッチアップできるよう、具体的・実用的なトーンで執筆してください。
+      system: `あなたはAI技術動向の専門アナリストです。収集データを元に、AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
 
-レポートには以下の要素を含めてください：
-1. **今日のAI技術動向サマリー** (技術的進化の要点)
-2. **注目モデル・ツールの深掘り解説** (コンテキスト長、推論速度、コスト、ベンチマーク等の具体的な指標)
-3. **エンジニアへの実践的インサイト** (実用的なユースケースや実装アプローチ、採用を検討すべきポイント)
-文字数は1200文字程度で、Markdownの箇条書きや絵文字を活用して非常に読みやすく美しくフォーマットしてください。`,
-      prompt: `今日の日付: ${today}\n\n【収集データ】\n${contextStr}`,
+【必須構成】
+## 🔥 今日のハイライト
+重要度8以上の記事を中心に3〜5点。各項目は「何が起きたか」「なぜ重要か」「実務への影響」を2〜3行で。
+
+## 📊 カテゴリ別トピック
+カテゴリ（LLM推論/エージェント/ツール・フレームワーク/ハードウェア/ビジネス応用/研究・論文）ごとに整理。
+
+## 💡 エンジニアへの実践的インサイト
+今日のデータから導き出せる実装・採用・評価のポイントを箇条書きで。
+
+## 📈 今週の注目トレンド
+複数記事を横断して見えるテーマ・トレンドを1〜2段落で。
+
+【ルール】
+- 全体1500〜2000文字
+- 具体的な数値・ベンチマーク・実装詳細を含める
+- 主観的な「すごい」ではなく客観的な事実ベースで記述
+- 重要度が高い記事ほど詳しく解説する
+- 絵文字・箇条書きを活用して読みやすく`,
+      prompt: `今日の日付: ${today}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
     });
 
-    const reportDate = new Date().toISOString().split('T')[0];
+    const reportDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
     // DBに保存
     const [inserted] = await db.insert(reports).values({

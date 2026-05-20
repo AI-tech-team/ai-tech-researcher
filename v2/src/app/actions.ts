@@ -387,6 +387,11 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
     await db.update(collectedData).set({ isFavorited: newValue }).where(eq(collectedData.id, id));
     if (item?.sourceId) {
       await db.insert(adoptionLogs).values({ sourceId: item.sourceId, isAdopted: newValue });
+      // お気に入り登録 +2 / 解除 -1（0未満にはしない）
+      const delta = newValue === 1 ? 2.0 : -1.0;
+      await db.update(sources)
+        .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
+        .where(eq(sources.id, item.sourceId));
     }
     revalidatePath('/');
     return { success: true };
@@ -410,6 +415,16 @@ export async function toggleReadLater(id: number, current: boolean) {
 export async function markAsRead(id: number, currentIsRead: boolean) {
   try {
     await db.update(collectedData).set({ isRead: currentIsRead ? 0 : 1 }).where(eq(collectedData.id, id));
+    // 未読→既読（= 記事を開いた）のとき、ソーススコアを微加算
+    if (!currentIsRead) {
+      const [item] = await db.select({ sourceId: collectedData.sourceId })
+        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+      if (item?.sourceId) {
+        await db.update(sources)
+          .set({ score: sql`COALESCE(${sources.score}, 0.0) + 0.3` })
+          .where(eq(sources.id, item.sourceId));
+      }
+    }
     return { success: true };
   } catch (error) {
     console.error("Failed to mark as read:", error);
