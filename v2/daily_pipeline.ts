@@ -180,6 +180,125 @@ JSON配列で出力（インデックス順を維持）:
   return inserted;
 }
 
+// ── ArXiv論文収集（cs.AI / cs.LG / cs.CL）────────────────────────────
+async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Promise<number> {
+  const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const url = 'https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL&sortBy=submittedDate&sortOrder=descending&max_results=30';
+
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+    signal: AbortSignal.timeout(20000),
+  });
+  const xml = await res.text();
+
+  const entries: Array<{ title: string; url: string; summary: string; published: string }> = [];
+  const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+  let m: RegExpExecArray | null;
+  while ((m = entryRegex.exec(xml)) !== null) {
+    const chunk = m[1];
+    const get = (tag: string) =>
+      (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\[CDATA\[)?([\\s\\S]*?)(?:\]\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim();
+    const title = get('title').replace(/\s+/g, ' ');
+    const link = chunk.match(/<link[^>]+href="([^"]+)"[^>]*rel="alternate"/)?.[1]
+               ?? chunk.match(/<link[^>]+rel="alternate"[^>]+href="([^"]+)"/)?.[1]
+               ?? '';
+    const summary = get('summary').replace(/\s+/g, ' ').slice(0, 500);
+    const published = get('published');
+    if (title && link) entries.push({ title, url: link, summary, published });
+  }
+
+  const recent = entries.filter(e =>
+    e.published && new Date(e.published).getTime() >= sevenDaysAgoMs
+  ).slice(0, 10);
+
+  if (recent.length === 0) return 0;
+
+  const batchText = recent.map((e, i) => `[${i}] ${e.title}\n${e.summary}`).join('\n\n');
+  const { text } = await generateText({
+    model: google('gemini-2.5-flash-lite'),
+    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の重要度を評価し、日本語要約を生成してください。
+
+${batchText}
+
+JSON配列で出力（インデックス順を維持）:
+[{"importance": 8, "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他", "summary": "150文字の日本語要約"}, ...]`,
+  });
+
+  const evaluations: Array<{ importance: number; category: string; summary: string }> =
+    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+
+  let inserted = 0;
+  for (let i = 0; i < recent.length; i++) {
+    const item = recent[i];
+    const ev = evaluations[i];
+    if (!ev || ev.importance < 5) continue;
+    const r = await db.insert(schema.collectedData).values({
+      sourceId: source.id,
+      title: item.title,
+      url: item.url,
+      summary: ev.summary,
+      category: ev.category ?? '研究/論文',
+      importanceScore: ev.importance,
+      tags: JSON.stringify(['arxiv', ev.category ?? '研究/論文']),
+      publishedAt: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
+    }).onConflictDoNothing();
+    if (r.rowsAffected > 0) inserted++;
+  }
+  return inserted;
+}
+
+// ── GitHub Trending AI収集（GitHub Search API）────────────────────────
+async function collectFromGitHubTrending(source: typeof schema.sources.$inferSelect): Promise<number> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const url = `https://api.github.com/search/repositories?q=topic:llm+OR+topic:ai-agent+OR+topic:machine-learning+stars:>200+created:>${sevenDaysAgo}&sort=stars&order=desc&per_page=15`;
+
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'AIResearcher/1.0', 'Accept': 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
+  const json = await res.json();
+  const items: any[] = json.items ?? [];
+  if (items.length === 0) return 0;
+
+  const candidates = items.slice(0, 10);
+  const batchText = candidates.map((r: any, i: number) =>
+    `[${i}] [⭐${r.stargazers_count}] ${r.full_name}\n${r.description ?? ''}\nTopics: ${(r.topics ?? []).slice(0, 5).join(', ')}`
+  ).join('\n\n');
+
+  const { text } = await generateText({
+    model: google('gemini-2.5-flash-lite'),
+    prompt: `以下のGitHubトレンドリポジトリ（AI/ML分野）の重要度を評価し、日本語要約を生成してください。
+
+${batchText}
+
+JSON配列で出力（インデックス順を維持）:
+[{"importance": 7, "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他", "summary": "150文字の日本語要約"}, ...]`,
+  });
+
+  const evaluations: Array<{ importance: number; category: string; summary: string }> =
+    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+
+  let inserted = 0;
+  for (let i = 0; i < candidates.length; i++) {
+    const item = candidates[i];
+    const ev = evaluations[i];
+    if (!ev || ev.importance < 5) continue;
+    const r = await db.insert(schema.collectedData).values({
+      sourceId: source.id,
+      title: `[GitHub] ${item.full_name}`,
+      url: item.html_url,
+      summary: ev.summary,
+      category: ev.category ?? 'ツール/フレームワーク',
+      importanceScore: ev.importance,
+      tags: JSON.stringify(['github-trending', `⭐${item.stargazers_count}`]),
+      publishedAt: item.created_at ?? new Date().toISOString(),
+    }).onConflictDoNothing();
+    if (r.rowsAffected > 0) inserted++;
+  }
+  return inserted;
+}
+
 async function collectData(rounds = 10): Promise<{ collected: number; failed: number }> {
   console.log(`[Collect] ${rounds}ラウンド開始`);
   let collected = 0;
@@ -296,6 +415,36 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
       console.log(`  [HN] ${inserted}件追加`);
     } catch (e: any) {
       console.error(`  HN収集失敗: ${e.message}`);
+      failed++;
+    }
+  }
+
+  // ArXiv型ソース
+  const arxivSources = await db.select().from(schema.sources)
+    .where(and(eq(schema.sources.type, 'arxiv' as any), eq(schema.sources.status, 'active')));
+  for (const target of arxivSources) {
+    try {
+      const inserted = await collectFromArXiv(target);
+      collected += inserted;
+      await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
+      console.log(`  [ArXiv] ${inserted}件追加`);
+    } catch (e: any) {
+      console.error(`  ArXiv収集失敗: ${e.message}`);
+      failed++;
+    }
+  }
+
+  // GitHub Trending型ソース
+  const githubSources = await db.select().from(schema.sources)
+    .where(and(eq(schema.sources.type, 'github-trending' as any), eq(schema.sources.status, 'active')));
+  for (const target of githubSources) {
+    try {
+      const inserted = await collectFromGitHubTrending(target);
+      collected += inserted;
+      await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
+      console.log(`  [GitHub Trending] ${inserted}件追加`);
+    } catch (e: any) {
+      console.error(`  GitHub Trending収集失敗: ${e.message}`);
       failed++;
     }
   }
@@ -439,6 +588,16 @@ async function generateReport(): Promise<string | null> {
     ? '\n\n【カテゴリ別週次トレンド（参考データ）】\n' + trendLines.join('\n')
     : '';
 
+  // 前日レポートのキーテーマを引き継ぎ（レポートの記憶）
+  const prevDaily = await db.select({ content: schema.reports.content })
+    .from(schema.reports)
+    .where(eq(schema.reports.type, 'daily'))
+    .orderBy(desc(schema.reports.createdAt))
+    .limit(1);
+  const prevContext = prevDaily[0]?.content
+    ? '\n\n【昨日のキートピック（続報があれば優先して報告）】\n' + prevDaily[0].content.substring(0, 500)
+    : '';
+
   const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
   const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
@@ -465,7 +624,7 @@ async function generateReport(): Promise<string | null> {
 - 主観的な「すごい」ではなく客観的な事実ベースで記述
 - 重要度が高い記事ほど詳しく解説する
 - 絵文字・箇条書きを活用して読みやすく`,
-    prompt: `今日の日付: ${todayJST}${trendText}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
+    prompt: `今日の日付: ${todayJST}${trendText}${prevContext}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
   });
 
   const [insertedReport] = await db.insert(schema.reports).values({
@@ -491,7 +650,67 @@ async function generateReport(): Promise<string | null> {
   return text;
 }
 
-async function sendEmail(reportContent: string) {
+async function generateWeeklyReport(): Promise<string | null> {
+  console.log('[WeeklyReport] 週次レポート生成開始');
+
+  const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [recentData, prevWeekly] = await Promise.all([
+    db.select().from(schema.collectedData)
+      .where(gte(schema.collectedData.createdAt, sevenDaysAgoISO))
+      .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
+      .limit(70),
+    db.select({ content: schema.reports.content })
+      .from(schema.reports)
+      .where(eq(schema.reports.type, 'weekly'))
+      .orderBy(desc(schema.reports.createdAt))
+      .limit(1),
+  ]);
+
+  if (recentData.length === 0) { console.log('[WeeklyReport] データなし、スキップ'); return null; }
+
+  const contextStr = recentData
+    .map(d => `[重要度:${d.importanceScore ?? 5}][${d.category ?? '未分類'}] ${d.title}\n${d.summary}`)
+    .join('\n\n---\n\n');
+
+  const prevSection = prevWeekly[0]?.content
+    ? '\n\n---\n\n【前回の週次レポート（変化点分析用）】\n' + prevWeekly[0].content.substring(0, 600)
+    : '';
+
+  const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
+
+  const { text } = await generateText({
+    model: google('gemini-2.5-flash-lite'),
+    system: `あなたはAI技術動向の専門アナリストです。過去1週間の収集データを元に、週次サマリーレポートをMarkdown形式で作成してください。
+
+【必須構成】
+## 🏆 今週の3大トピック
+最重要ニュース3選。各項目は「何が起きたか」「なぜ重要か」「業界への影響」を2〜3行で。
+
+## 📈 技術トレンドの週間まとめ
+モデル・ツール・手法・インフラの動向。カテゴリ横断で今週のAI技術の全体像を俯瞰。
+
+## 🔄 先週からの変化点
+前回レポートと比較して新登場・消えたトレンド・注目度の変化を明示。
+
+## 🔭 来週のウォッチポイント
+今週の動向から予測される来週の注目ポイント。
+
+【ルール】
+- 全体2000〜2500文字
+- 具体的なモデル名・手法名・数値を含める
+- 絵文字・箇条書きを活用して読みやすく`,
+    prompt: `今日の日付: ${todayJST}\n\n【今週の収集データ（${recentData.length}件）】\n${contextStr}${prevSection}`,
+  });
+
+  const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  await db.insert(schema.reports).values({ type: 'weekly', content: text, reportDate: reportDateJST });
+
+  console.log('[WeeklyReport] 週次レポート生成完了');
+  return text;
+}
+
+async function sendEmail(reportContent: string, type: 'デイリー' | '週次' = 'デイリー') {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
 
@@ -511,13 +730,32 @@ async function sendEmail(reportContent: string) {
     await transporter.sendMail({
       from: user,
       to: user,
-      subject: `🤖 AI Tech Researcher デイリーレポート ${today}`,
+      subject: `🤖 AI Tech Researcher ${type}レポート ${today}`,
       text: reportContent,
     });
 
-    console.log('[Email] レポート送信完了');
+    console.log(`[Email] ${type}レポート送信完了`);
   } catch (e: any) {
     console.error(`[Email] 送信失敗: ${e.message}`);
+  }
+}
+
+async function sendFailureEmail(error: Error) {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) return;
+  try {
+    const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
+    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
+    await transporter.sendMail({
+      from: user,
+      to: user,
+      subject: `🚨 AI Tech Researcher パイプライン失敗 ${today}`,
+      text: `デイリーパイプラインが失敗しました。\n\nエラー: ${error.message}\n\nスタックトレース:\n${error.stack ?? '(なし)'}`,
+    });
+    console.log('[Email] 失敗通知送信完了');
+  } catch (e: any) {
+    console.error(`[Email] 失敗通知の送信に失敗: ${e.message}`);
   }
 }
 
@@ -573,8 +811,8 @@ async function evolveSources() {
   const updates: Array<{ id: number; status: string; score: number }> = [];
 
   for (const source of allSources) {
-    // RSS/HN型は常にactiveを維持（自動停止しない）
-    if (source.type === 'rss' || source.type === 'hn') continue;
+    // RSS/HN/ArXiv/GitHubTrending型は常にactiveを維持（自動停止しない）
+    if (source.type === 'rss' || source.type === 'hn' || source.type === 'arxiv' || source.type === 'github-trending') continue;
 
     const daysSinceCreated = (now.getTime() - new Date(source.createdAt ?? now).getTime()) / 86400000;
     const hitCount14d = hitCountMap.get(source.id) ?? 0;
@@ -741,8 +979,10 @@ async function logPipeline(collected: number, failed: number, durationMs: number
 
 async function ensureSources() {
   const required = [
-    { type: 'rss', value: 'https://techcrunch.com/category/artificial-intelligence/feed/' },
-    { type: 'hn',  value: 'https://hacker-news.firebaseio.com/v0' },
+    { type: 'rss',             value: 'https://techcrunch.com/category/artificial-intelligence/feed/' },
+    { type: 'hn',              value: 'https://hacker-news.firebaseio.com/v0' },
+    { type: 'arxiv',           value: 'https://export.arxiv.org/api/query' },
+    { type: 'github-trending', value: 'https://api.github.com/search/repositories' },
   ];
   for (const src of required) {
     const existing = await db.select({ id: schema.sources.id })
@@ -760,16 +1000,27 @@ async function main() {
   const startTime = Date.now();
   console.log('=== Daily Pipeline 開始 ===', new Date().toISOString());
 
-  await ensureSources();
-  const { collected, failed } = await collectData(10);
-  const reportContent = await generateReport();
-  if (reportContent) {
-    await sendEmail(reportContent);
-  }
-  await evolveSources();
+  try {
+    await ensureSources();
+    const { collected, failed } = await collectData(10);
+    const reportContent = await generateReport();
+    if (reportContent) await sendEmail(reportContent);
 
-  const durationMs = Date.now() - startTime;
-  await logPipeline(collected, failed, durationMs);
+    // 日曜日は週次レポートも生成してメール送信
+    const dayOfWeek = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'Asia/Tokyo' });
+    if (dayOfWeek === 'Sun') {
+      const weeklyContent = await generateWeeklyReport();
+      if (weeklyContent) await sendEmail(weeklyContent, '週次');
+    }
+
+    await evolveSources();
+    const durationMs = Date.now() - startTime;
+    await logPipeline(collected, failed, durationMs);
+  } catch (e: any) {
+    console.error('[Pipeline] 致命的エラー:', e);
+    await sendFailureEmail(e);
+    process.exit(1);
+  }
 
   console.log('=== Daily Pipeline 完了 ===');
   process.exit(0);
