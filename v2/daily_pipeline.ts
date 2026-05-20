@@ -543,7 +543,7 @@ ${contextText}`,
       .from(schema.collectedData)
       .where(and(
         gte(schema.collectedData.createdAt, fourteenDaysAgo),
-        gte(schema.collectedData.importanceScore, 8),
+        gte(schema.collectedData.importanceScore, 9),
       ))
       .limit(30);
 
