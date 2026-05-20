@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from 'react';
-import { Search, Brain, Award, Database, Eye, Tag } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, Brain, Award, Database, Eye, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { SkeletonCard } from '@/components/Skeleton';
 import { semanticSearch } from '@/app/actions';
@@ -12,25 +12,27 @@ interface DataTabProps {
   collectedItems: CollectedItem[];
   isLoadingData: boolean;
   interestTags: string[];
-  onInterestTagsChange: (tags: string[]) => void;
   onToggleFavorite: (id: number, current: boolean) => void;
   onToggleReadLater: (id: number, current: boolean) => void;
   onMarkAsRead: (id: number, current: boolean) => void;
 }
 
 export function DataTab({
-  collectedItems, isLoadingData, interestTags, onInterestTagsChange,
+  collectedItems, isLoadingData, interestTags,
   onToggleFavorite, onToggleReadLater, onMarkAsRead,
 }: DataTabProps) {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState('all');
-  const [newInterestTag, setNewInterestTag] = useState('');
   const [isSemanticSearching, setIsSemanticSearching] = useState(false);
   const [semanticResults, setSemanticResults] = useState<CollectedItem[] | null>(null);
   const [sortByImportance, setSortByImportance] = useState(false);
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 20;
+
+  useEffect(() => { setPage(0); }, [searchQuery, categoryFilter, tagFilter, sortByImportance, unreadOnly, semanticResults]);
 
   const categories = ['all', ...Array.from(new Set(collectedItems.map(i => i.category).filter(Boolean))) as string[]];
 
@@ -62,6 +64,8 @@ export function DataTab({
   });
 
   const unreadCount = collectedItems.filter(i => !i.isRead).length;
+  const totalPages = Math.ceil(sortedItems.length / PAGE_SIZE);
+  const pagedItems = sortedItems.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const handleSemanticSearch = async () => {
     if (!searchQuery.trim() || isSemanticSearching) return;
@@ -81,22 +85,6 @@ export function DataTab({
       setSemanticResults(prev => prev ? prev.map(x => x.id === id ? { ...x, isReadLater: current ? 0 : 1 } : x) : null);
     }
     await onToggleReadLater(id, current);
-  };
-
-  const addInterestTag = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const trimmed = newInterestTag.trim();
-    if (!trimmed || interestTags.includes(trimmed)) return;
-    const updated = [...interestTags, trimmed];
-    onInterestTagsChange(updated);
-    localStorage.setItem('interestTags', JSON.stringify(updated));
-    setNewInterestTag('');
-  };
-
-  const removeInterestTag = (tag: string) => {
-    const updated = interestTags.filter(t => t !== tag);
-    onInterestTagsChange(updated);
-    localStorage.setItem('interestTags', JSON.stringify(updated));
   };
 
   return (
@@ -123,29 +111,6 @@ export function DataTab({
           <Brain size={15} className={isSemanticSearching ? 'animate-pulse' : ''} />
           AI検索
         </button>
-      </div>
-
-      {/* Interest tags */}
-      <div className="flex items-center gap-2 flex-wrap p-3 rounded-xl bg-white/5 border border-white/5">
-        <span className="text-xs text-slate-500 font-medium flex-shrink-0">興味タグ:</span>
-        {interestTags.map(tag => (
-          <span key={tag} className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs flex items-center gap-1">
-            {tag}
-            <button onClick={() => removeInterestTag(tag)} className="hover:text-red-400 transition-colors ml-0.5">×</button>
-          </span>
-        ))}
-        <form onSubmit={addInterestTag} className="flex gap-1">
-          <input
-            value={newInterestTag}
-            onChange={e => setNewInterestTag(e.target.value)}
-            placeholder="+ タグ追加"
-            maxLength={30}
-            className="bg-transparent border-b border-white/20 text-xs text-slate-400 focus:outline-none focus:border-amber-500/50 w-24 px-1 py-0.5 transition-colors"
-          />
-        </form>
-        {interestTags.length > 0 && (
-          <span className="text-[10px] text-amber-400/60">マッチした記事を優先表示</span>
-        )}
       </div>
 
       {/* Tag filter */}
@@ -206,18 +171,41 @@ export function DataTab({
           {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
       ) : sortedItems.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4">
-          {sortedItems.map(item => (
-            <ArticleCard
-              key={item.id}
-              item={item}
-              interestTags={interestTags}
-              onToggleFavorite={onToggleFavorite}
-              onToggleReadLater={handleToggleReadLaterLocal}
-              onMarkAsRead={onMarkAsRead}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-4">
+            {pagedItems.map(item => (
+              <ArticleCard
+                key={item.id}
+                item={item}
+                interestTags={interestTags}
+                onToggleFavorite={onToggleFavorite}
+                onToggleReadLater={handleToggleReadLaterLocal}
+                onMarkAsRead={onMarkAsRead}
+              />
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="p-1.5 rounded-lg bg-white/5 text-slate-400 hover:bg-white/10 disabled:opacity-30 transition-colors"
+              >
+                <ChevronLeft size={15} />
+              </button>
+              <span className="font-mono text-xs text-slate-500">
+                {page + 1} / {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                className="p-1.5 rounded-lg bg-white/5 text-slate-400 hover:bg-white/10 disabled:opacity-30 transition-colors"
+              >
+                <ChevronRight size={15} />
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <div className="glass-card text-center py-20 text-slate-400">
           <Database size={48} className="mx-auto mb-4 opacity-20" />

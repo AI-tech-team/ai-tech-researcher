@@ -6,6 +6,8 @@ import { eq, sql } from 'drizzle-orm';
 
 export const maxDuration = 60;
 
+const GROUNDING_SKIP_DOMAINS = ['google.', 'youtube.', 'wikipedia.', 't.co', 'twitter.', 'x.com'];
+
 // techdrip.net の tag → システムカテゴリ変換
 const TECHDRIP_CAT_MAP: Record<string, string | null> = {
   'AI':     'エージェント',
@@ -80,7 +82,7 @@ async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, to
         category: category ?? 'その他',
         importanceScore,
         tags,
-        publishedAt: new Date().toISOString(),
+        publishedAt: today + 'T00:00:00.000Z',
       }).onConflictDoNothing();
 
       if (result.rowsAffected > 0) {
@@ -139,10 +141,13 @@ importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価。tags
   const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
   const parsedData = JSON.parse(jsonStr);
 
-  // グラウンディングの実URLでハルシネーションを上書き
+  // グラウンディングの実URLでハルシネーションを上書き（Google/YT/Wiki以外の最初の記事URL）
   const googleMeta = (result.providerMetadata?.google ?? (result as any).experimental_providerMetadata?.google) as any;
   const groundingChunks: any[] = googleMeta?.groundingMetadata?.groundingChunks ?? [];
-  const groundingUrl = groundingChunks.find((c: any) => c.web?.uri)?.web?.uri;
+  const groundingUrl = groundingChunks
+    .map((c: any) => c.web?.uri as string | undefined)
+    .filter((uri): uri is string => !!uri)
+    .find(uri => !GROUNDING_SKIP_DOMAINS.some(d => uri.includes(d)));
   if (groundingUrl) parsedData.url = groundingUrl;
 
   // 鮮度チェック: 14日以上前の記事は破棄
@@ -161,7 +166,7 @@ export async function POST() {
   try {
     const sourceList = await db.select().from(sources)
       .where(eq(sources.status, 'active'))
-      .orderBy(sql`RANDOM()`)
+      .orderBy(sql`RANDOM() * (1 + COALESCE(${sources.score}, 0)) DESC`)
       .limit(1);
 
     if (sourceList.length === 0) {
@@ -169,8 +174,8 @@ export async function POST() {
     }
 
     const targetSource = sourceList[0];
-    const today = new Date().toISOString().split('T')[0];
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
     // URL型ソース（techdrip.net等）: 一括取得
     if (targetSource.type === 'url') {

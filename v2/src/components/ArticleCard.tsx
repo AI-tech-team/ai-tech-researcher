@@ -77,8 +77,8 @@ export function ArticleCard({
             </span>
           )}
 
-          {/* Actions — visible on hover */}
-          <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          {/* Actions — always visible on mobile, hover on desktop */}
+          <div className="ml-auto flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-150">
             {onMarkAsRead && (
               <button
                 onClick={() => onMarkAsRead(item.id, isRead)}
