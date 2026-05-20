@@ -1,7 +1,8 @@
 import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import { google } from '@ai-sdk/google';
-import { generateText } from 'ai';
+import { generateText, generateObject } from 'ai';
+import { z } from 'zod';
 import { eq, sql, desc, count, and, gte, lt } from 'drizzle-orm';
 import { config } from 'dotenv';
 import nodemailer from 'nodemailer';
@@ -48,6 +49,57 @@ const HN_AI_KEYWORDS = [
   'machine learning', 'neural', 'deep learning', 'transformer', 'diffusion',
   'agi', 'alignment', 'mistral', 'llama', 'copilot', 'hugging face',
 ];
+
+// ── 構造化出力スキーマ ────────────────────────────────────────────────
+const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'] as const;
+
+const ArticleEvalSchema = z.object({
+  items: z.array(z.object({
+    importance: z.number().int().min(0).max(10),
+    category: z.enum(CATS),
+    summary: z.string().max(300),
+  })),
+});
+
+const HnEvalSchema = z.object({
+  items: z.array(z.object({
+    summary: z.string().max(300),
+    category: z.enum(CATS),
+  })),
+});
+
+const KeywordsSchema = z.object({
+  keywords: z.array(z.string().min(2).max(60)),
+});
+
+// ── 指数バックオフリトライ ─────────────────────────────────────────────
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 800): Promise<T> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      if (attempt === maxRetries - 1) throw e;
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      console.warn(`  Geminiリトライ ${attempt + 1}/${maxRetries - 1} (${delay}ms後): ${(e.message ?? '').slice(0, 60)}`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error('unreachable');
+}
+
+// ── ソース権威性ボーナス ────────────────────────────────────────────
+const AUTHORITY_SOURCE_VALUES = new Set([
+  'https://huggingface.co/blog/feed.xml',
+  'https://deepmind.google/blog/rss.xml',
+  'https://openai.com/blog/rss.xml',
+  'https://ai.meta.com/blog/feed/',
+]);
+
+function getAuthorityBonus(source: typeof schema.sources.$inferSelect): number {
+  if (AUTHORITY_SOURCE_VALUES.has(source.value)) return 1;
+  if (source.type === 'arxiv' || source.type === 'pwc') return 1;
+  return 0;
+}
 
 // ── タイトル類似度重複排除ユーティリティ ─────────────────────────────────
 let _recentTitleCache: string[] | null = null;
@@ -106,20 +158,14 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
 
   if (recent.length === 0) return 0;
 
-  // バッチ評価（1回のGemini呼び出しで全件スコアリング）
   const batchText = recent.map((item, i) => `[${i}] ${item.title}\n${item.description}`).join('\n\n');
-  const { text } = await generateText({
+  const { object } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
-    prompt: `以下の記事をAI技術の観点で評価してください。AI技術と無関係な記事はimportance: 0としてください。
-
-${batchText}
-
-JSON配列で出力（インデックス順を維持）:
-[{"importance": 7, "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他", "summary": "150文字の日本語要約"}, ...]`,
-  });
-
-  const evaluations: Array<{ importance: number; category: string; summary: string }> =
-    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    schema: ArticleEvalSchema,
+    prompt: `以下の記事をAI技術の観点で評価してください。AI技術と無関係な記事はimportance: 0にしてください。各記事のimportance(0-10)、category、日本語summary(150文字)を生成してください。\n\n${batchText}`,
+  }));
+  const evaluations = object.items;
+  const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
@@ -135,7 +181,7 @@ JSON配列で出力（インデックス順を維持）:
       url: item.link,
       summary: ev.summary,
       category: ev.category ?? 'その他',
-      importanceScore: ev.importance,
+      importanceScore: Math.min(10, ev.importance + authorityBonus),
       publishedAt: pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
     if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(item.title); }
@@ -172,20 +218,13 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
 
   if (candidates.length === 0) return 0;
 
-  // バッチ要約・カテゴリ付与（1回のGemini呼び出し）
   const batchText = candidates.map((item, i) => `[${i}] [HN Score:${item.score}] ${item.title}`).join('\n');
-  const { text } = await generateText({
+  const { object: hnObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
-    prompt: `以下のHacker Newsのトップ記事（AI/ML関連）の要約とカテゴリを生成してください。
-
-${batchText}
-
-JSON配列で出力（インデックス順を維持）:
-[{"summary": "200文字の専門的な日本語要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他"}, ...]`,
-  });
-
-  const evaluations: Array<{ summary: string; category: string }> =
-    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    schema: HnEvalSchema,
+    prompt: `以下のHacker NewsのAI/ML関連記事の専門的な日本語summary（200文字）とcategoryを生成してください。\n\n${batchText}`,
+  }));
+  const evaluations = hnObject.items;
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
@@ -244,18 +283,13 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   if (recent.length === 0) return 0;
 
   const batchText = recent.map((e, i) => `[${i}] ${e.title}\n${e.summary}`).join('\n\n');
-  const { text } = await generateText({
+  const { object: arxivObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
-    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の重要度を評価し、日本語要約を生成してください。
-
-${batchText}
-
-JSON配列で出力（インデックス順を維持）:
-[{"importance": 8, "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他", "summary": "150文字の日本語要約"}, ...]`,
-  });
-
-  const evaluations: Array<{ importance: number; category: string; summary: string }> =
-    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    schema: ArticleEvalSchema,
+    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。\n\n${batchText}`,
+  }));
+  const evaluations = arxivObject.items;
+  const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
@@ -270,7 +304,7 @@ JSON配列で出力（インデックス順を維持）:
       url: item.url,
       summary: ev.summary,
       category: ev.category ?? '研究/論文',
-      importanceScore: ev.importance,
+      importanceScore: Math.min(10, ev.importance + authorityBonus),
       tags: JSON.stringify(['arxiv', ev.category ?? '研究/論文']),
       publishedAt: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
@@ -298,18 +332,12 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
     `[${i}] [⭐${r.stargazers_count}] ${r.full_name}\n${r.description ?? ''}\nTopics: ${(r.topics ?? []).slice(0, 5).join(', ')}`
   ).join('\n\n');
 
-  const { text } = await generateText({
+  const { object: ghObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
-    prompt: `以下のGitHubトレンドリポジトリ（AI/ML分野）の重要度を評価し、日本語要約を生成してください。
-
-${batchText}
-
-JSON配列で出力（インデックス順を維持）:
-[{"importance": 7, "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他", "summary": "150文字の日本語要約"}, ...]`,
-  });
-
-  const evaluations: Array<{ importance: number; category: string; summary: string }> =
-    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    schema: ArticleEvalSchema,
+    prompt: `以下のGitHubトレンドリポジトリ（AI/ML分野）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。\n\n${batchText}`,
+  }));
+  const evaluations = ghObject.items;
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
@@ -354,18 +382,13 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
     `[${i}] ${p.title}\n${p.abstract?.slice(0, 400) ?? ''}\nTasks: ${(p.tasks ?? []).slice(0, 3).map((t: any) => t.name).join(', ')}`
   ).join('\n\n');
 
-  const { text } = await generateText({
+  const { object: pwcObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
-    prompt: `以下のPapers with Codeの論文（コード実装あり）の重要度を評価し、日本語要約を生成してください。
-
-${batchText}
-
-JSON配列で出力（インデックス順を維持）:
-[{"importance": 8, "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他", "summary": "150文字の日本語要約"}, ...]`,
-  });
-
-  const evaluations: Array<{ importance: number; category: string; summary: string }> =
-    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    schema: ArticleEvalSchema,
+    prompt: `以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。\n\n${batchText}`,
+  }));
+  const evaluations = pwcObject.items;
+  const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
@@ -382,7 +405,7 @@ JSON配列で出力（インデックス順を維持）:
       url: paperUrl,
       summary: ev.summary,
       category: ev.category ?? '研究/論文',
-      importanceScore: ev.importance,
+      importanceScore: Math.min(10, ev.importance + authorityBonus),
       tags: JSON.stringify(['papers-with-code', ...(item.tasks ?? []).slice(0, 2).map((t: any) => t.name as string)]),
       publishedAt: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
@@ -576,7 +599,7 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
     if (target.type === 'url') continue; // 既に処理済み
 
     try {
-      const result = await generateText({
+      const result = await withRetry(() => generateText({
         model: google('gemini-2.5-flash-lite'),
         tools: { google_search: google.tools.googleSearch({}) },
         system: `あなたはAI技術情報収集エンジンです。
@@ -592,7 +615,7 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
 {"title": "記事タイトル", "url": "実際の記事URL", "publishedAt": "YYYY-MM-DD", "summary": "200文字程度の専門的な要約", "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他 のいずれか1つ", "importance": 8, "tags": ["tag1", "tag2"]}
 importanceは1〜10でAI技術的重要度を評価。tagsは3〜5個の短いキーワード。`,
         prompt: `対象キーワード: ${target.value}\n検索対象期間: ${sevenDaysAgo}〜${today}`,
-      });
+      }));
 
       const jsonStr = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedData = JSON.parse(jsonStr);
@@ -708,8 +731,8 @@ async function generateReport(): Promise<string | null> {
   const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
   const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
-  const { text } = await generateText({
-    model: google('gemini-2.5-flash-lite'),
+  const { text } = await withRetry(() => generateText({
+    model: google('gemini-2.5-flash'),
     system: `あなたはAI技術動向の専門アナリストです。収集データを元に、AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
 
 【必須構成】
@@ -732,7 +755,7 @@ async function generateReport(): Promise<string | null> {
 - 重要度が高い記事ほど詳しく解説する
 - 絵文字・箇条書きを活用して読みやすく`,
     prompt: `今日の日付: ${todayJST}${trendText}${prevContext}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
-  });
+  }));
 
   const [insertedReport] = await db.insert(schema.reports).values({
     type: 'daily',
@@ -786,8 +809,8 @@ async function generateWeeklyReport(): Promise<string | null> {
 
   const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
 
-  const { text } = await generateText({
-    model: google('gemini-2.5-flash-lite'),
+  const { text } = await withRetry(() => generateText({
+    model: google('gemini-2.5-flash'),
     system: `あなたはAI技術動向の専門アナリストです。過去1週間の収集データを元に、週次サマリーレポートをMarkdown形式で作成してください。
 
 【必須構成】
@@ -808,7 +831,7 @@ async function generateWeeklyReport(): Promise<string | null> {
 - 具体的なモデル名・手法名・数値を含める
 - 絵文字・箇条書きを活用して読みやすく`,
     prompt: `今日の日付: ${todayJST}\n\n【今週の収集データ（${recentData.length}件）】\n${contextStr}${prevSection}`,
-  });
+  }));
 
   const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   await db.insert(schema.reports).values({ type: 'weekly', content: text, reportDate: reportDateJST });
@@ -846,8 +869,8 @@ async function generateMonthlyReport(): Promise<string | null> {
 
   const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', timeZone: 'Asia/Tokyo' });
 
-  const { text } = await generateText({
-    model: google('gemini-2.5-flash-lite'),
+  const { text } = await withRetry(() => generateText({
+    model: google('gemini-2.5-flash'),
     system: `あなたはAI技術動向の専門アナリストです。過去1ヶ月の収集データを元に、月次サマリーレポートをMarkdown形式で作成してください。
 
 【必須構成】
@@ -868,7 +891,7 @@ async function generateMonthlyReport(): Promise<string | null> {
 - 具体的なモデル名・数値・企業名を含める
 - 絵文字・箇条書きを活用して読みやすく`,
     prompt: `対象月: ${todayJST}\n\n【今月の収集データ（${recentData.length}件）】\n${contextStr}${prevSection}`,
-  });
+  }));
 
   const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   await db.insert(schema.reports).values({ type: 'monthly', content: text, reportDate: reportDateJST });
@@ -1071,8 +1094,9 @@ async function evolveSources() {
     .join(' ')
     .toLowerCase();
 
-  const { text } = await generateText({
+  const { object: kwObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
+    schema: KeywordsSchema,
     prompt: `以下の高品質AI記事（重要度7以上）から、追跡すべき具体的なAI技術キーワードを最大5つ抽出してください。
 
 【抽出条件】
@@ -1081,14 +1105,12 @@ async function evolveSources() {
 - 固有名詞・略語・製品名を優先（例: Mamba, FlashAttention, LoRA, Phi-4, GRPO）
 - 正式名称・最も一般的な表記で統一する
 
-JSON配列のみで出力: ["keyword1", "keyword2", ...]
-
 【記事】
 ${contextText}`,
-  });
+  }));
 
   try {
-    const rawKws: string[] = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+    const rawKws: string[] = kwObject.keywords;
     let added = 0;
     const addedThisRound = new Set<string>();
 
@@ -1192,30 +1214,33 @@ async function ensureSources() {
 async function main() {
   const startTime = Date.now();
   _recentTitleCache = null; // キャッシュリセット
-  console.log('=== Daily Pipeline 開始 ===', new Date().toISOString());
+  const pipelineMode = process.env.PIPELINE_MODE ?? 'full';
+  console.log(`=== Daily Pipeline 開始 [mode=${pipelineMode}] ===`, new Date().toISOString());
 
   try {
     await ensureSources();
     const { collected, failed } = await collectData(10);
-    const reportContent = await generateReport();
-    if (reportContent) await sendEmail(reportContent);
 
-    const nowJST = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo', weekday: 'short', day: 'numeric' }).split(', ');
-    const [dayOfWeek, dayOfMonth] = nowJST;
+    if (pipelineMode !== 'collect') {
+      const reportContent = await generateReport();
+      if (reportContent) await sendEmail(reportContent);
 
-    // 日曜日は週次レポート
-    if (dayOfWeek === 'Sun') {
-      const weeklyContent = await generateWeeklyReport();
-      if (weeklyContent) await sendEmail(weeklyContent, '週次');
+      const nowJST = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo', weekday: 'short', day: 'numeric' }).split(', ');
+      const [dayOfWeek, dayOfMonth] = nowJST;
+
+      if (dayOfWeek === 'Sun') {
+        const weeklyContent = await generateWeeklyReport();
+        if (weeklyContent) await sendEmail(weeklyContent, '週次');
+      }
+
+      if (dayOfMonth === '1') {
+        const monthlyContent = await generateMonthlyReport();
+        if (monthlyContent) await sendEmail(monthlyContent, '月次');
+      }
+
+      await evolveSources();
     }
 
-    // 毎月1日は月次レポート
-    if (dayOfMonth === '1') {
-      const monthlyContent = await generateMonthlyReport();
-      if (monthlyContent) await sendEmail(monthlyContent, '月次');
-    }
-
-    await evolveSources();
     const durationMs = Date.now() - startTime;
     await logPipeline(collected, failed, durationMs);
   } catch (e: any) {

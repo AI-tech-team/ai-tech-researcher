@@ -2,7 +2,9 @@ name: Research Pipeline
 
 on:
   schedule:
-    - cron: '0 21 * * *'     # 毎日 06:00 JST (daily pipeline)
+    - cron: '0 21 * * *'     # 毎日 06:00 JST (daily pipeline, full mode)
+    - cron: '0 3 * * *'      # 毎日 12:00 JST (collect-only)
+    - cron: '0 9 * * *'      # 毎日 18:00 JST (collect-only)
     - cron: '30 21 * * 0'    # 毎週日曜 06:30 JST (週次レポート)
     - cron: '0 22 1 * *'     # 毎月1日 07:00 JST (月次レポート + 再分類)
     - cron: '0 20 * * 0'     # 毎週日曜 05:00 JST (週次バックアップ)
@@ -13,7 +15,7 @@ on:
         required: false
         default: 'daily'
         type: choice
-        options: [daily, weekly, monthly, recategorize, backup]
+        options: [daily, collect, weekly, monthly, recategorize, backup]
 
 jobs:
   research:
@@ -31,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: cd v2 && npm install
 
-      - name: Run Daily Pipeline
+      - name: Run Daily Pipeline (full)
         if: github.event.schedule == '0 21 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily')
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
@@ -39,6 +41,17 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: cd v2 && npx tsx daily_pipeline.ts
+
+      - name: Run Collection (midday/evening)
+        if: github.event.schedule == '0 3 * * *' || github.event.schedule == '0 9 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'collect')
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          PIPELINE_MODE: collect
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Generate Weekly Report
