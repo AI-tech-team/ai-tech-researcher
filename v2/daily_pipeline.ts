@@ -49,6 +49,32 @@ const HN_AI_KEYWORDS = [
   'agi', 'alignment', 'mistral', 'llama', 'copilot', 'hugging face',
 ];
 
+// ── タイトル類似度重複排除ユーティリティ ─────────────────────────────────
+let _recentTitleCache: string[] | null = null;
+
+async function getRecentTitleCache(): Promise<string[]> {
+  if (_recentTitleCache !== null) return _recentTitleCache;
+  const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await db.select({ title: schema.collectedData.title })
+    .from(schema.collectedData)
+    .where(gte(schema.collectedData.createdAt, cutoff));
+  _recentTitleCache = rows.map(r => r.title ?? '').filter(Boolean);
+  return _recentTitleCache;
+}
+
+function jaccardSim(a: string, b: string): number {
+  const wa = new Set(a.toLowerCase().match(/\w{4,}/g) ?? []);
+  const wb = new Set(b.toLowerCase().match(/\w{4,}/g) ?? []);
+  if (!wa.size || !wb.size) return 0;
+  let shared = 0;
+  wa.forEach(w => { if (wb.has(w)) shared++; });
+  return shared / (wa.size + wb.size - shared);
+}
+
+function isNearDuplicate(title: string, cache: string[], threshold = 0.75): boolean {
+  return cache.some(existing => jaccardSim(title, existing) >= threshold);
+}
+
 // ── RSS収集（TechCrunch AI等）─────────────────────────────────────────
 async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenDaysAgo: string): Promise<number> {
   const res = await fetch(source.value, {
@@ -95,11 +121,13 @@ JSON配列で出力（インデックス順を維持）:
   const evaluations: Array<{ importance: number; category: string; summary: string }> =
     JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
 
+  const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < recent.length; i++) {
     const item = recent[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 4) continue;
+    if (isNearDuplicate(item.title, titleCache)) continue;
     const pubDate = item.pubDate ? new Date(item.pubDate) : null;
     const r = await db.insert(schema.collectedData).values({
       sourceId: source.id,
@@ -110,7 +138,7 @@ JSON配列で出力（インデックス順を維持）:
       importanceScore: ev.importance,
       publishedAt: pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
-    if (r.rowsAffected > 0) inserted++;
+    if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(item.title); }
   }
   return inserted;
 }
@@ -159,11 +187,13 @@ JSON配列で出力（インデックス順を維持）:
   const evaluations: Array<{ summary: string; category: string }> =
     JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
 
+  const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < candidates.length; i++) {
     const item = candidates[i];
     const ev = evaluations[i];
     if (!ev) continue;
+    if (isNearDuplicate(item.title, titleCache)) continue;
     const importanceScore = item.score >= 500 ? 10 : item.score >= 200 ? 9 : item.score >= 100 ? 8 : 7;
     const r = await db.insert(schema.collectedData).values({
       sourceId: source.id,
@@ -175,7 +205,7 @@ JSON配列で出力（インデックス順を維持）:
       tags: JSON.stringify(['hacker-news', `hn-score:${item.score}`]),
       publishedAt: new Date(item.time * 1000).toISOString(),
     }).onConflictDoNothing();
-    if (r.rowsAffected > 0) inserted++;
+    if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(item.title); }
   }
   return inserted;
 }
@@ -227,11 +257,13 @@ JSON配列で出力（インデックス順を維持）:
   const evaluations: Array<{ importance: number; category: string; summary: string }> =
     JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
 
+  const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < recent.length; i++) {
     const item = recent[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 5) continue;
+    if (isNearDuplicate(item.title, titleCache)) continue;
     const r = await db.insert(schema.collectedData).values({
       sourceId: source.id,
       title: item.title,
@@ -242,7 +274,7 @@ JSON配列で出力（インデックス順を維持）:
       tags: JSON.stringify(['arxiv', ev.category ?? '研究/論文']),
       publishedAt: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
-    if (r.rowsAffected > 0) inserted++;
+    if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(item.title); }
   }
   return inserted;
 }
@@ -279,14 +311,17 @@ JSON配列で出力（インデックス順を維持）:
   const evaluations: Array<{ importance: number; category: string; summary: string }> =
     JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
 
+  const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < candidates.length; i++) {
     const item = candidates[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 5) continue;
+    const ghTitle = `[GitHub] ${item.full_name}`;
+    if (isNearDuplicate(ghTitle, titleCache)) continue;
     const r = await db.insert(schema.collectedData).values({
       sourceId: source.id,
-      title: `[GitHub] ${item.full_name}`,
+      title: ghTitle,
       url: item.html_url,
       summary: ev.summary,
       category: ev.category ?? 'ツール/フレームワーク',
@@ -294,7 +329,64 @@ JSON配列で出力（インデックス順を維持）:
       tags: JSON.stringify(['github-trending', `⭐${item.stargazers_count}`]),
       publishedAt: item.created_at ?? new Date().toISOString(),
     }).onConflictDoNothing();
-    if (r.rowsAffected > 0) inserted++;
+    if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(ghTitle); }
+  }
+  return inserted;
+}
+
+// ── Papers with Code収集（コード実装付き論文）────────────────────────
+async function collectFromPapersWithCode(source: typeof schema.sources.$inferSelect): Promise<number> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const url = 'https://paperswithcode.com/api/v1/papers/?format=json&ordering=-date&has_code=true&page=1&items_per_page=30';
+
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`PwC API error: ${res.status}`);
+  const json = await res.json();
+  const results: any[] = json.results ?? [];
+
+  const recent = results.filter(p => p.published && p.published >= sevenDaysAgo).slice(0, 10);
+  if (recent.length === 0) return 0;
+
+  const batchText = recent.map((p, i) =>
+    `[${i}] ${p.title}\n${p.abstract?.slice(0, 400) ?? ''}\nTasks: ${(p.tasks ?? []).slice(0, 3).map((t: any) => t.name).join(', ')}`
+  ).join('\n\n');
+
+  const { text } = await generateText({
+    model: google('gemini-2.5-flash-lite'),
+    prompt: `以下のPapers with Codeの論文（コード実装あり）の重要度を評価し、日本語要約を生成してください。
+
+${batchText}
+
+JSON配列で出力（インデックス順を維持）:
+[{"importance": 8, "category": "LLM推論|エージェント|ツール/フレームワーク|ハードウェア|ビジネス応用|研究/論文|その他", "summary": "150文字の日本語要約"}, ...]`,
+  });
+
+  const evaluations: Array<{ importance: number; category: string; summary: string }> =
+    JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+
+  const titleCache = await getRecentTitleCache();
+  let inserted = 0;
+  for (let i = 0; i < recent.length; i++) {
+    const item = recent[i];
+    const ev = evaluations[i];
+    if (!ev || ev.importance < 5) continue;
+    if (isNearDuplicate(item.title, titleCache)) continue;
+    const paperUrl = item.paper_url ?? (item.arxiv_id ? `https://arxiv.org/abs/${item.arxiv_id}` : null);
+    if (!paperUrl) continue;
+    const r = await db.insert(schema.collectedData).values({
+      sourceId: source.id,
+      title: item.title,
+      url: paperUrl,
+      summary: ev.summary,
+      category: ev.category ?? '研究/論文',
+      importanceScore: ev.importance,
+      tags: JSON.stringify(['papers-with-code', ...(item.tasks ?? []).slice(0, 2).map((t: any) => t.name as string)]),
+      publishedAt: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
+    }).onConflictDoNothing();
+    if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(item.title); }
   }
   return inserted;
 }
@@ -445,6 +537,21 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
       console.log(`  [GitHub Trending] ${inserted}件追加`);
     } catch (e: any) {
       console.error(`  GitHub Trending収集失敗: ${e.message}`);
+      failed++;
+    }
+  }
+
+  // Papers with Code型ソース
+  const pwcSources = await db.select().from(schema.sources)
+    .where(and(eq(schema.sources.type, 'pwc' as any), eq(schema.sources.status, 'active')));
+  for (const target of pwcSources) {
+    try {
+      const inserted = await collectFromPapersWithCode(target);
+      collected += inserted;
+      await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
+      console.log(`  [PapersWithCode] ${inserted}件追加`);
+    } catch (e: any) {
+      console.error(`  PapersWithCode収集失敗: ${e.message}`);
       failed++;
     }
   }
@@ -710,7 +817,86 @@ async function generateWeeklyReport(): Promise<string | null> {
   return text;
 }
 
-async function sendEmail(reportContent: string, type: 'デイリー' | '週次' = 'デイリー') {
+async function generateMonthlyReport(): Promise<string | null> {
+  console.log('[MonthlyReport] 月次レポート生成開始');
+
+  const thirtyDaysAgoISO = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [recentData, prevMonthly] = await Promise.all([
+    db.select().from(schema.collectedData)
+      .where(gte(schema.collectedData.createdAt, thirtyDaysAgoISO))
+      .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
+      .limit(100),
+    db.select({ content: schema.reports.content })
+      .from(schema.reports)
+      .where(eq(schema.reports.type, 'monthly'))
+      .orderBy(desc(schema.reports.createdAt))
+      .limit(1),
+  ]);
+
+  if (recentData.length === 0) { console.log('[MonthlyReport] データなし、スキップ'); return null; }
+
+  const contextStr = recentData
+    .map(d => `[重要度:${d.importanceScore ?? 5}][${d.category ?? '未分類'}] ${d.title}\n${d.summary}`)
+    .join('\n\n---\n\n');
+
+  const prevSection = prevMonthly[0]?.content
+    ? '\n\n---\n\n【前月のレポート（変化点分析用）】\n' + prevMonthly[0].content.substring(0, 800)
+    : '';
+
+  const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', timeZone: 'Asia/Tokyo' });
+
+  const { text } = await generateText({
+    model: google('gemini-2.5-flash-lite'),
+    system: `あなたはAI技術動向の専門アナリストです。過去1ヶ月の収集データを元に、月次サマリーレポートをMarkdown形式で作成してください。
+
+【必須構成】
+## 🏅 今月の重大ニュース TOP5
+最も影響の大きかった出来事5選。各項目は「何が起きたか」「なぜ重要か」「長期的な影響」を2〜3行で。
+
+## 🔬 技術トレンド総括
+モデル・インフラ・応用の各レイヤーでの1ヶ月の変化を体系的に整理。
+
+## 🗺️ 業界地図の変化
+プレイヤーの動向・勢力図の変化を分析。
+
+## 📅 来月の展望
+注目イベント・リリース予定・注視すべき動き。
+
+【ルール】
+- 全体3000文字程度
+- 具体的なモデル名・数値・企業名を含める
+- 絵文字・箇条書きを活用して読みやすく`,
+    prompt: `対象月: ${todayJST}\n\n【今月の収集データ（${recentData.length}件）】\n${contextStr}${prevSection}`,
+  });
+
+  const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  await db.insert(schema.reports).values({ type: 'monthly', content: text, reportDate: reportDateJST });
+
+  console.log('[MonthlyReport] 月次レポート生成完了');
+  return text;
+}
+
+function markdownToHtml(md: string): string {
+  let html = md
+    .replace(/^## (.+)$/gm, '<h2 style="color:#38bdf8;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;margin-top:28px;margin-bottom:12px">$1</h2>')
+    .replace(/^### (.+)$/gm, '<h3 style="color:#818cf8;margin-top:16px;margin-bottom:8px">$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:0.9em">$1</code>')
+    .replace(/^- (.+)$/gm, '<li style="margin:5px 0;line-height:1.6">$1</li>')
+    .replace(/\n\n+/g, '\n\n');
+
+  html = html.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => `<ul style="padding-left:20px;margin:8px 0">${m}</ul>`);
+  html = html.replace(/\n\n/g, '</p><p style="margin:10px 0;line-height:1.7">');
+  html = html.replace(/\n/g, '<br>');
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:700px;margin:0 auto;padding:24px;background:#0f172a;color:#e2e8f0">
+<p style="margin:10px 0;line-height:1.7">${html}</p>
+</body></html>`;
+}
+
+async function sendEmail(reportContent: string, type: 'デイリー' | '週次' | '月次' = 'デイリー') {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
 
@@ -732,6 +918,7 @@ async function sendEmail(reportContent: string, type: 'デイリー' | '週次' 
       to: user,
       subject: `🤖 AI Tech Researcher ${type}レポート ${today}`,
       text: reportContent,
+      html: markdownToHtml(reportContent),
     });
 
     console.log(`[Email] ${type}レポート送信完了`);
@@ -811,8 +998,8 @@ async function evolveSources() {
   const updates: Array<{ id: number; status: string; score: number }> = [];
 
   for (const source of allSources) {
-    // RSS/HN/ArXiv/GitHubTrending型は常にactiveを維持（自動停止しない）
-    if (source.type === 'rss' || source.type === 'hn' || source.type === 'arxiv' || source.type === 'github-trending') continue;
+    // RSS/HN/ArXiv/GitHubTrending/PwC型は常にactiveを維持（自動停止しない）
+    if (['rss', 'hn', 'arxiv', 'github-trending', 'pwc'].includes(source.type ?? '')) continue;
 
     const daysSinceCreated = (now.getTime() - new Date(source.createdAt ?? now).getTime()) / 86400000;
     const hitCount14d = hitCountMap.get(source.id) ?? 0;
@@ -979,10 +1166,16 @@ async function logPipeline(collected: number, failed: number, durationMs: number
 
 async function ensureSources() {
   const required = [
-    { type: 'rss',             value: 'https://techcrunch.com/category/artificial-intelligence/feed/' },
-    { type: 'hn',              value: 'https://hacker-news.firebaseio.com/v0' },
-    { type: 'arxiv',           value: 'https://export.arxiv.org/api/query' },
-    { type: 'github-trending', value: 'https://api.github.com/search/repositories' },
+    { type: 'rss',             value: 'https://techcrunch.com/category/artificial-intelligence/feed/', score: 6 },
+    { type: 'hn',              value: 'https://hacker-news.firebaseio.com/v0', score: 5 },
+    { type: 'arxiv',           value: 'https://export.arxiv.org/api/query', score: 7 },
+    { type: 'github-trending', value: 'https://api.github.com/search/repositories', score: 6 },
+    { type: 'pwc',             value: 'https://paperswithcode.com/api/v1/papers/', score: 8 },
+    // AI機関ブログ（高品質一次情報）
+    { type: 'rss', value: 'https://huggingface.co/blog/feed.xml', score: 9 },
+    { type: 'rss', value: 'https://deepmind.google/blog/rss.xml', score: 9 },
+    { type: 'rss', value: 'https://openai.com/blog/rss.xml', score: 9 },
+    { type: 'rss', value: 'https://ai.meta.com/blog/feed/', score: 8 },
   ];
   for (const src of required) {
     const existing = await db.select({ id: schema.sources.id })
@@ -990,7 +1183,7 @@ async function ensureSources() {
       .where(eq(schema.sources.value, src.value))
       .limit(1);
     if (existing.length === 0) {
-      await db.insert(schema.sources).values({ type: src.type as any, value: src.value, status: 'active', score: 5 });
+      await db.insert(schema.sources).values({ type: src.type as any, value: src.value, status: 'active', score: src.score });
       console.log(`[Init] ソース追加: ${src.value}`);
     }
   }
@@ -998,6 +1191,7 @@ async function ensureSources() {
 
 async function main() {
   const startTime = Date.now();
+  _recentTitleCache = null; // キャッシュリセット
   console.log('=== Daily Pipeline 開始 ===', new Date().toISOString());
 
   try {
@@ -1006,11 +1200,19 @@ async function main() {
     const reportContent = await generateReport();
     if (reportContent) await sendEmail(reportContent);
 
-    // 日曜日は週次レポートも生成してメール送信
-    const dayOfWeek = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'Asia/Tokyo' });
+    const nowJST = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo', weekday: 'short', day: 'numeric' }).split(', ');
+    const [dayOfWeek, dayOfMonth] = nowJST;
+
+    // 日曜日は週次レポート
     if (dayOfWeek === 'Sun') {
       const weeklyContent = await generateWeeklyReport();
       if (weeklyContent) await sendEmail(weeklyContent, '週次');
+    }
+
+    // 毎月1日は月次レポート
+    if (dayOfMonth === '1') {
+      const monthlyContent = await generateMonthlyReport();
+      if (monthlyContent) await sendEmail(monthlyContent, '月次');
     }
 
     await evolveSources();
