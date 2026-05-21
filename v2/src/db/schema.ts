@@ -67,6 +67,52 @@ export const claims = sqliteTable("claims", {
   value: text("value").notNull(),
   confidence: text("confidence").default('medium'), // 'high', 'medium', 'low'
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  // v3知識グラフ: 正規化エンティティ・時系列バージョニング
+  entityId: integer("entity_id"),
+  validFrom: text("valid_from"),       // YYYY-MM-DD（記事公開日 or 収集日）
+  status: text("status").default('active'), // 'active' | 'stale'
+});
+
+// v3: エンティティ正規化（GPT-4o / GPT4o / gpt-4 omni → 同一ノード）
+export const entities = sqliteTable("entities", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  canonicalName: text("canonical_name").notNull(),
+  normalizedKey: text("normalized_key").notNull().unique(), // 小文字英数字のみ。重複排除キー
+  type: text("type").default('model'), // 'model' | 'company' | 'benchmark' | 'method' | 'other'
+  aliases: text("aliases"), // JSON配列
+  mentionCount: integer("mention_count").default(1),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// v3: ベンチマーク自動トラッキング（数値クレームの構造化）
+export const benchmarks = sqliteTable("benchmarks", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  entityId: integer("entity_id").references(() => entities.id),
+  entityName: text("entity_name").notNull(),   // 正規化済み代表名（denormalized）
+  benchmarkName: text("benchmark_name").notNull(),
+  score: real("score").notNull(),
+  unit: text("unit"), // '%', 'points', 'Elo' 等
+  articleId: integer("article_id").references(() => collectedData.id),
+  sourceUrl: text("source_url"),
+  recordedDate: text("recorded_date"), // YYYY-MM-DD
+  confidence: text("confidence").default('medium'),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// v3: 知識グラフの関係エッジ
+export const relations = sqliteTable("relations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  subjectEntityId: integer("subject_entity_id").references(() => entities.id),
+  subjectName: text("subject_name").notNull(),
+  relationType: text("relation_type").notNull(), // outperforms/competes_with/builds_on/acquired_by/cites/supersedes
+  objectEntityId: integer("object_entity_id").references(() => entities.id),
+  objectName: text("object_name").notNull(),
+  articleId: integer("article_id").references(() => collectedData.id),
+  confidence: text("confidence").default('medium'),
+  validFrom: text("valid_from"), // YYYY-MM-DD
+  status: text("status").default('active'), // 'active' | 'stale' | 'inferred'
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const userTopicWeights = sqliteTable("user_topic_weights", {

@@ -83,4 +83,48 @@ export interface UserTopicWeight {
   weight: number;
 }
 
+// v3知識グラフ
+export interface BenchmarkEntry {
+  entityName: string;
+  score: number;
+  unit: string | null;
+  recordedDate: string | null;
+  sourceUrl: string | null;
+  confidence: string | null;
+}
+
+export interface BenchmarkLeaderboard {
+  benchmarkName: string;
+  unit: string | null;
+  entries: BenchmarkEntry[];
+  series: Record<string, number | string>[]; // チャート用: {date, [entity]: score}
+  topEntities: string[];
+}
+
+export interface KnowledgeRelation {
+  id: number;
+  subjectName: string;
+  relationType: string;
+  objectName: string;
+  confidence: string | null;
+  status: string | null;
+  validFrom: string | null;
+}
+
+export interface BenchmarkAlert {
+  benchmarkName: string;
+  newLeader: string;
+  prevLeader: string;
+  newScore: number;
+  prevScore: number;
+  date: string | null;
+}
+
+export interface KnowledgeStats {
+  entities: number;
+  benchmarks: number;
+  relations: number;
+  staleRelations: number;
+}
+
 export type ToastType = 'success' | 'error' | 'info';
