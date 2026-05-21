@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutGrid, Globe, Bookmark, FileText, Settings,
-  BarChart3, Terminal, Sparkles, RefreshCw, Zap, Network, Telescope,
+  BarChart3, Terminal, Sparkles, RefreshCw, Zap, Network, Telescope, Fingerprint,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/Toast';
@@ -17,17 +17,18 @@ import { SettingsTab } from '@/components/tabs/SettingsTab';
 import { PerformanceTab } from '@/components/tabs/PerformanceTab';
 import { KnowledgeTab } from '@/components/tabs/KnowledgeTab';
 import { ResearchTab } from '@/components/tabs/ResearchTab';
+import { ReadingDnaTab } from '@/components/tabs/ReadingDnaTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
   getSourceROI, getCategoryTrendData, getModelMentionData,
   getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
-  getBriefing, getActiveAlerts,
+  getBriefing, getActiveAlerts, getReadingProfile,
 } from './actions';
-import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem } from '@/types';
+import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile } from '@/types';
 
-type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'knowledge' | 'research' | 'settings';
+type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'knowledge' | 'research' | 'dna' | 'settings';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: '全体概要',
@@ -37,6 +38,7 @@ const TAB_LABELS: Record<Tab, string> = {
   performance: 'ソース分析',
   knowledge: '知識グラフ',
   research: '自律リサーチ',
+  dna: '読書DNA',
   settings: '設定',
 };
 
@@ -48,6 +50,7 @@ const TAB_SHORT: Record<Tab, string> = {
   performance: '分析',
   knowledge: '知識',
   research: 'リサーチ',
+  dna: 'DNA',
   settings: '設定',
 };
 
@@ -79,6 +82,7 @@ export default function Home() {
   const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStats>({ entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 });
   const [briefing, setBriefing] = useState<BriefingReport | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<AlertItem[]>([]);
+  const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -97,7 +101,7 @@ export default function Home() {
 
   async function loadData() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts, lbs, krels, balerts, kstats, brief, aalerts] = await Promise.all([
+    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts, lbs, krels, balerts, kstats, brief, aalerts, prof] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
@@ -115,6 +119,7 @@ export default function Home() {
       getKnowledgeStats(),
       getBriefing(),
       getActiveAlerts(),
+      getReadingProfile(),
     ]);
     setSourcesList(srcs as Source[]);
     setCollectedItems(data as CollectedItem[]);
@@ -133,6 +138,7 @@ export default function Home() {
     setKnowledgeStats(kstats as KnowledgeStats);
     setBriefing(brief as BriefingReport | null);
     setActiveAlerts(aalerts as AlertItem[]);
+    setReadingProfile(prof as ReadingProfile | null);
     setIsLoadingData(false);
   }
 
@@ -198,6 +204,7 @@ export default function Home() {
     ['performance', <BarChart3 key="performance" size={19} />, 'ソース分析'],
     ['knowledge', <Network key="knowledge" size={19} />, '知識グラフ'],
     ['research', <Telescope key="research" size={19} />, '自律リサーチ'],
+    ['dna', <Fingerprint key="dna" size={19} />, '読書DNA'],
     ['settings', <Settings key="settings" size={19} />, '設定'],
   ];
 
@@ -209,6 +216,7 @@ export default function Home() {
     ['performance', <BarChart3 key="performance" size={22} />],
     ['knowledge', <Network key="knowledge" size={22} />],
     ['research', <Telescope key="research" size={22} />],
+    ['dna', <Fingerprint key="dna" size={22} />],
     ['settings', <Settings key="settings" size={22} />],
   ];
 
@@ -259,6 +267,11 @@ export default function Home() {
         <motion.div key="research" {...SLIDE}>
           <ResearchTab briefing={briefing} alerts={activeAlerts}
             isLoadingData={isLoadingData} onReload={loadData} />
+        </motion.div>
+      )}
+      {activeTab === 'dna' && (
+        <motion.div key="dna" {...SLIDE}>
+          <ReadingDnaTab profile={readingProfile} isLoadingData={isLoadingData} />
         </motion.div>
       )}
       {activeTab === 'settings' && (
