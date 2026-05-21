@@ -121,3 +121,31 @@ export const userTopicWeights = sqliteTable("user_topic_weights", {
   weight: real("weight").default(0),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+// v3: 夜間自律リサーチが自動生成した「問い」とその調査結果
+export const researchQuestions = sqliteTable("research_questions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  question: text("question").notNull(),
+  origin: text("origin").notNull(), // 'followup' | 'gap' | 'tracking' | 'contradiction'
+  originRef: text("origin_ref"),     // 記事ID/キーワード等の根拠
+  articleId: integer("article_id").references(() => collectedData.id),
+  status: text("status").default('pending'), // 'pending' | 'investigated' | 'failed'
+  findings: text("findings"),        // Grounding調査結果
+  findingsUrl: text("findings_url"), // 調査で見つけた代表URL
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  investigatedAt: text("investigated_at"),
+});
+
+// v3: 理由付き先読みアラート
+export const alerts = sqliteTable("alerts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  type: text("type").notNull(), // 'benchmark_lead_change' | 'new_competitor' | 'tracking_surge' | 'contradiction'
+  title: text("title").notNull(),
+  reason: text("reason").notNull(), // 「なぜ通知するか」
+  entityName: text("entity_name"),
+  severity: text("severity").default('watch'), // 'info' | 'watch' | 'high'
+  relatedArticleId: integer("related_article_id").references(() => collectedData.id),
+  dedupeKey: text("dedupe_key").notNull().unique(), // 同一アラートの重複防止
+  status: text("status").default('active'), // 'active' | 'dismissed'
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});

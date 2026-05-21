@@ -127,4 +127,29 @@ export interface KnowledgeStats {
   staleRelations: number;
 }
 
+// v3自律リサーチ
+export interface BriefingReport {
+  id: number;
+  content: string | null;
+  reportDate: string;
+  createdAt: string | null;
+}
+
+export interface AlertItem {
+  id: number;
+  type: string;
+  title: string;
+  reason: string;
+  entityName: string | null;
+  severity: string | null;
+  relatedArticleId: number | null;
+  createdAt: string | null;
+}
+
+export interface ResearchBrief {
+  topic: string;
+  content: string;
+  relatedArticles: { title: string; url: string | null }[];
+}
+
 export type ToastType = 'success' | 'error' | 'info';
