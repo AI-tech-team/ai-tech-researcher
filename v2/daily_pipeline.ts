@@ -53,13 +53,28 @@ const HN_AI_KEYWORDS = [
 // ── 構造化出力スキーマ ────────────────────────────────────────────────
 const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'] as const;
 
-const ClaimSchema = z.object({
+// v3知識グラフ: claims/benchmarks/relations を1回の構造化出力でまとめて抽出
+const RELATION_TYPES = ['outperforms', 'competes_with', 'builds_on', 'acquired_by', 'cites', 'supersedes'] as const;
+const KnowledgeSchema = z.object({
   claims: z.array(z.object({
     subject: z.string().max(80),
     predicate: z.string().max(80),
     value: z.string().max(150),
     confidence: z.enum(['high', 'medium', 'low']),
   })).max(3),
+  benchmarks: z.array(z.object({
+    entity: z.string().max(80),     // モデル/システム名
+    benchmark: z.string().max(80),  // ベンチマーク名（MMLU, GSM8K, SWE-bench 等）
+    score: z.number(),
+    unit: z.string().max(20).nullable(), // '%', 'points', 'Elo' 等。不明はnull
+    confidence: z.enum(['high', 'medium', 'low']),
+  })).max(5),
+  relations: z.array(z.object({
+    subject: z.string().max(80),
+    relation: z.enum(RELATION_TYPES),
+    object: z.string().max(80),
+    confidence: z.enum(['high', 'medium', 'low']),
+  })).max(5),
 });
 
 const ArticleEvalSchema = z.object({
@@ -1027,76 +1042,235 @@ async function sendFailureEmail(error: Error) {
   }
 }
 
-// ── クレーム抽出と矛盾検出（改善4）──────────────────────────────────
-async function runClaimExtraction() {
-  console.log('[Claims] クレーム抽出開始');
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+// ── v3: エンティティ正規化（GPT-4o / GPT4o / gpt-4 omni → 同一ノード）─────
+let _entityCache: Map<string, { id: number; canonicalName: string }> = new Map();
+
+function normalizeEntityKey(name: string): string {
+  return name.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+async function resolveEntity(rawName: string, type = 'model'): Promise<{ id: number; canonicalName: string } | null> {
+  const name = (rawName ?? '').trim();
+  const key = normalizeEntityKey(name);
+  if (!key || key.length < 2) return null;
+  if (_entityCache.has(key)) return _entityCache.get(key)!;
+
+  const existing = await db.select({ id: schema.entities.id, canonicalName: schema.entities.canonicalName })
+    .from(schema.entities).where(eq(schema.entities.normalizedKey, key)).limit(1);
+  if (existing.length) {
+    await db.update(schema.entities)
+      .set({ mentionCount: sql`COALESCE(${schema.entities.mentionCount}, 0) + 1`, updatedAt: new Date().toISOString() })
+      .where(eq(schema.entities.id, existing[0].id));
+    _entityCache.set(key, existing[0]);
+    return existing[0];
+  }
+
+  const inserted = await db.insert(schema.entities)
+    .values({ canonicalName: name, normalizedKey: key, type })
+    .onConflictDoNothing()
+    .returning({ id: schema.entities.id, canonicalName: schema.entities.canonicalName });
+  if (inserted[0]) { _entityCache.set(key, inserted[0]); return inserted[0]; }
+
+  // 競合（同時挿入）時は再取得
+  const refetch = await db.select({ id: schema.entities.id, canonicalName: schema.entities.canonicalName })
+    .from(schema.entities).where(eq(schema.entities.normalizedKey, key)).limit(1);
+  if (refetch[0]) { _entityCache.set(key, refetch[0]); return refetch[0]; }
+  return null;
+}
+
+// ── v3: 知識抽出（claims + benchmarks + relations を1回の呼び出しで）──────
+async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
+  console.log('[Knowledge] 知識抽出開始');
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
 
   const targets = await db.select({
     id: schema.collectedData.id,
     title: schema.collectedData.title,
     summary: schema.collectedData.summary,
+    url: schema.collectedData.url,
+    publishedAt: schema.collectedData.publishedAt,
   })
     .from(schema.collectedData)
     .where(and(
       gte(schema.collectedData.importanceScore, 7),
       gte(schema.collectedData.createdAt, since),
     ))
-    .limit(10);
+    .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
+    .limit(limit);
 
-  if (targets.length === 0) { console.log('[Claims] 対象記事なし'); return; }
+  if (targets.length === 0) { console.log('[Knowledge] 対象記事なし'); return; }
 
-  let extracted = 0, contradictions = 0;
+  let claimCount = 0, benchCount = 0, relCount = 0, staleCount = 0;
 
   for (const article of targets) {
+    const validFrom = (article.publishedAt ?? new Date().toISOString()).split('T')[0];
     try {
       const { object } = await withRetry(() => generateObject({
         model: google('gemini-2.5-flash-lite'),
-        schema: ClaimSchema,
-        prompt: `以下の記事から検証可能な具体的クレームを最大3つ抽出してください。
-クレームは subject（主語: モデル名・企業名等）+ predicate（述語: ベンチマーク名・性能指標等）+ value（具体的な値・内容）の形式で。
-数値・ベンチマーク・比較・性能改善を含むもの優先。「AIが進化した」等の汎用的主張は除外。
-クレームがない場合は空配列を返す。
+        schema: KnowledgeSchema,
+        prompt: `以下の記事から構造化された知識を抽出してください。該当がなければ空配列。
+
+【claims】検証可能な具体的主張を最大3つ。subject(主語:モデル/企業名)+predicate(述語:指標)+value(具体値)。「AIが進化」等の汎用主張は除外。
+【benchmarks】AIモデル/システムの「評価ベンチマークスコア」のみ最大5つ。entity(モデル名)+benchmark(ベンチ名)+score(比較可能な数値)+unit(%/points/Elo等、不明はnull)。
+  対象例: MMLU, GSM8K, SWE-bench, HumanEval, MMMU, GPQA, AIME, MATH, Chatbot Arena Elo, ARC-AGI 等。
+  除外: CPUコア数・RAM/メモリ容量・TOPS・クロック等のハードウェアスペック、価格、トークン数、'1'のような順位/件数、ベンチ名が曖昧なもの。
+【relations】エンティティ間の明確な関係を最大5つ。subject+relation(${RELATION_TYPES.join('/')})+object。具体的な固有名詞同士のみ（一般名詞・文の断片は除外）。例: "Claude 4" outperforms "GPT-4"。
 
 記事: ${article.title ?? ''}\n${article.summary ?? ''}`,
       }));
 
+      // ── claims（stale移行つき）──
       for (const claim of object.claims) {
-        // 既存クレームと矛盾チェック（同じsubject+predicateで異なるvalue）
-        const existing = await db.select({
-          value: schema.claims.value,
-          confidence: schema.claims.confidence,
-        })
-          .from(schema.claims)
-          .where(and(
-            eq(schema.claims.subject, claim.subject),
-            eq(schema.claims.predicate, claim.predicate),
-            gte(schema.claims.createdAt, twoWeeksAgo),
-          ))
-          .limit(5);
-
-        const hasContradiction = existing.some(e =>
-          e.value.toLowerCase() !== claim.value.toLowerCase() &&
-          e.confidence === 'high' && claim.confidence === 'high'
-        );
-        if (hasContradiction) contradictions++;
-
+        const entity = await resolveEntity(claim.subject);
+        // 同一subject+predicateで異なるvalueの既存activeクレームをstaleに
+        if (claim.confidence === 'high') {
+          const res = await db.update(schema.claims)
+            .set({ status: 'stale' })
+            .where(and(
+              eq(schema.claims.subject, claim.subject),
+              eq(schema.claims.predicate, claim.predicate),
+              sql`LOWER(${schema.claims.value}) != ${claim.value.toLowerCase()}`,
+              eq(schema.claims.status, 'active'),
+            ));
+          staleCount += res.rowsAffected;
+        }
         await db.insert(schema.claims).values({
           articleId: article.id,
           subject: claim.subject,
           predicate: claim.predicate,
           value: claim.value,
           confidence: claim.confidence,
+          entityId: entity?.id ?? null,
+          validFrom,
+          status: 'active',
         }).onConflictDoNothing();
-        extracted++;
+        claimCount++;
+      }
+
+      // ── benchmarks（時系列なので全件保存）──
+      for (const b of object.benchmarks) {
+        if (!Number.isFinite(b.score)) continue;
+        const entity = await resolveEntity(b.entity);
+        await db.insert(schema.benchmarks).values({
+          entityId: entity?.id ?? null,
+          entityName: entity?.canonicalName ?? b.entity.trim(),
+          benchmarkName: b.benchmark.trim(),
+          score: b.score,
+          unit: b.unit ?? null,
+          articleId: article.id,
+          sourceUrl: article.url,
+          recordedDate: validFrom,
+          confidence: b.confidence,
+        });
+        benchCount++;
+      }
+
+      // ── relations（エッジ重複排除・矛盾stale）──
+      for (const r of object.relations) {
+        const subj = await resolveEntity(r.subject);
+        const obj = await resolveEntity(r.object);
+        const subjName = subj?.canonicalName ?? r.subject.trim();
+        const objName = obj?.canonicalName ?? r.object.trim();
+        if (!subjName || !objName || subjName === objName) continue;
+
+        // outperforms の逆向きactiveエッジをstaleに（A>B が来たら B>A を陳腐化）
+        if (r.relation === 'outperforms') {
+          const res = await db.update(schema.relations)
+            .set({ status: 'stale' })
+            .where(and(
+              eq(schema.relations.relationType, 'outperforms'),
+              eq(schema.relations.subjectName, objName),
+              eq(schema.relations.objectName, subjName),
+              eq(schema.relations.status, 'active'),
+            ));
+          staleCount += res.rowsAffected;
+        }
+
+        await db.insert(schema.relations).values({
+          subjectEntityId: subj?.id ?? null,
+          subjectName: subjName,
+          relationType: r.relation,
+          objectEntityId: obj?.id ?? null,
+          objectName: objName,
+          articleId: article.id,
+          confidence: r.confidence,
+          validFrom,
+          status: 'active',
+        }).onConflictDoUpdate({
+          target: [schema.relations.subjectName, schema.relations.relationType, schema.relations.objectName],
+          set: { articleId: article.id, confidence: r.confidence, validFrom, status: 'active' },
+        });
+        relCount++;
       }
     } catch (e: any) {
-      console.warn(`  [Claims] 抽出失敗 (article ${article.id}): ${e.message?.slice(0, 60)}`);
+      console.warn(`  [Knowledge] 抽出失敗 (article ${article.id}): ${(e.message ?? '').slice(0, 60)}`);
     }
   }
 
-  console.log(`[Claims] ${extracted}件抽出, ${contradictions}件矛盾検出`);
+  console.log(`[Knowledge] claims${claimCount}, benchmarks${benchCount}, relations${relCount}, stale移行${staleCount}`);
+
+  await runRelationInference();
+}
+
+// ── v3: outperforms の推移推論（A>B かつ B>C → A>C を inferred として生成）──
+async function runRelationInference() {
+  try {
+    const edges = await db.select({
+      subjectName: schema.relations.subjectName,
+      subjectEntityId: schema.relations.subjectEntityId,
+      objectName: schema.relations.objectName,
+      objectEntityId: schema.relations.objectEntityId,
+    })
+      .from(schema.relations)
+      .where(and(
+        eq(schema.relations.relationType, 'outperforms'),
+        eq(schema.relations.status, 'active'),
+      ));
+
+    if (edges.length < 2) return;
+
+    const adj = new Map<string, Array<{ name: string; entityId: number | null }>>();
+    const idOf = new Map<string, number | null>();
+    const existing = new Set<string>();
+    for (const e of edges) {
+      if (!adj.has(e.subjectName)) adj.set(e.subjectName, []);
+      adj.get(e.subjectName)!.push({ name: e.objectName, entityId: e.objectEntityId });
+      idOf.set(e.subjectName, e.subjectEntityId);
+      idOf.set(e.objectName, e.objectEntityId);
+      existing.add(`${e.subjectName}→${e.objectName}`);
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    let inferred = 0;
+    for (const [a, bs] of adj) {
+      for (const b of bs) {
+        const cs = adj.get(b.name);
+        if (!cs) continue;
+        for (const c of cs) {
+          if (c.name === a) continue; // 循環は除外
+          const key = `${a}→${c.name}`;
+          if (existing.has(key)) continue; // 直接エッジがあれば推論不要
+          existing.add(key);
+          const res = await db.insert(schema.relations).values({
+            subjectEntityId: idOf.get(a) ?? null,
+            subjectName: a,
+            relationType: 'outperforms',
+            objectEntityId: c.entityId ?? null,
+            objectName: c.name,
+            articleId: null,
+            confidence: 'low',
+            validFrom: today,
+            status: 'inferred',
+          }).onConflictDoNothing(); // 実エッジ（active/stale）は上書きしない
+          inferred += res.rowsAffected;
+          if (inferred >= 30) { console.log(`[Knowledge] 推論${inferred}件（上限到達）`); return; }
+        }
+      }
+    }
+    if (inferred > 0) console.log(`[Knowledge] 推移推論${inferred}件生成`);
+  } catch (e: any) {
+    console.warn('[Knowledge] 推論失敗(非クリティカル):', e.message);
+  }
 }
 
 async function evolveSources() {
@@ -1573,6 +1747,7 @@ async function ensureSources() {
 async function main() {
   const startTime = Date.now();
   _recentTitleCache = null; // キャッシュリセット
+  _entityCache = new Map();  // エンティティキャッシュリセット
   const pipelineMode = process.env.PIPELINE_MODE ?? 'full';
   console.log(`=== Daily Pipeline 開始 [mode=${pipelineMode}] ===`, new Date().toISOString());
 
@@ -1582,6 +1757,13 @@ async function main() {
       await runEmbeddings();
       await runStoryGrouping();
       console.log('=== Vectors mode 完了 ===');
+      process.exit(0);
+    }
+
+    // v3: 知識抽出のみ実行（バックフィル・検証用）。直近14日・最大60件を対象
+    if (pipelineMode === 'knowledge') {
+      await runKnowledgeExtraction(14, 60);
+      console.log('=== Knowledge mode 完了 ===');
       process.exit(0);
     }
 
@@ -1597,7 +1779,7 @@ async function main() {
         console.warn('[Pipeline] ベクトル処理失敗(非クリティカル):', e.message);
       }
 
-      await runClaimExtraction();
+      await runKnowledgeExtraction();
 
       const reportContent = await generateReport();
       if (reportContent) await sendEmail(reportContent);

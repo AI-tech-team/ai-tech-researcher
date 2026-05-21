@@ -1,12 +1,12 @@
 'use server';
 
 import { db } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights } from '@/db/schema';
-import { desc, eq, count, gte, lte, sql, like, or, isNotNull, and } from 'drizzle-orm';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities } from '@/db/schema';
+import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
-import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight } from '@/types';
+import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats } from '@/types';
 
 // ─── 共通クエリヘルパー ───────────────────────────────────────────
 
@@ -534,6 +534,155 @@ export async function getUserTopicWeights(): Promise<UserTopicWeight[]> {
   } catch (error) {
     console.error("Failed to get user topic weights:", error);
     return [];
+  }
+}
+
+// ─── v3知識グラフ ───────────────────────────────────────────────────
+
+export async function getBenchmarkLeaderboards(): Promise<BenchmarkLeaderboard[]> {
+  try {
+    const rows = await db.select({
+      benchmarkName: benchmarks.benchmarkName,
+      entityName: benchmarks.entityName,
+      score: benchmarks.score,
+      unit: benchmarks.unit,
+      recordedDate: benchmarks.recordedDate,
+      sourceUrl: benchmarks.sourceUrl,
+      confidence: benchmarks.confidence,
+    })
+      .from(benchmarks)
+      .orderBy(desc(benchmarks.recordedDate), desc(benchmarks.createdAt))
+      .limit(800);
+
+    const byBench = new Map<string, typeof rows>();
+    for (const r of rows) {
+      if (!byBench.has(r.benchmarkName)) byBench.set(r.benchmarkName, []);
+      byBench.get(r.benchmarkName)!.push(r);
+    }
+
+    const result: BenchmarkLeaderboard[] = [];
+    for (const [benchmarkName, recs] of byBench) {
+      // エンティティごとの最新スコア（recsは日付降順なので最初に出たものが最新）
+      const latestByEntity = new Map<string, BenchmarkEntry>();
+      for (const r of recs) {
+        if (!latestByEntity.has(r.entityName)) {
+          latestByEntity.set(r.entityName, {
+            entityName: r.entityName, score: r.score, unit: r.unit,
+            recordedDate: r.recordedDate, sourceUrl: r.sourceUrl, confidence: r.confidence,
+          });
+        }
+      }
+      const entries = [...latestByEntity.values()].sort((a, b) => b.score - a.score);
+      if (entries.length < 2) continue; // リーダーボードは2エンティティ以上
+
+      const topEntities = entries.slice(0, 5).map(e => e.entityName);
+      const topSet = new Set(topEntities);
+      const dateMap = new Map<string, Record<string, number | string>>();
+      for (const r of [...recs].reverse()) { // 時系列昇順
+        if (!topSet.has(r.entityName)) continue;
+        const d = r.recordedDate ?? '';
+        if (!d) continue;
+        if (!dateMap.has(d)) dateMap.set(d, { date: d });
+        dateMap.get(d)![r.entityName] = r.score;
+      }
+      const series = [...dateMap.values()].sort((a, b) => (String(a.date) < String(b.date) ? -1 : 1));
+
+      result.push({ benchmarkName, unit: entries[0].unit, entries, series, topEntities });
+    }
+
+    return result.sort((a, b) => b.entries.length - a.entries.length).slice(0, 12);
+  } catch (error) {
+    console.error('Failed to fetch benchmark leaderboards:', error);
+    return [];
+  }
+}
+
+export async function getKnowledgeRelations(): Promise<KnowledgeRelation[]> {
+  try {
+    const rows = await db.select({
+      id: relations.id,
+      subjectName: relations.subjectName,
+      relationType: relations.relationType,
+      objectName: relations.objectName,
+      confidence: relations.confidence,
+      status: relations.status,
+      validFrom: relations.validFrom,
+    })
+      .from(relations)
+      .orderBy(
+        sql`CASE ${relations.status} WHEN 'active' THEN 0 WHEN 'inferred' THEN 1 ELSE 2 END`,
+        desc(relations.validFrom),
+      )
+      .limit(80);
+    return rows;
+  } catch (error) {
+    console.error('Failed to fetch relations:', error);
+    return [];
+  }
+}
+
+export async function getBenchmarkAlerts(): Promise<BenchmarkAlert[]> {
+  try {
+    const rows = await db.select({
+      benchmarkName: benchmarks.benchmarkName,
+      entityName: benchmarks.entityName,
+      score: benchmarks.score,
+      recordedDate: benchmarks.recordedDate,
+    })
+      .from(benchmarks)
+      .orderBy(asc(benchmarks.benchmarkName), asc(benchmarks.recordedDate), asc(benchmarks.createdAt))
+      .limit(800);
+
+    const alerts: BenchmarkAlert[] = [];
+    let curBench = '';
+    let maxScore = -Infinity;
+    let leader = '';
+    for (const r of rows) {
+      if (r.benchmarkName !== curBench) {
+        curBench = r.benchmarkName; maxScore = -Infinity; leader = '';
+      }
+      if (r.score > maxScore) {
+        // 別エンティティが既存リーダーを上回ったらリード交代アラート
+        if (leader && r.entityName !== leader) {
+          alerts.push({
+            benchmarkName: r.benchmarkName,
+            newLeader: r.entityName,
+            prevLeader: leader,
+            newScore: r.score,
+            prevScore: maxScore,
+            date: r.recordedDate,
+          });
+        }
+        maxScore = r.score;
+        leader = r.entityName;
+      }
+    }
+    return alerts
+      .sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? '')))
+      .slice(0, 10);
+  } catch (error) {
+    console.error('Failed to fetch benchmark alerts:', error);
+    return [];
+  }
+}
+
+export async function getKnowledgeStats(): Promise<KnowledgeStats> {
+  try {
+    const [ent, bench, rel, staleRel] = await Promise.all([
+      db.select({ c: count() }).from(entities),
+      db.select({ c: count() }).from(benchmarks),
+      db.select({ c: count() }).from(relations),
+      db.select({ c: count() }).from(relations).where(eq(relations.status, 'stale')),
+    ]);
+    return {
+      entities: Number(ent[0]?.c ?? 0),
+      benchmarks: Number(bench[0]?.c ?? 0),
+      relations: Number(rel[0]?.c ?? 0),
+      staleRelations: Number(staleRel[0]?.c ?? 0),
+    };
+  } catch (error) {
+    console.error('Failed to fetch knowledge stats:', error);
+    return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
   }
 }
 

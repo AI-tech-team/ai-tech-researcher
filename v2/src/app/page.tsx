@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutGrid, Globe, Bookmark, FileText, Settings,
-  BarChart3, Terminal, Sparkles, RefreshCw, Zap,
+  BarChart3, Terminal, Sparkles, RefreshCw, Zap, Network,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/Toast';
@@ -15,15 +15,17 @@ import { ReadLaterTab } from '@/components/tabs/ReadLaterTab';
 import { ReportsTab } from '@/components/tabs/ReportsTab';
 import { SettingsTab } from '@/components/tabs/SettingsTab';
 import { PerformanceTab } from '@/components/tabs/PerformanceTab';
+import { KnowledgeTab } from '@/components/tabs/KnowledgeTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
   getSourcePerformance, getSourceROI, getCategoryTrendData, getModelMentionData,
   getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
+  getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
 } from './actions';
-import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword, ConflictingClaim } from '@/types';
+import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats } from '@/types';
 
-type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'settings';
+type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'knowledge' | 'settings';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: '全体概要',
@@ -31,6 +33,7 @@ const TAB_LABELS: Record<Tab, string> = {
   readlater: '後で読む',
   reports: '調査レポート',
   performance: 'ソース分析',
+  knowledge: '知識グラフ',
   settings: '設定',
 };
 
@@ -40,6 +43,7 @@ const TAB_SHORT: Record<Tab, string> = {
   readlater: '後読み',
   reports: 'レポート',
   performance: '分析',
+  knowledge: '知識',
   settings: '設定',
 };
 
@@ -65,6 +69,10 @@ export default function Home() {
   });
   const [trendingKeywords, setTrendingKeywords] = useState<TrendingKeyword[]>([]);
   const [conflictingClaims, setConflictingClaims] = useState<ConflictingClaim[]>([]);
+  const [leaderboards, setLeaderboards] = useState<BenchmarkLeaderboard[]>([]);
+  const [knowledgeRelations, setKnowledgeRelations] = useState<KnowledgeRelation[]>([]);
+  const [benchmarkAlerts, setBenchmarkAlerts] = useState<BenchmarkAlert[]>([]);
+  const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStats>({ entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 });
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -81,7 +89,7 @@ export default function Home() {
 
   async function loadData() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts] = await Promise.all([
+    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts, lbs, krels, balerts, kstats] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
@@ -93,6 +101,10 @@ export default function Home() {
       getTrendingKeywords(),
       getPipelineLogs(),
       getConflictingClaims(),
+      getBenchmarkLeaderboards(),
+      getKnowledgeRelations(),
+      getBenchmarkAlerts(),
+      getKnowledgeStats(),
     ]);
     setSourcesList(srcs as Source[]);
     setCollectedItems(data as CollectedItem[]);
@@ -105,6 +117,10 @@ export default function Home() {
     setTrendingKeywords(trending);
     setPipelineLogs(logs);
     setConflictingClaims(conflicts as ConflictingClaim[]);
+    setLeaderboards(lbs as BenchmarkLeaderboard[]);
+    setKnowledgeRelations(krels as KnowledgeRelation[]);
+    setBenchmarkAlerts(balerts as BenchmarkAlert[]);
+    setKnowledgeStats(kstats as KnowledgeStats);
     setIsLoadingData(false);
   }
 
@@ -168,6 +184,7 @@ export default function Home() {
     ['readlater', <Bookmark size={19} />, `後で読む${readLaterCount > 0 ? ` (${readLaterCount})` : ''}`],
     ['reports', <FileText size={19} />, '調査レポート'],
     ['performance', <BarChart3 size={19} />, 'ソース分析'],
+    ['knowledge', <Network size={19} />, '知識グラフ'],
     ['settings', <Settings size={19} />, '設定'],
   ];
 
@@ -177,6 +194,7 @@ export default function Home() {
     ['readlater', <Bookmark size={22} />],
     ['reports', <FileText size={22} />],
     ['performance', <BarChart3 size={22} />],
+    ['knowledge', <Network size={22} />],
     ['settings', <Settings size={22} />],
   ];
 
@@ -215,6 +233,12 @@ export default function Home() {
           <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}
             sourcePerformance={sourcePerformance} kwMatrix={kwMatrix}
             pipelineLogs={pipelineLogs} isLoadingData={isLoadingData} />
+        </motion.div>
+      )}
+      {activeTab === 'knowledge' && (
+        <motion.div key="knowledge" {...SLIDE}>
+          <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
+            alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={isLoadingData} />
         </motion.div>
       )}
       {activeTab === 'settings' && (
