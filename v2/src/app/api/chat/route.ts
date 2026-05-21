@@ -2,7 +2,7 @@ import { google } from '@ai-sdk/google';
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { db } from '@/db';
-import { collectedData, sources } from '@/db/schema';
+import { collectedData } from '@/db/schema';
 import { desc, eq, like, or } from 'drizzle-orm';
 
 export const maxDuration = 60;

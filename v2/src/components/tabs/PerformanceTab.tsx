@@ -7,8 +7,6 @@ import {
 import { SkeletonRow } from '@/components/Skeleton';
 import type { Source, CollectedItem, SourceROI, PipelineLog } from '@/types';
 
-const scoreToPercent = (score: number) => Math.min(100, Math.max(0, (score + 20) * 2.5));
-
 function getStatusColor(status: string) {
   switch (status) {
     case 'active': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';

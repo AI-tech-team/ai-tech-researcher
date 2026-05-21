@@ -1,7 +1,7 @@
 'use server';
 
 import { db, client } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, researchQuestions } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
@@ -832,7 +832,7 @@ export async function generateResearchBrief(topic: string): Promise<ResearchBrie
         args: [JSON.stringify(embeddings[0])],
       });
       related = res.rows.map(r => ({ title: (r.title as string) ?? '', url: (r.url as string | null) ?? null }));
-    } catch (e) {
+    } catch {
       console.warn('ベクトル関連記事の取得に失敗、Groundingのみで続行');
     }
 

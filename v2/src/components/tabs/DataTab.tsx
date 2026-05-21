@@ -32,6 +32,8 @@ export function DataTab({
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 20;
 
+  // フィルタ変更時にページを先頭へ戻す（意図的なリセット）
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setPage(0); }, [searchQuery, categoryFilter, tagFilter, sortByImportance, unreadOnly, semanticResults]);
 
   const categories = ['all', ...Array.from(new Set(collectedItems.map(i => i.category).filter(Boolean))) as string[]];
