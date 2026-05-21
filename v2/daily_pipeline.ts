@@ -2308,7 +2308,11 @@ async function main() {
     }
 
     await ensureSources();
-    const { collected, failed } = await collectData(10);
+    // コスト最適化: 収集のみ実行(12:00/18:00)はキーワードGrounding(Google検索)を回さず
+    // 無料ソース(RSS/HN/ArXiv/GitHub)の巡回のみ。キーワード検索＋夜間リサーチはフル実行(06:00)で実施。
+    // 同一キーワードの日中再検索は新着がほぼ無く重複ばかりで、品質を落とさずGrounding費用を約6割削減できる。
+    const keywordRounds = pipelineMode === 'collect' ? 0 : 10;
+    const { collected, failed } = await collectData(keywordRounds);
 
     if (pipelineMode !== 'collect') {
       // v3: ベクトル化 → 意味的重複排除（失敗しても主処理は継続）
