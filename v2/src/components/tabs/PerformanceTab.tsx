@@ -5,7 +5,7 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { SkeletonRow } from '@/components/Skeleton';
-import type { Source, CollectedItem, SourcePerformance, PipelineLog } from '@/types';
+import type { Source, CollectedItem, SourceROI, PipelineLog } from '@/types';
 
 const scoreToPercent = (score: number) => Math.min(100, Math.max(0, (score + 20) * 2.5));
 
@@ -21,8 +21,8 @@ function getStatusColor(status: string) {
 interface PerformanceTabProps {
   sourcesList: Source[];
   collectedItems: CollectedItem[];
-  sourcePerformance: (SourcePerformance & { avgImportance?: number; roi?: number })[];
-  kwMatrix: { keywords: string[]; categories: string[]; matrix: any[]; maxCount: number };
+  sourcePerformance: SourceROI[];
+  kwMatrix: { keywords: string[]; categories: string[]; matrix: Record<string, unknown>[]; maxCount: number };
   pipelineLogs: PipelineLog[];
   isLoadingData: boolean;
 }
@@ -90,69 +90,72 @@ export function PerformanceTab({
         </div>
       )}
 
-      {/* Performance Table with ROI */}
+      {/* Performance Table — 実際のユーザー価値で評価 */}
       <div className="glass-card p-0 overflow-hidden">
-        <h3 className="text-sm font-bold font-outfit px-6 pt-6 pb-4 flex items-center gap-2">
-          <Zap size={16} className="text-amber-400" /> キーワード別パフォーマンス（ROI順）
-        </h3>
+        <div className="px-6 pt-6 pb-3">
+          <h3 className="text-sm font-bold font-outfit flex items-center gap-2">
+            <Zap size={16} className="text-amber-400" /> キーワード別パフォーマンス（貢献度順）
+          </h3>
+          <p className="text-[11px] text-slate-500 mt-1">
+            貢献度 = レポート採用×3 ＋ お気に入り×2 ＋ 後で読む×1（実際に役立った度合い）
+          </p>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="text-xs text-slate-400 uppercase bg-white/5 border-b border-white/5">
               <tr>
-                <th className="px-6 py-3">キーワード</th>
-                <th className="px-6 py-3">ステータス</th>
-                <th className="px-6 py-3">スコア</th>
-                <th className="px-6 py-3">収集数</th>
-                <th className="px-6 py-3">重要度avg</th>
-                <th className="px-6 py-3">ROI</th>
-                <th className="px-6 py-3">最終ヒット</th>
+                <th className="px-5 py-3">キーワード</th>
+                <th className="px-5 py-3">ステータス</th>
+                <th className="px-4 py-3 text-right">収集</th>
+                <th className="px-4 py-3 text-right">採用率</th>
+                <th className="px-4 py-3 text-right">★</th>
+                <th className="px-5 py-3">貢献度</th>
+                <th className="px-5 py-3">最終ヒット</th>
               </tr>
             </thead>
             <tbody>
               {isLoadingData
                 ? Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)
                 : sourcePerformance.map(src => {
-                  const roi = src.roi ?? 0;
-                  const maxRoi = Math.max(1, ...sourcePerformance.map(s => s.roi ?? 0));
+                  const contribution = src.contribution ?? 0;
+                  const maxContribution = Math.max(1, ...sourcePerformance.map(s => s.contribution ?? 0));
                   return (
                     <tr key={src.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                      <td className="px-6 py-3.5 font-medium text-white">
+                      <td className="px-5 py-3.5 font-medium text-white">
                         <span className="flex items-center gap-2">
-                          <Hash size={13} className="text-sky-400 flex-shrink-0" />{src.value}
+                          <Hash size={13} className="text-sky-400 flex-shrink-0" />
+                          <span className="truncate max-w-[180px]" title={src.value}>{src.value}</span>
                         </span>
                       </td>
-                      <td className="px-6 py-3.5">
+                      <td className="px-5 py-3.5">
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] uppercase font-bold border ${getStatusColor(src.status)}`}>
                           {src.status}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5">
-                        <div className="flex items-center gap-2">
-                          <div className="w-12 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-sky-400 to-purple-500" style={{ width: `${scoreToPercent(src.score ?? 0)}%` }} />
-                          </div>
-                          <span className="text-slate-400 font-mono text-xs">{(src.score ?? 0).toFixed(1)}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-3.5">
-                        <span className={`font-bold font-mono text-sm ${Number(src.collectedCount) > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
-                          {src.collectedCount ?? 0}件
+                      <td className="px-4 py-3.5 text-right">
+                        <span className={`font-mono text-sm ${src.collectedCount > 0 ? 'text-slate-200' : 'text-slate-600'}`}>
+                          {src.collectedCount}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5">
-                        <span className="text-orange-400 font-mono text-xs">
-                          {(src as any).avgImportance ? Number((src as any).avgImportance).toFixed(1) : '-'}
+                      <td className="px-4 py-3.5 text-right">
+                        <span className={`font-mono text-xs ${src.adoptionRate >= 30 ? 'text-emerald-400' : src.adoptionRate > 0 ? 'text-slate-300' : 'text-slate-600'}`}>
+                          {src.adoptedCount > 0 ? `${src.adoptionRate}%` : '-'}
                         </span>
                       </td>
-                      <td className="px-6 py-3.5">
+                      <td className="px-4 py-3.5 text-right">
+                        <span className={`font-mono text-xs ${src.favoritedCount > 0 ? 'text-amber-400' : 'text-slate-600'}`}>
+                          {src.favoritedCount || '-'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5">
                         <div className="flex items-center gap-2">
-                          <div className="w-12 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-orange-400 to-rose-500" style={{ width: `${(roi / maxRoi) * 100}%` }} />
+                          <div className="w-14 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-amber-400 to-rose-500" style={{ width: `${(contribution / maxContribution) * 100}%` }} />
                           </div>
-                          <span className="text-orange-400 font-mono text-xs font-bold">{roi.toFixed(0)}</span>
+                          <span className="text-amber-400 font-mono text-xs font-bold w-6">{contribution}</span>
                         </div>
                       </td>
-                      <td className="px-6 py-3.5 text-slate-400 text-xs">
+                      <td className="px-5 py-3.5 text-slate-400 text-xs">
                         {src.lastHitAt ? new Date(src.lastHitAt).toLocaleDateString('ja-JP') : '-'}
                       </td>
                     </tr>

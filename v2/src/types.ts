@@ -1,6 +1,7 @@
 export interface CollectedItem {
   id: number;
   title: string | null;
+  titleJa?: string | null;
   url: string | null;
   summary: string | null;
   category: string | null;
@@ -43,7 +44,12 @@ export interface SourcePerformance extends Source {
 export interface SourceROI extends Source {
   collectedCount: number;
   avgImportance: number;
-  roi: number;
+  adoptedCount: number;
+  favoritedCount: number;
+  readLaterCount: number;
+  adoptionRate: number;   // 採用率(%)
+  contribution: number;   // 貢献度(採用×3+お気に入り×2+後で読む×1)
+  roi: number;            // 後方互換（=contribution）
 }
 
 export interface PipelineLog {
@@ -92,6 +98,7 @@ export interface BenchmarkEntry {
   recordedDate: string | null;
   sourceUrl: string | null;
   confidence: string | null;
+  trend: 'up' | 'down' | 'flat' | 'new';
 }
 
 export interface BenchmarkLeaderboard {

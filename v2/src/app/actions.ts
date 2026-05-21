@@ -22,6 +22,7 @@ function parseCollectedRows(rows: any[]): CollectedItem[] {
 const COLLECTED_SELECT = {
   id: collectedData.id,
   title: collectedData.title,
+  titleJa: collectedData.titleJa,
   url: collectedData.url,
   summary: collectedData.summary,
   category: collectedData.category,
@@ -175,6 +176,7 @@ export async function getSourcePerformance() {
 
 export async function getSourceROI() {
   try {
+    // 収集数・重要度avg・お気に入り・後で読む（実際のユーザー価値シグナル）
     const rows = await db.select({
       id: sources.id,
       value: sources.value,
@@ -184,18 +186,44 @@ export async function getSourceROI() {
       lastHitAt: sources.lastHitAt,
       collectedCount: sql<number>`COUNT(${collectedData.id})`.as('collected_count'),
       avgImportance: sql<number>`COALESCE(AVG(${collectedData.importanceScore}), 5)`.as('avg_importance'),
+      favoritedCount: sql<number>`COALESCE(SUM(${collectedData.isFavorited}), 0)`.as('favorited_count'),
+      readLaterCount: sql<number>`COALESCE(SUM(${collectedData.isReadLater}), 0)`.as('readlater_count'),
     })
       .from(sources)
       .leftJoin(collectedData, eq(collectedData.sourceId, sources.id))
       .where(sql`${sources.status} != 'stopped'`)
       .groupBy(sources.id)
-      .orderBy(sql`COUNT(${collectedData.id}) * COALESCE(AVG(${collectedData.importanceScore}), 5) DESC`)
-      .limit(50);
+      .limit(80);
 
-    return rows.map(r => ({
-      ...r,
-      roi: Number(r.collectedCount) * Number(r.avgImportance),
-    }));
+    // レポート採用数（最も強い価値シグナル）
+    const adoptRows = await db.select({ sourceId: adoptionLogs.sourceId, cnt: count() })
+      .from(adoptionLogs)
+      .where(eq(adoptionLogs.isAdopted, 1))
+      .groupBy(adoptionLogs.sourceId);
+    const adoptMap = new Map(adoptRows.map(a => [a.sourceId, Number(a.cnt)]));
+
+    return rows.map(r => {
+      const collected = Number(r.collectedCount);
+      const adopted = adoptMap.get(r.id) ?? 0;
+      const favorited = Number(r.favoritedCount);
+      const readLater = Number(r.readLaterCount);
+      // 貢献度: 実際に役立った度合い（採用×3 + お気に入り×2 + 後で読む×1）
+      const contribution = adopted * 3 + favorited * 2 + readLater;
+      // 採用率（収集のうちレポート採用された割合）
+      const adoptionRate = collected > 0 ? Math.round((adopted / collected) * 100) : 0;
+      return {
+        ...r,
+        collectedCount: collected,
+        avgImportance: Number(r.avgImportance),
+        adoptedCount: adopted,
+        favoritedCount: favorited,
+        readLaterCount: readLater,
+        adoptionRate,
+        contribution,
+        roi: contribution, // 後方互換
+      };
+    }).sort((a, b) => b.contribution - a.contribution || b.collectedCount - a.collectedCount)
+      .slice(0, 50);
   } catch (error) {
     console.error("Failed to fetch source ROI:", error);
     return [];
@@ -601,13 +629,24 @@ export async function getBenchmarkLeaderboards(): Promise<BenchmarkLeaderboard[]
 
     const result: BenchmarkLeaderboard[] = [];
     for (const [benchmarkName, recs] of byBench) {
+      // エンティティごとのスコア履歴（日付降順）
+      const entityScores = new Map<string, number[]>();
+      for (const r of recs) {
+        const arr = entityScores.get(r.entityName) ?? [];
+        arr.push(r.score);
+        entityScores.set(r.entityName, arr);
+      }
       // エンティティごとの最新スコア（recsは日付降順なので最初に出たものが最新）
       const latestByEntity = new Map<string, BenchmarkEntry>();
       for (const r of recs) {
         if (!latestByEntity.has(r.entityName)) {
+          const scores = entityScores.get(r.entityName)!;
+          const trend: BenchmarkEntry['trend'] = scores.length < 2
+            ? 'new'
+            : scores[0] > scores[1] ? 'up' : scores[0] < scores[1] ? 'down' : 'flat';
           latestByEntity.set(r.entityName, {
             entityName: r.entityName, score: r.score, unit: r.unit,
-            recordedDate: r.recordedDate, sourceUrl: r.sourceUrl, confidence: r.confidence,
+            recordedDate: r.recordedDate, sourceUrl: r.sourceUrl, confidence: r.confidence, trend,
           });
         }
       }
