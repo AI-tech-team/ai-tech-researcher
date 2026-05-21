@@ -3,7 +3,7 @@ import { createClient } from '@libsql/client';
 import { google } from '@ai-sdk/google';
 import { generateText, generateObject, embedMany } from 'ai';
 import { z } from 'zod';
-import { eq, sql, desc, count, and, gte, lt } from 'drizzle-orm';
+import { eq, sql, desc, asc, count, and, gte, lt } from 'drizzle-orm';
 import { config } from 'dotenv';
 import * as nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
@@ -1273,6 +1273,275 @@ async function runRelationInference() {
   }
 }
 
+// ── v3: Groundingレスポンスから代表URLを抽出 ─────────────────────────
+function extractGroundingUrl(result: any): string | null {
+  const meta = (result.providerMetadata?.google ?? result.experimental_providerMetadata?.google) as any;
+  const chunks: any[] = meta?.groundingMetadata?.groundingChunks ?? [];
+  return chunks
+    .map((c: any) => c.web?.uri as string | undefined)
+    .filter((uri): uri is string => !!uri)
+    .find(uri => !GROUNDING_SKIP_DOMAINS.some(d => uri.includes(d))) ?? null;
+}
+
+// ── v3: 先読みアラート検知（理由付き。知識グラフを根拠に使う）──────────
+async function detectAlerts() {
+  console.log('[Alerts] アラート検知開始');
+  let created = 0;
+  const recent7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const since2dISO = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+
+  const insertAlert = async (a: {
+    type: string; title: string; reason: string; entityName?: string | null;
+    severity?: string; relatedArticleId?: number | null; dedupeKey: string;
+  }) => {
+    const r = await db.insert(schema.alerts).values({
+      type: a.type, title: a.title, reason: a.reason,
+      entityName: a.entityName ?? null, severity: a.severity ?? 'watch',
+      relatedArticleId: a.relatedArticleId ?? null, dedupeKey: a.dedupeKey, status: 'active',
+    }).onConflictDoNothing();
+    if (r.rowsAffected > 0) created++;
+  };
+
+  // 1. ベンチマークのリーダー交代（直近7日に発生したもののみ）
+  try {
+    const rows = await db.select({
+      benchmarkName: schema.benchmarks.benchmarkName,
+      entityName: schema.benchmarks.entityName,
+      score: schema.benchmarks.score,
+      recordedDate: schema.benchmarks.recordedDate,
+    })
+      .from(schema.benchmarks)
+      .orderBy(asc(schema.benchmarks.benchmarkName), asc(schema.benchmarks.recordedDate), asc(schema.benchmarks.createdAt));
+
+    let curBench = '', maxScore = -Infinity, leader = '';
+    for (const r of rows) {
+      if (r.benchmarkName !== curBench) { curBench = r.benchmarkName; maxScore = -Infinity; leader = ''; }
+      if (r.score > maxScore) {
+        if (leader && r.entityName !== leader && (r.recordedDate ?? '') >= recent7) {
+          await insertAlert({
+            type: 'benchmark_lead_change',
+            title: `${r.benchmarkName}: ${r.entityName}が首位に`,
+            reason: `${r.entityName}が${r.benchmarkName}で${r.score}を記録し、これまで首位だった${leader}(${maxScore})を上回りました。追跡中の指標で順位が動いています。`,
+            entityName: r.entityName, severity: 'high',
+            dedupeKey: `bench:${r.benchmarkName}:${r.entityName}:${leader}`,
+          });
+        }
+        maxScore = r.score; leader = r.entityName;
+      }
+    }
+  } catch (e: any) { console.warn('  [Alerts] ベンチ検知失敗:', e.message?.slice(0, 60)); }
+
+  // 2. 直近に追加された競合/優位/置換の関係
+  try {
+    const rels = await db.select({
+      subjectName: schema.relations.subjectName,
+      relationType: schema.relations.relationType,
+      objectName: schema.relations.objectName,
+      articleId: schema.relations.articleId,
+    })
+      .from(schema.relations)
+      .where(and(
+        eq(schema.relations.status, 'active'),
+        gte(schema.relations.createdAt, since2dISO),
+        sql`${schema.relations.relationType} IN ('outperforms', 'supersedes', 'competes_with')`,
+      ))
+      .limit(8);
+
+    const relLabel: Record<string, string> = { outperforms: '上回る', supersedes: '置き換える', competes_with: '競合する' };
+    for (const r of rels) {
+      const label = relLabel[r.relationType] ?? r.relationType;
+      await insertAlert({
+        type: 'new_competitor',
+        title: `${r.subjectName} が ${r.objectName} を${label}`,
+        reason: `新たに「${r.subjectName} → ${r.objectName}（${label}）」の関係が観測されました。勢力図の変化の可能性があります。`,
+        entityName: r.subjectName, severity: 'watch',
+        relatedArticleId: r.articleId, dedupeKey: `rel:${r.subjectName}:${r.relationType}:${r.objectName}`,
+      });
+    }
+  } catch (e: any) { console.warn('  [Alerts] 関係検知失敗:', e.message?.slice(0, 60)); }
+
+  console.log(`[Alerts] ${created}件の新規アラート`);
+}
+
+// ── v3: 夜間リサーチの「問い」を自動生成 ──────────────────────────────
+const QuestionsSchema = z.object({
+  questions: z.array(z.object({
+    question: z.string().max(200),
+    origin: z.enum(['followup', 'gap', 'tracking', 'contradiction']),
+    rationale: z.string().max(150),
+  })).max(5),
+});
+
+async function generateResearchQuestions() {
+  console.log('[Research] 問い生成開始');
+  const since2dISO = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // 続報候補（直近の高重要度記事）
+  const recentArticles = await db.select({ title: schema.collectedData.title, summary: schema.collectedData.summary })
+    .from(schema.collectedData)
+    .where(and(gte(schema.collectedData.importanceScore, 8), gte(schema.collectedData.createdAt, since2dISO)))
+    .orderBy(desc(schema.collectedData.importanceScore))
+    .limit(8);
+
+  // カバレッジギャップ（今週手薄なカテゴリ）
+  const catCounts = await db.select({ category: schema.collectedData.category, cnt: count() })
+    .from(schema.collectedData)
+    .where(gte(schema.collectedData.createdAt, sevenDaysAgoISO))
+    .groupBy(schema.collectedData.category);
+  const lowCats = catCounts.filter(c => Number(c.cnt) <= 2 && c.category).map(c => c.category);
+
+  // 直近のアラート（追跡変化）
+  const recentAlerts = await db.select({ title: schema.alerts.title })
+    .from(schema.alerts)
+    .where(and(eq(schema.alerts.status, 'active'), gte(schema.alerts.createdAt, since2dISO)))
+    .limit(5);
+
+  if (recentArticles.length === 0 && lowCats.length === 0 && recentAlerts.length === 0) {
+    console.log('[Research] 問い生成の材料なし');
+    return;
+  }
+
+  const context = [
+    recentArticles.length ? `【続報を追うべき最近の重要記事】\n${recentArticles.map(a => `- ${a.title}`).join('\n')}` : '',
+    lowCats.length ? `【今週手薄なカテゴリ（補完候補）】\n${lowCats.join(', ')}` : '',
+    recentAlerts.length ? `【追跡中の変化】\n${recentAlerts.map(a => `- ${a.title}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  let generated = 0;
+  try {
+    const { object } = await withRetry(() => generateObject({
+      model: google('gemini-2.5-flash-lite'),
+      schema: QuestionsSchema,
+      prompt: `あなたはAI技術リサーチャーです。以下の状況から、今夜追加調査すべき具体的な「問い」を最大4つ生成してください。
+- followup: 重要記事の続報・深掘り
+- gap: 手薄なカテゴリの補完
+- tracking: 追跡中の変化の裏取り
+- contradiction: 情報の食い違いの確認
+問いは検索で調べられる具体的なものに。漠然とした問いは避ける。
+
+${context}`,
+    }));
+
+    // 既存の問い（直近7日）と重複しないものだけ保存
+    const existing = await db.select({ q: schema.researchQuestions.question })
+      .from(schema.researchQuestions)
+      .where(gte(schema.researchQuestions.createdAt, sevenDaysAgoISO));
+    const existingSet = new Set(existing.map(e => e.q.trim().toLowerCase()));
+
+    for (const q of object.questions) {
+      const norm = q.question.trim().toLowerCase();
+      if (!norm || existingSet.has(norm)) continue;
+      existingSet.add(norm);
+      await db.insert(schema.researchQuestions).values({
+        question: q.question.trim(),
+        origin: q.origin,
+        originRef: q.rationale.slice(0, 150),
+        status: 'pending',
+      });
+      generated++;
+    }
+  } catch (e: any) {
+    console.warn('[Research] 問い生成失敗(非クリティカル):', e.message?.slice(0, 60));
+  }
+  console.log(`[Research] ${generated}件の問いを生成`);
+}
+
+// ── v3: 夜間Grounding調査（保留中の問いを調べる。件数を上限化）────────
+async function runNightlyResearch(limit = 4) {
+  console.log('[Research] 夜間調査開始');
+  const pending = await db.select({ id: schema.researchQuestions.id, question: schema.researchQuestions.question })
+    .from(schema.researchQuestions)
+    .where(eq(schema.researchQuestions.status, 'pending'))
+    .orderBy(desc(schema.researchQuestions.createdAt))
+    .limit(limit);
+
+  if (pending.length === 0) { console.log('[Research] 調査対象なし'); return; }
+
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  let investigated = 0;
+
+  for (const q of pending) {
+    try {
+      const result = await withRetry(() => generateText({
+        model: google('gemini-2.5-flash-lite'),
+        tools: { google_search: google.tools.googleSearch({}) },
+        system: `あなたはAI技術リサーチャーです。与えられた問いをGoogle検索で調べ、判明した事実を日本語250文字程度で簡潔にまとめてください。推測は避け、検索で裏付けの取れた内容のみ。`,
+        prompt: `問い: ${q.question}\n調査基準日: ${today}`,
+      }));
+      const findings = result.text.trim().slice(0, 800);
+      const url = extractGroundingUrl(result);
+      await db.update(schema.researchQuestions)
+        .set({ status: 'investigated', findings, findingsUrl: url, investigatedAt: new Date().toISOString() })
+        .where(eq(schema.researchQuestions.id, q.id));
+      investigated++;
+      console.log(`  調査完了: ${q.question.slice(0, 50)}`);
+    } catch (e: any) {
+      await db.update(schema.researchQuestions)
+        .set({ status: 'failed', investigatedAt: new Date().toISOString() })
+        .where(eq(schema.researchQuestions.id, q.id));
+      console.warn(`  調査失敗: ${q.question.slice(0, 40)} - ${e.message?.slice(0, 40)}`);
+    }
+  }
+  console.log(`[Research] ${investigated}件調査完了`);
+}
+
+// ── v3: 朝のブリーフィング合成（昨夜調べたこと + アラート）──────────────
+async function generateBriefing(): Promise<string | null> {
+  try {
+    console.log('[Briefing] ブリーフィング合成開始');
+    const since1dISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    const [investigated, activeAlerts] = await Promise.all([
+      db.select({
+        question: schema.researchQuestions.question,
+        findings: schema.researchQuestions.findings,
+        findingsUrl: schema.researchQuestions.findingsUrl,
+      })
+        .from(schema.researchQuestions)
+        .where(and(eq(schema.researchQuestions.status, 'investigated'), gte(schema.researchQuestions.investigatedAt, since1dISO)))
+        .limit(6),
+      db.select({ title: schema.alerts.title, reason: schema.alerts.reason, severity: schema.alerts.severity })
+        .from(schema.alerts)
+        .where(eq(schema.alerts.status, 'active'))
+        .orderBy(desc(schema.alerts.createdAt))
+        .limit(6),
+    ]);
+
+    if (investigated.length === 0 && activeAlerts.length === 0) {
+      console.log('[Briefing] 材料なし、スキップ');
+      return null;
+    }
+
+    const sevMark: Record<string, string> = { high: '🔴', watch: '🟡', info: '🔵' };
+    let md = '## 🌅 朝のブリーフィング\n\n';
+
+    if (activeAlerts.length > 0) {
+      md += '### 🔔 先読みアラート\n';
+      for (const a of activeAlerts) {
+        md += `- ${sevMark[a.severity ?? 'watch'] ?? '🟡'} **${a.title}** — ${a.reason}\n`;
+      }
+      md += '\n';
+    }
+
+    if (investigated.length > 0) {
+      md += '### 🔬 昨夜調べたこと\n';
+      for (const r of investigated) {
+        md += `- **${r.question}**\n  ${(r.findings ?? '').replace(/\n+/g, ' ')}${r.findingsUrl ? `\n  → ${r.findingsUrl}` : ''}\n`;
+      }
+      md += '\n';
+    }
+
+    const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    await db.insert(schema.reports).values({ type: 'briefing', content: md, reportDate: reportDateJST });
+    console.log('[Briefing] ブリーフィング合成完了');
+    return md;
+  } catch (e: any) {
+    console.warn('[Briefing] 合成失敗(非クリティカル):', e.message?.slice(0, 60));
+    return null;
+  }
+}
+
 async function evolveSources() {
   console.log('[Evolve] ソース進化開始');
 
@@ -1767,6 +2036,16 @@ async function main() {
       process.exit(0);
     }
 
+    // v3: 自律リサーチのみ実行（検証用）
+    if (pipelineMode === 'research') {
+      await detectAlerts();
+      await generateResearchQuestions();
+      await runNightlyResearch();
+      await generateBriefing();
+      console.log('=== Research mode 完了 ===');
+      process.exit(0);
+    }
+
     await ensureSources();
     const { collected, failed } = await collectData(10);
 
@@ -1781,8 +2060,23 @@ async function main() {
 
       await runKnowledgeExtraction();
 
+      // v3: 自律リサーチ（アラート検知→問い生成→夜間調査→ブリーフ）。非クリティカル
+      let briefingContent: string | null = null;
+      try {
+        await detectAlerts();
+        await generateResearchQuestions();
+        await runNightlyResearch();
+        briefingContent = await generateBriefing();
+      } catch (e: any) {
+        console.warn('[Pipeline] 自律リサーチ失敗(非クリティカル):', e.message);
+      }
+
       const reportContent = await generateReport();
-      if (reportContent) await sendEmail(reportContent);
+      if (reportContent) {
+        // ブリーフィングを朝のメール冒頭に統合
+        const emailBody = briefingContent ? `${briefingContent}\n\n---\n\n${reportContent}` : reportContent;
+        await sendEmail(emailBody);
+      }
 
       // JST の曜日・日付を確実に取得（toLocaleStringの文字列分割は環境依存なので使わない）
       const jstDateStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });

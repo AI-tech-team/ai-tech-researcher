@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutGrid, Globe, Bookmark, FileText, Settings,
-  BarChart3, Terminal, Sparkles, RefreshCw, Zap, Network,
+  BarChart3, Terminal, Sparkles, RefreshCw, Zap, Network, Telescope,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/Toast';
@@ -16,16 +16,18 @@ import { ReportsTab } from '@/components/tabs/ReportsTab';
 import { SettingsTab } from '@/components/tabs/SettingsTab';
 import { PerformanceTab } from '@/components/tabs/PerformanceTab';
 import { KnowledgeTab } from '@/components/tabs/KnowledgeTab';
+import { ResearchTab } from '@/components/tabs/ResearchTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
   getSourcePerformance, getSourceROI, getCategoryTrendData, getModelMentionData,
   getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
+  getBriefing, getActiveAlerts,
 } from './actions';
-import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats } from '@/types';
+import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem } from '@/types';
 
-type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'knowledge' | 'settings';
+type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'knowledge' | 'research' | 'settings';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: '全体概要',
@@ -34,6 +36,7 @@ const TAB_LABELS: Record<Tab, string> = {
   reports: '調査レポート',
   performance: 'ソース分析',
   knowledge: '知識グラフ',
+  research: '自律リサーチ',
   settings: '設定',
 };
 
@@ -44,6 +47,7 @@ const TAB_SHORT: Record<Tab, string> = {
   reports: 'レポート',
   performance: '分析',
   knowledge: '知識',
+  research: 'リサーチ',
   settings: '設定',
 };
 
@@ -73,6 +77,8 @@ export default function Home() {
   const [knowledgeRelations, setKnowledgeRelations] = useState<KnowledgeRelation[]>([]);
   const [benchmarkAlerts, setBenchmarkAlerts] = useState<BenchmarkAlert[]>([]);
   const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStats>({ entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 });
+  const [briefing, setBriefing] = useState<BriefingReport | null>(null);
+  const [activeAlerts, setActiveAlerts] = useState<AlertItem[]>([]);
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -89,7 +95,7 @@ export default function Home() {
 
   async function loadData() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts, lbs, krels, balerts, kstats] = await Promise.all([
+    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts, lbs, krels, balerts, kstats, brief, aalerts] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
@@ -105,6 +111,8 @@ export default function Home() {
       getKnowledgeRelations(),
       getBenchmarkAlerts(),
       getKnowledgeStats(),
+      getBriefing(),
+      getActiveAlerts(),
     ]);
     setSourcesList(srcs as Source[]);
     setCollectedItems(data as CollectedItem[]);
@@ -121,6 +129,8 @@ export default function Home() {
     setKnowledgeRelations(krels as KnowledgeRelation[]);
     setBenchmarkAlerts(balerts as BenchmarkAlert[]);
     setKnowledgeStats(kstats as KnowledgeStats);
+    setBriefing(brief as BriefingReport | null);
+    setActiveAlerts(aalerts as AlertItem[]);
     setIsLoadingData(false);
   }
 
@@ -185,6 +195,7 @@ export default function Home() {
     ['reports', <FileText size={19} />, '調査レポート'],
     ['performance', <BarChart3 size={19} />, 'ソース分析'],
     ['knowledge', <Network size={19} />, '知識グラフ'],
+    ['research', <Telescope size={19} />, '自律リサーチ'],
     ['settings', <Settings size={19} />, '設定'],
   ];
 
@@ -195,6 +206,7 @@ export default function Home() {
     ['reports', <FileText size={22} />],
     ['performance', <BarChart3 size={22} />],
     ['knowledge', <Network size={22} />],
+    ['research', <Telescope size={22} />],
     ['settings', <Settings size={22} />],
   ];
 
@@ -239,6 +251,12 @@ export default function Home() {
         <motion.div key="knowledge" {...SLIDE}>
           <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
             alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={isLoadingData} />
+        </motion.div>
+      )}
+      {activeTab === 'research' && (
+        <motion.div key="research" {...SLIDE}>
+          <ResearchTab briefing={briefing} alerts={activeAlerts}
+            isLoadingData={isLoadingData} onReload={loadData} />
         </motion.div>
       )}
       {activeTab === 'settings' && (

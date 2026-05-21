@@ -1,12 +1,12 @@
 'use server';
 
-import { db } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities } from '@/db/schema';
+import { db, client } from '@/db';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, researchQuestions } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
-import { generateText } from 'ai';
-import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats } from '@/types';
+import { generateText, embedMany } from 'ai';
+import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief } from '@/types';
 
 // ─── 共通クエリヘルパー ───────────────────────────────────────────
 
@@ -683,6 +683,105 @@ export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   } catch (error) {
     console.error('Failed to fetch knowledge stats:', error);
     return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
+  }
+}
+
+// ─── v3自律リサーチ ─────────────────────────────────────────────────
+
+export async function getBriefing(): Promise<BriefingReport | null> {
+  try {
+    const rows = await db.select({
+      id: reports.id, content: reports.content, reportDate: reports.reportDate, createdAt: reports.createdAt,
+    })
+      .from(reports)
+      .where(eq(reports.type, 'briefing'))
+      .orderBy(desc(reports.createdAt))
+      .limit(1);
+    return rows[0] ?? null;
+  } catch (error) {
+    console.error('Failed to fetch briefing:', error);
+    return null;
+  }
+}
+
+export async function getActiveAlerts(): Promise<AlertItem[]> {
+  try {
+    return await db.select({
+      id: alerts.id, type: alerts.type, title: alerts.title, reason: alerts.reason,
+      entityName: alerts.entityName, severity: alerts.severity,
+      relatedArticleId: alerts.relatedArticleId, createdAt: alerts.createdAt,
+    })
+      .from(alerts)
+      .where(eq(alerts.status, 'active'))
+      .orderBy(
+        sql`CASE ${alerts.severity} WHEN 'high' THEN 0 WHEN 'watch' THEN 1 ELSE 2 END`,
+        desc(alerts.createdAt),
+      )
+      .limit(30);
+  } catch (error) {
+    console.error('Failed to fetch alerts:', error);
+    return [];
+  }
+}
+
+export async function dismissAlert(id: number) {
+  try {
+    await db.update(alerts).set({ status: 'dismissed' }).where(eq(alerts.id, id));
+    revalidatePath('/');
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to dismiss alert:', error);
+    return { success: false };
+  }
+}
+
+export async function generateResearchBrief(topic: string): Promise<ResearchBrief | null> {
+  const t = topic.trim().slice(0, 120);
+  if (!t) return null;
+  try {
+    // 1. ベクトル検索でDB内の関連記事を取得（埋め込み基盤を活用）
+    let related: { title: string; url: string | null }[] = [];
+    try {
+      const { embeddings } = await embedMany({
+        model: google.embedding('gemini-embedding-001'),
+        values: [t],
+        providerOptions: { google: { outputDimensionality: 768, taskType: 'SEMANTIC_SIMILARITY' } },
+      });
+      const res = await client.execute({
+        sql: `SELECT tt.title AS title, tt.url AS url
+              FROM vector_top_k('collected_embedding_idx', vector32(?), 8) AS v
+              JOIN collected_data tt ON tt.rowid = v.id`,
+        args: [JSON.stringify(embeddings[0])],
+      });
+      related = res.rows.map(r => ({ title: (r.title as string) ?? '', url: (r.url as string | null) ?? null }));
+    } catch (e) {
+      console.warn('ベクトル関連記事の取得に失敗、Groundingのみで続行');
+    }
+
+    const ctx = related.length
+      ? `\n\n【DB内の関連記事（参考）】\n${related.map(r => `- ${r.title}`).join('\n')}`
+      : '';
+
+    // 2. Grounding付きで構造化リサーチブリーフを生成
+    const { text } = await generateText({
+      model: google('gemini-2.5-flash'),
+      tools: { google_search: google.tools.googleSearch({}) },
+      system: `あなたはAI技術リサーチャーです。指定トピックについて最新情報を検索しつつ、Markdownでリサーチブリーフを作成してください。
+必須セクション（この見出しのまま）:
+## 定義
+## 現状
+## 主要プレイヤー
+## 直近の動向
+## 未解決の課題
+## 関連して読むべきもの
+各セクションは簡潔に、具体的な固有名詞・数値・モデル名を含める。全体1200〜1800字。`,
+      prompt: `トピック: ${t}${ctx}`,
+    });
+
+    return { topic: t, content: text, relatedArticles: related };
+  } catch (error) {
+    console.error('Failed to generate research brief:', error);
+    return null;
   }
 }
 
