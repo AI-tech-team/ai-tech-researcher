@@ -16,6 +16,7 @@ export interface CollectedItem {
   sourceType: string | null;
   storyId?: number | null;
   storyCount?: number | null;
+  storyOutlets?: string[];
 }
 
 export interface Source {

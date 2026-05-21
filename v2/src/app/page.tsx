@@ -319,7 +319,7 @@ export default function Home() {
             <button onClick={handleSyncData} disabled={isSyncing}
               className={`btn-primary flex items-center gap-1.5 ${isSyncing ? 'opacity-40 cursor-not-allowed' : ''}`}>
               <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
-              {isSyncing ? 'SYNCING' : 'SYNC'}
+              {isSyncing ? '同期中' : '同期'}
             </button>
           </div>
           {/* Stat chips row */}
@@ -353,7 +353,7 @@ export default function Home() {
           <button onClick={handleSyncData} disabled={isSyncing}
             className="btn-primary flex items-center gap-1.5 disabled:opacity-40">
             <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
-            {isSyncing ? 'SYNC...' : 'SYNC'}
+            {isSyncing ? '同期中...' : '同期'}
           </button>
         </div>
 

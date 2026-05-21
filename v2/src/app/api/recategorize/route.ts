@@ -1,55 +1,65 @@
 import { google } from '@ai-sdk/google';
-import { generateText } from 'ai';
+import { generateObject } from 'ai';
+import { z } from 'zod';
 import { db } from '@/db';
 import { collectedData } from '@/db/schema';
-import { eq, isNull, or } from 'drizzle-orm';
+import { eq, isNull, or, inArray } from 'drizzle-orm';
+import { withRetry } from '@/lib/llm';
 
 export const maxDuration = 60;
 
-const VALID_CATEGORIES = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'];
+const VALID_CATEGORIES = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'] as const;
+
+const RecatSchema = z.object({
+  items: z.array(z.object({
+    id: z.number().int(),
+    category: z.enum(VALID_CATEGORIES),
+  })),
+});
 
 export async function POST() {
   try {
-    // カテゴリが未設定またはその他の記事を対象（最大50件）
+    // カテゴリが未設定またはその他の記事を対象（最大40件）
     const items = await db.select({ id: collectedData.id, title: collectedData.title, summary: collectedData.summary })
       .from(collectedData)
       .where(or(isNull(collectedData.category), eq(collectedData.category, 'その他')))
-      .limit(50);
+      .limit(40);
 
     if (items.length === 0) {
       return Response.json({ success: true, message: '再分類対象なし', updated: 0 });
     }
 
-    const prompt = `以下の記事リストを分析し、各記事に最適なカテゴリを割り当ててください。
+    const { object } = await withRetry(() => generateObject({
+      model: google('gemini-2.5-flash-lite'),
+      schema: RecatSchema,
+      prompt: `以下の記事リストを分析し、各記事に最適なカテゴリを割り当ててください。
 カテゴリ選択肢: ${VALID_CATEGORIES.join(' / ')}
+必ず全${items.length}件分を返してください。
 
 記事リスト:
-${items.map(i => `ID:${i.id} タイトル:${i.title ?? ''} 要約:${i.summary ?? ''}`).join('\n')}
+${items.map(i => `ID:${i.id} タイトル:${i.title ?? ''} 要約:${(i.summary ?? '').slice(0, 200)}`).join('\n')}`,
+    }));
 
-出力形式（JSONのみ）: [{"id": 1, "category": "LLM推論"}, ...]`;
-
-    const { text } = await generateText({
-      model: google('gemini-2.5-flash-lite'),
-      prompt,
-    });
-
-    let results: { id: number; category: string }[] = [];
-    try {
-      results = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-    } catch {
-      return Response.json({ success: false, message: 'AI応答の解析に失敗しました' }, { status: 500 });
+    // id→category のマップを作り、有効なものだけ一括更新
+    const validIds = new Set(items.map(i => i.id));
+    const byCategory = new Map<string, number[]>();
+    for (const r of object.items) {
+      if (!validIds.has(r.id)) continue;
+      if (!byCategory.has(r.category)) byCategory.set(r.category, []);
+      byCategory.get(r.category)!.push(r.id);
     }
 
     let updated = 0;
-    for (const r of results) {
-      if (!r.id || !VALID_CATEGORIES.includes(r.category)) continue;
-      await db.update(collectedData).set({ category: r.category }).where(eq(collectedData.id, r.id));
-      updated++;
-    }
+    const updateQueries = [...byCategory.entries()].map(([category, ids]) => {
+      updated += ids.length;
+      return db.update(collectedData).set({ category }).where(inArray(collectedData.id, ids));
+    });
+    await Promise.all(updateQueries);
 
     return Response.json({ success: true, message: `${updated}件を再分類しました`, updated });
-  } catch (error: any) {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
     console.error('[Recategorize] error:', error);
-    return Response.json({ success: false, message: error.message }, { status: 500 });
+    return Response.json({ success: false, message: msg }, { status: 500 });
   }
 }

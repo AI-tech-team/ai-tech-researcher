@@ -2,7 +2,7 @@
 
 import { db, client } from '@/db';
 import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, researchQuestions } from '@/db/schema';
-import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and } from 'drizzle-orm';
+import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
@@ -52,7 +52,10 @@ function extractKeywords(title: string | null, category: string | null): string[
 
 export async function getReportsData() {
   try {
-    return await db.select().from(reports).orderBy(desc(reports.createdAt));
+    // briefingは自律リサーチタブ専用なので調査レポート一覧からは除外
+    return await db.select().from(reports)
+      .where(sql`${reports.type} != 'briefing'`)
+      .orderBy(desc(reports.createdAt));
   } catch (error) {
     console.error("Failed to fetch reports:", error);
     return [];
@@ -68,6 +71,11 @@ export async function getSourcesData() {
   }
 }
 
+function urlDomain(url: string | null): string | null {
+  if (!url) return null;
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return null; }
+}
+
 export async function getCollectedDataList(): Promise<CollectedItem[]> {
   try {
     const rows = await db.select(COLLECTED_SELECT)
@@ -75,7 +83,38 @@ export async function getCollectedDataList(): Promise<CollectedItem[]> {
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
       .orderBy(desc(collectedData.createdAt))
       .limit(100);
-    return parseCollectedRows(rows);
+    const items = parseCollectedRows(rows);
+
+    // 複数媒体が報じたストーリーについて、媒体（ドメイン）一覧を付与
+    const multiStoryIds = [...new Set(
+      items.filter(i => (i.storyCount ?? 1) > 1 && i.storyId != null).map(i => i.storyId as number)
+    )];
+    if (multiStoryIds.length > 0) {
+      const members = await db.select({
+        storyId: collectedData.storyId,
+        url: collectedData.url,
+        sourceValue: sources.value,
+      })
+        .from(collectedData)
+        .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+        .where(inArray(collectedData.storyId, multiStoryIds));
+
+      const outletMap = new Map<number, string[]>();
+      for (const m of members) {
+        if (m.storyId == null) continue;
+        const outlet = urlDomain(m.url) ?? m.sourceValue ?? null;
+        if (!outlet) continue;
+        const list = outletMap.get(m.storyId) ?? [];
+        if (!list.includes(outlet)) list.push(outlet);
+        outletMap.set(m.storyId, list);
+      }
+      for (const item of items) {
+        if (item.storyId != null && outletMap.has(item.storyId)) {
+          item.storyOutlets = outletMap.get(item.storyId);
+        }
+      }
+    }
+    return items;
   } catch (error) {
     console.error("Failed to fetch collected data:", error);
     return [];

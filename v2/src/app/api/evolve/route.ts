@@ -1,8 +1,12 @@
 import { google } from '@ai-sdk/google';
-import { generateText } from 'ai';
+import { generateObject } from 'ai';
+import { z } from 'zod';
 import { db } from '@/db';
 import { sources, collectedData, adoptionLogs } from '@/db/schema';
 import { eq, sql, desc, count, gte, and } from 'drizzle-orm';
+import { withRetry } from '@/lib/llm';
+
+const KeywordsSchema = z.object({ keywords: z.array(z.string().min(2).max(60)).max(5) });
 
 const DOMAIN_SKIP = new Set([
   'google.com', 'youtube.com', 'wikipedia.org', 't.co', 'twitter.com', 'x.com',
@@ -69,6 +73,10 @@ export async function POST() {
     const lastAdoptionMap = new Map(lastAdoptions.map(a => [a.sourceId, a.lastAt]));
 
     let promoted = 0, demoted = 0, reactivated = 0, stoppedCount = 0;
+    const evolveUpdatedAt = new Date().toISOString();
+    const buildSourceUpdate = (id: number, score: number, status: string) =>
+      db.update(sources).set({ score, status, updatedAt: evolveUpdatedAt }).where(eq(sources.id, id));
+    const updateQueries: ReturnType<typeof buildSourceUpdate>[] = [];
 
     for (const source of allSources) {
       const daysSinceCreated = (now.getTime() - new Date(source.createdAt ?? now).getTime()) / 86400000;
@@ -96,9 +104,15 @@ export async function POST() {
         } else if (daysSinceAdopted >= 30) { newStatus = 'stopped'; stoppedCount++; }
       }
 
-      await db.update(sources)
-        .set({ score: newScore, status: newStatus as any, updatedAt: new Date().toISOString() })
-        .where(eq(sources.id, source.id));
+      // 変化がある行のみ更新キューに追加
+      if (newStatus !== source.status || newScore !== (source.score ?? 0)) {
+        updateQueries.push(buildSourceUpdate(source.id, newScore, newStatus));
+      }
+    }
+
+    // 逐次awaitだと300件超でタイムアウトするため、チャンク単位で並列実行
+    for (let i = 0; i < updateQueries.length; i += 30) {
+      await Promise.all(updateQueries.slice(i, i + 30));
     }
 
     // ── 新規キーワード候補の発見（品質強化版）────────────────────────
@@ -129,8 +143,9 @@ export async function POST() {
           .join(' ')
           .toLowerCase();
 
-        const { text } = await generateText({
+        const { object } = await withRetry(() => generateObject({
           model: google('gemini-2.5-flash-lite'),
+          schema: KeywordsSchema,
           prompt: `以下の高品質AI記事（重要度7以上）から、追跡すべき具体的なAI技術キーワードを最大5つ抽出してください。
 
 【抽出条件】
@@ -139,13 +154,11 @@ export async function POST() {
 - 固有名詞・略語・製品名を優先（例: Mamba, FlashAttention, LoRA, Phi-4, GRPO）
 - 正式名称・最も一般的な表記で統一する
 
-JSON配列のみで出力: ["keyword1", "keyword2", ...]
-
 【記事】
 ${contextText}`,
-        });
+        }));
 
-        const rawKws: string[] = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+        const rawKws: string[] = object.keywords;
         const addedThisRound = new Set<string>();
 
         for (const kw of rawKws) {
@@ -209,8 +222,9 @@ ${contextText}`,
       message: `進化完了: ${promoted}件昇格, ${demoted}件降格, ${reactivated}件再活性化, ${stoppedCount}件停止, ${newKeywordsCount}件新規候補追加, ${newDomainsCount}件新規ドメイン追加`,
       stats: { promoted, demoted, reactivated, stopped: stoppedCount, newKeywords: newKeywordsCount, newDomains: newDomainsCount },
     });
-  } catch (error: any) {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
     console.error('[Evolve] error:', error);
-    return Response.json({ success: false, message: error.message }, { status: 500 });
+    return Response.json({ success: false, message: msg }, { status: 500 });
   }
 }

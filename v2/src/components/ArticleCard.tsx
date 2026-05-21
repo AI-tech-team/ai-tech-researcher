@@ -100,13 +100,16 @@ export function ArticleCard({
             </span>
           )}
 
-          {/* v3: 同一ストーリーを複数ソースが報じた場合のバッジ */}
-          {(item.storyCount ?? 1) > 1 && (
+          {/* v3: 同一ストーリーを複数媒体が報じた場合、どの媒体が報じたかを表示 */}
+          {(item.storyCount ?? 1) > 1 && (item.storyOutlets?.length ?? 0) > 0 && (
             <span
-              title={`${item.storyCount}件の関連記事が同一トピックを報じています`}
-              className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-px rounded">
-              <Newspaper size={10} />
-              {item.storyCount}媒体が報じた
+              title={`同一トピックを報じた媒体: ${item.storyOutlets!.join('、')}`}
+              className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-px rounded max-w-full">
+              <Newspaper size={10} className="flex-shrink-0" />
+              <span className="truncate">
+                {item.storyOutlets!.slice(0, 3).join('・')}
+                {item.storyOutlets!.length > 3 ? ` 他${item.storyOutlets!.length - 3}媒体` : ''}が報じた
+              </span>
             </span>
           )}
 
