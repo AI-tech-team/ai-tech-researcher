@@ -16,6 +16,7 @@ export const collectedData = sqliteTable("collected_data", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   sourceId: integer("source_id").references(() => sources.id),
   title: text("title"),
+  titleJa: text("title_ja"), // v3.1: 英語タイトルの日本語訳（表示用）
   url: text("url").unique(),
   summary: text("summary"),
   category: text("category"),

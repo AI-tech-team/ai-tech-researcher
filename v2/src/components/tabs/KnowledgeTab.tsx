@@ -1,6 +1,6 @@
 "use client";
 
-import { Trophy, Network, AlertTriangle, GitBranch, Sparkles } from 'lucide-react';
+import { Trophy, Network, AlertTriangle, Sparkles, TrendingUp, TrendingDown, Minus, ExternalLink, Crown, ArrowRight } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
@@ -9,20 +9,31 @@ import type { BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, Knowledge
 
 const ENTITY_COLORS = ['#38bdf8', '#f472b6', '#34d399', '#fb923c', '#a78bfa'];
 
-const RELATION_META: Record<string, { label: string; color: string }> = {
-  outperforms:   { label: '上回る',   color: '#f87171' },
-  competes_with: { label: '競合',     color: '#38bdf8' },
-  builds_on:     { label: '基づく',   color: '#34d399' },
-  acquired_by:   { label: '買収',     color: '#a78bfa' },
-  cites:         { label: '引用',     color: '#94a3b8' },
-  supersedes:    { label: '置換',     color: '#f472b6' },
-};
+// 関係タイプ別のセクション定義（ユーザーが知りたい順）
+const RELATION_GROUPS: { type: string; label: string; icon: string; color: string }[] = [
+  { type: 'outperforms',   label: '性能で上回る', icon: '🏆', color: '#f87171' },
+  { type: 'supersedes',    label: '置き換え',     icon: '🔄', color: '#f472b6' },
+  { type: 'competes_with', label: '競合',         icon: '⚔️', color: '#38bdf8' },
+  { type: 'builds_on',     label: '基づく',       icon: '🧱', color: '#34d399' },
+  { type: 'acquired_by',   label: '買収',         icon: '🤝', color: '#a78bfa' },
+  { type: 'cites',         label: '引用',         icon: '📎', color: '#94a3b8' },
+];
 
 const TOOLTIP_STYLE = {
   contentStyle: { background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '12px' },
 };
 
 const RANK_MEDAL = ['🥇', '🥈', '🥉'];
+
+// 出典URLが安全（実URL・404リダイレクトでない）かを判定
+const isValidSourceUrl = (u: string | null) => !!u && /^https?:\/\//.test(u) && !u.includes('vertexaisearch.cloud.google.com');
+
+function TrendIcon({ trend }: { trend: 'up' | 'down' | 'flat' | 'new' }) {
+  if (trend === 'up') return <TrendingUp size={12} className="text-emerald-400" />;
+  if (trend === 'down') return <TrendingDown size={12} className="text-red-400" />;
+  if (trend === 'new') return <span className="font-mono text-[9px] text-sky-400 font-bold">NEW</span>;
+  return <Minus size={12} className="text-slate-600" />;
+}
 
 interface KnowledgeTabProps {
   leaderboards: BenchmarkLeaderboard[];
@@ -42,6 +53,10 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
 
   const activeRelations = relations.filter(r => r.status !== 'stale');
   const staleRelations = relations.filter(r => r.status === 'stale');
+  // 関係タイプ別にグルーピング
+  const grouped = RELATION_GROUPS
+    .map(g => ({ ...g, items: activeRelations.filter(r => r.relationType === g.type) }))
+    .filter(g => g.items.length > 0);
 
   return (
     <div className="space-y-8">
@@ -83,38 +98,49 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
 
       {/* Benchmark leaderboards */}
       <div>
-        <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-bold font-outfit mb-1 flex items-center gap-2">
           <Trophy size={16} className="text-amber-400" /> ベンチマークリーダーボード
         </h3>
+        <p className="text-[11px] text-slate-500 mb-3">同一ベンチマークで複数モデルのスコアが集まると自動でランキング化されます</p>
         {isLoadingData ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {Array.from({ length: 2 }).map((_, i) => <SkeletonStat key={i} />)}
           </div>
         ) : leaderboards.length === 0 ? (
           <div className="glass-card flex flex-col items-center justify-center py-10 text-slate-500 text-xs gap-1">
-            <span>ベンチマークデータが2エンティティ以上揃うと表示されます</span>
-            <span>パイプライン蓄積で自動的に充実します</span>
+            <Trophy size={28} className="opacity-20 mb-1" />
+            <span>まだランキングできるベンチマークがありません</span>
+            <span>収集が進むと自動的に充実します</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {leaderboards.map(lb => (
-              <div key={lb.benchmarkName} className="glass-card">
+              <div key={lb.benchmarkName} className="glass-card border-amber-500/10">
                 <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-xs font-bold text-amber-300 truncate" title={lb.benchmarkName}>{lb.benchmarkName}</h4>
-                  {lb.unit && <span className="font-mono text-[10px] text-slate-500">{lb.unit}</span>}
+                  <h4 className="text-sm font-bold text-amber-300 truncate" title={lb.benchmarkName}>{lb.benchmarkName}</h4>
+                  <span className="font-mono text-[10px] text-slate-500">{lb.entries.length}モデル{lb.unit ? ` ・ ${lb.unit}` : ''}</span>
                 </div>
 
-                {/* ランキング */}
-                <div className="flex flex-col gap-1.5 mb-3">
+                {/* ランキング（モデル名は非リンク。出典は安全なURLのみ） */}
+                <div className="flex flex-col gap-1 mb-3">
                   {lb.entries.slice(0, 6).map((e, i) => (
-                    <div key={e.entityName} className="flex items-center gap-2">
-                      <span className="w-5 text-center text-xs flex-shrink-0">{RANK_MEDAL[i] ?? <span className="text-slate-600 font-mono text-[10px]">{i + 1}</span>}</span>
-                      <span className="text-xs text-slate-200 truncate flex-1" title={e.entityName}>
-                        {e.sourceUrl
-                          ? <a href={e.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-sky-400 transition-colors">{e.entityName}</a>
-                          : e.entityName}
+                    <div key={e.entityName}
+                      className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${i === 0 ? 'bg-amber-500/10 border border-amber-500/20' : ''}`}>
+                      <span className="w-5 text-center text-xs flex-shrink-0">
+                        {RANK_MEDAL[i] ?? <span className="text-slate-600 font-mono text-[10px]">{i + 1}</span>}
                       </span>
-                      <span className="font-mono text-xs font-bold text-white flex-shrink-0">{e.score}</span>
+                      {i === 0 && <Crown size={12} className="text-amber-400 flex-shrink-0" />}
+                      <span className={`text-xs truncate flex-1 ${i === 0 ? 'text-white font-bold' : 'text-slate-200'}`} title={e.entityName}>
+                        {e.entityName}
+                      </span>
+                      <TrendIcon trend={e.trend} />
+                      <span className={`font-mono text-xs flex-shrink-0 ${i === 0 ? 'text-amber-300 font-bold' : 'text-slate-300'}`}>{e.score}</span>
+                      {isValidSourceUrl(e.sourceUrl) && (
+                        <a href={e.sourceUrl!} target="_blank" rel="noopener noreferrer" title="出典"
+                          className="text-slate-600 hover:text-sky-400 transition-colors flex-shrink-0">
+                          <ExternalLink size={11} />
+                        </a>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -141,62 +167,60 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
         )}
       </div>
 
-      {/* Knowledge graph relations */}
+      {/* Knowledge graph — 関係タイプ別 */}
       <div>
-        <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
-          <Network size={16} className="text-indigo-400" /> 知識グラフ（エンティティ関係）
+        <h3 className="text-sm font-bold font-outfit mb-1 flex items-center gap-2">
+          <Network size={16} className="text-indigo-400" /> 知識グラフ（関係マップ）
         </h3>
+        <p className="text-[11px] text-slate-500 mb-3">記事から抽出したエンティティ間の関係。AI業界の勢力図を俯瞰できます</p>
         {isLoadingData ? (
           <SkeletonStat />
-        ) : activeRelations.length === 0 && staleRelations.length === 0 ? (
+        ) : grouped.length === 0 && staleRelations.length === 0 ? (
           <div className="glass-card flex items-center justify-center py-10 text-slate-500 text-xs">
             関係データはまだありません
           </div>
         ) : (
-          <div className="glass-card">
-            <div className="flex flex-col gap-1.5">
-              {activeRelations.map(r => {
-                const meta = RELATION_META[r.relationType] ?? { label: r.relationType, color: '#94a3b8' };
-                const isInferred = r.status === 'inferred';
-                return (
-                  <div key={r.id} className="flex items-center gap-2 flex-wrap text-xs py-1 border-b border-white/[0.03] last:border-0">
-                    <span className="text-slate-200 font-medium">{r.subjectName}</span>
-                    <span className="flex items-center gap-1">
-                      <GitBranch size={11} style={{ color: meta.color }} className="rotate-90" />
-                      <span className="font-mono text-[10px] px-1.5 py-px rounded border"
-                        style={{ color: meta.color, borderColor: `${meta.color}33`, background: `${meta.color}11` }}>
-                        {meta.label}
-                      </span>
-                    </span>
-                    <span className="text-slate-200 font-medium">{r.objectName}</span>
-                    {isInferred && (
-                      <span className="flex items-center gap-0.5 font-mono text-[9px] text-purple-300 border border-purple-500/20 bg-purple-500/10 px-1.5 py-px rounded">
-                        <Sparkles size={9} /> 推論
-                      </span>
-                    )}
-                    {r.validFrom && <span className="ml-auto font-mono text-[10px] text-slate-600">{r.validFrom}</span>}
-                  </div>
-                );
-              })}
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {grouped.map(g => (
+              <div key={g.type} className="glass-card" style={{ borderColor: `${g.color}22` }}>
+                <h4 className="text-xs font-bold mb-2.5 flex items-center gap-1.5" style={{ color: g.color }}>
+                  <span>{g.icon}</span>{g.label}
+                  <span className="font-mono text-[10px] text-slate-600">{g.items.length}</span>
+                </h4>
+                <div className="flex flex-col gap-1.5">
+                  {g.items.slice(0, 12).map(r => (
+                    <div key={r.id} className="flex items-center gap-1.5 text-xs">
+                      <span className="text-slate-200 font-medium truncate max-w-[42%]" title={r.subjectName}>{r.subjectName}</span>
+                      <ArrowRight size={12} style={{ color: g.color }} className="flex-shrink-0" />
+                      <span className="text-slate-300 truncate max-w-[42%]" title={r.objectName}>{r.objectName}</span>
+                      {r.status === 'inferred' && (
+                        <span className="flex items-center gap-0.5 font-mono text-[9px] text-purple-300 border border-purple-500/20 bg-purple-500/10 px-1 rounded flex-shrink-0">
+                          <Sparkles size={8} />推論
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  {g.items.length > 12 && (
+                    <span className="font-mono text-[10px] text-slate-600">他 {g.items.length - 12} 件</span>
+                  )}
+                </div>
+              </div>
+            ))}
 
             {/* stale（陳腐化した関係） */}
             {staleRelations.length > 0 && (
-              <details className="mt-3">
-                <summary className="font-mono text-[10px] text-slate-500 cursor-pointer hover:text-slate-300">
-                  陳腐化した関係 {staleRelations.length}件を表示
+              <details className="glass-card md:col-span-2">
+                <summary className="font-mono text-[11px] text-slate-500 cursor-pointer hover:text-slate-300">
+                  陳腐化した関係 {staleRelations.length}件
                 </summary>
                 <div className="flex flex-col gap-1 mt-2">
-                  {staleRelations.map(r => {
-                    const meta = RELATION_META[r.relationType] ?? { label: r.relationType, color: '#94a3b8' };
-                    return (
-                      <div key={r.id} className="flex items-center gap-2 flex-wrap text-xs py-0.5 opacity-50 line-through">
-                        <span className="text-slate-400">{r.subjectName}</span>
-                        <span className="font-mono text-[10px]" style={{ color: meta.color }}>{meta.label}</span>
-                        <span className="text-slate-400">{r.objectName}</span>
-                      </div>
-                    );
-                  })}
+                  {staleRelations.map(r => (
+                    <div key={r.id} className="flex items-center gap-2 text-xs py-0.5 opacity-50 line-through">
+                      <span className="text-slate-400">{r.subjectName}</span>
+                      <ArrowRight size={11} className="text-slate-600" />
+                      <span className="text-slate-400">{r.objectName}</span>
+                    </div>
+                  ))}
                 </div>
               </details>
             )}

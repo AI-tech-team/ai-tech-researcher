@@ -148,10 +148,15 @@ export function ArticleCard({
           </div>
         </div>
 
-        {/* Row 2: title */}
-        <h4 className={`text-sm font-semibold leading-snug ${isRead ? 'text-slate-500' : 'text-slate-100 group-hover:text-white'} transition-colors`}>
-          {item.title ?? '無題'}
-        </h4>
+        {/* Row 2: title（英語タイトルは日本語訳を主表示し、原題を小さく併記） */}
+        <div>
+          <h4 className={`text-sm font-semibold leading-snug ${isRead ? 'text-slate-500' : 'text-slate-100 group-hover:text-white'} transition-colors`}>
+            {item.titleJa || item.title || '無題'}
+          </h4>
+          {item.titleJa && item.title && item.titleJa !== item.title && (
+            <p className="text-[11px] text-slate-600 leading-snug mt-0.5 truncate" title={item.title}>{item.title}</p>
+          )}
+        </div>
 
         {/* Row 3: summary（タップで展開） */}
         <div>
