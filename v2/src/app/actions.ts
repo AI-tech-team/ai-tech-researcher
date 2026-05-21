@@ -35,6 +35,8 @@ const COLLECTED_SELECT = {
   createdAt: collectedData.createdAt,
   sourceValue: sources.value,
   sourceType: sources.type,
+  storyId: collectedData.storyId,
+  storyCount: collectedData.storyCount,
 };
 
 // タイトルとカテゴリから固有技術キーワードを抽出（トピック重み更新用）

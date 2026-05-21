@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import { google } from '@ai-sdk/google';
-import { generateText, generateObject } from 'ai';
+import { generateText, generateObject, embedMany } from 'ai';
 import { z } from 'zod';
 import { eq, sql, desc, count, and, gte, lt } from 'drizzle-orm';
 import { config } from 'dotenv';
@@ -1386,6 +1386,144 @@ ${contextText}`,
   }
 }
 
+// ── v3: 埋め込み生成（embeddingはDrizzle非管理のため生SQL）────────────
+const EMBED_DIM = 768;
+const EMBED_BATCH = 50;
+
+async function runEmbeddings(limit = 120): Promise<number> {
+  console.log('[Embed] 埋め込み生成開始');
+  const res = await client.execute({
+    sql: `SELECT id, title, summary FROM collected_data WHERE embedding IS NULL ORDER BY created_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  const rows = res.rows.map(r => ({
+    id: Number(r.id),
+    title: (r.title as string | null) ?? '',
+    summary: (r.summary as string | null) ?? '',
+  }));
+  if (rows.length === 0) { console.log('[Embed] 対象なし'); return 0; }
+
+  let embedded = 0;
+  for (let i = 0; i < rows.length; i += EMBED_BATCH) {
+    const chunk = rows.slice(i, i + EMBED_BATCH);
+    const values = chunk.map(r => (`${r.title}\n${r.summary.slice(0, 1500)}`).trim() || 'untitled');
+    try {
+      const { embeddings } = await withRetry(() => embedMany({
+        model: google.embedding('gemini-embedding-001'),
+        values,
+        providerOptions: { google: { outputDimensionality: EMBED_DIM, taskType: 'SEMANTIC_SIMILARITY' } },
+      }));
+      for (let j = 0; j < chunk.length; j++) {
+        const vec = embeddings[j];
+        if (!vec || vec.length !== EMBED_DIM) continue;
+        await client.execute({
+          sql: `UPDATE collected_data SET embedding = vector32(?) WHERE id = ?`,
+          args: [JSON.stringify(vec), chunk[j].id],
+        });
+        embedded++;
+      }
+    } catch (e: any) {
+      console.warn(`  [Embed] バッチ失敗(非クリティカル): ${(e.message ?? '').slice(0, 80)}`);
+    }
+  }
+  console.log(`[Embed] ${embedded}件ベクトル化`);
+  return embedded;
+}
+
+// ── v3: 意味的重複排除（同一ストーリーをstory_idでグループ化）──────────
+const STORY_DISTANCE_THRESHOLD = 0.12; // cos距離(=1-類似度)。これ未満を同一ストーリーとみなす
+const STORY_LINK_WINDOW_DAYS = 21;
+
+async function recomputeStoryCount(storyId: number) {
+  await client.execute({
+    sql: `UPDATE collected_data SET story_count = (
+            SELECT COUNT(*) FROM collected_data WHERE story_id = ?
+          ) WHERE story_id = ?`,
+    args: [storyId, storyId],
+  });
+}
+
+async function runStoryGrouping(limit = 150): Promise<{ stories: number; merged: number }> {
+  console.log('[Story] 意味的重複排除（ストーリーグループ化）開始');
+  const cutoff = new Date(Date.now() - STORY_LINK_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const targetRes = await client.execute({
+    sql: `SELECT id FROM collected_data
+          WHERE embedding IS NOT NULL AND story_id IS NULL
+          ORDER BY created_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  const targetIds = targetRes.rows.map(r => Number(r.id));
+  if (targetIds.length === 0) { console.log('[Story] 対象なし'); return { stories: 0, merged: 0 }; }
+
+  const assigned = new Set<number>(); // このラウンドで割当済みのid
+  const touchedStories = new Set<number>();
+  let merged = 0, newStories = 0;
+
+  for (const aid of targetIds) {
+    if (assigned.has(aid)) continue;
+
+    // 対象記事のベクトルを取り出す
+    const embRes = await client.execute({
+      sql: `SELECT vector_extract(embedding) AS emb FROM collected_data WHERE id = ?`,
+      args: [aid],
+    });
+    const embStr = embRes.rows[0]?.emb as string | undefined;
+    if (!embStr) continue;
+
+    // 近傍検索（自身を除く・直近ウィンドウ内・閾値内）
+    const nnRes = await client.execute({
+      sql: `SELECT t.id AS id, t.story_id AS story_id,
+                   vector_distance_cos(t.embedding, vector32(?)) AS dist
+            FROM vector_top_k('collected_embedding_idx', vector32(?), 12) AS v
+            JOIN collected_data t ON t.rowid = v.id
+            WHERE t.id != ? AND t.created_at >= ?
+            ORDER BY dist ASC`,
+      args: [embStr, embStr, aid, cutoff],
+    });
+    const neighbors = nnRes.rows
+      .map(r => ({ id: Number(r.id), storyId: r.story_id == null ? null : Number(r.story_id), dist: Number(r.dist) }))
+      .filter(n => n.dist < STORY_DISTANCE_THRESHOLD);
+
+    if (neighbors.length === 0) {
+      // 単独ストーリー（自分が代表）
+      await client.execute({ sql: `UPDATE collected_data SET story_id = ?, story_count = 1 WHERE id = ?`, args: [aid, aid] });
+      assigned.add(aid);
+      newStories++;
+      continue;
+    }
+
+    // 既存ストーリーに属する近傍があれば最も近いものに合流
+    const withStory = neighbors.filter(n => n.storyId != null);
+    if (withStory.length > 0) {
+      const storyId = withStory[0].storyId as number; // dist昇順なので先頭が最近傍
+      await client.execute({ sql: `UPDATE collected_data SET story_id = ? WHERE id = ?`, args: [storyId, aid] });
+      assigned.add(aid);
+      touchedStories.add(storyId);
+      merged++;
+    } else {
+      // 近傍はあるが全員未割当 → 新ストーリーを作る。代表は最古(=最小id)
+      const clusterIds = [aid, ...neighbors.map(n => n.id)];
+      const canonical = Math.min(...clusterIds);
+      for (const cid of clusterIds) {
+        await client.execute({ sql: `UPDATE collected_data SET story_id = ? WHERE id = ?`, args: [canonical, cid] });
+        assigned.add(cid);
+      }
+      touchedStories.add(canonical);
+      newStories++;
+      merged += clusterIds.length - 1;
+    }
+  }
+
+  // 影響を受けたストーリーのstory_countを再計算
+  for (const sid of touchedStories) {
+    await recomputeStoryCount(sid);
+  }
+
+  console.log(`[Story] 新規ストーリー${newStories}件, 重複統合${merged}件`);
+  return { stories: newStories, merged };
+}
+
 async function logPipeline(collected: number, failed: number, durationMs: number) {
   try {
     await db.insert(schema.pipelineLogs).values({
@@ -1439,10 +1577,26 @@ async function main() {
   console.log(`=== Daily Pipeline 開始 [mode=${pipelineMode}] ===`, new Date().toISOString());
 
   try {
+    // v3: ベクトル化＋重複排除のみ実行（バックフィル・検証用）
+    if (pipelineMode === 'vectors') {
+      await runEmbeddings();
+      await runStoryGrouping();
+      console.log('=== Vectors mode 完了 ===');
+      process.exit(0);
+    }
+
     await ensureSources();
     const { collected, failed } = await collectData(10);
 
     if (pipelineMode !== 'collect') {
+      // v3: ベクトル化 → 意味的重複排除（失敗しても主処理は継続）
+      try {
+        await runEmbeddings();
+        await runStoryGrouping();
+      } catch (e: any) {
+        console.warn('[Pipeline] ベクトル処理失敗(非クリティカル):', e.message);
+      }
+
       await runClaimExtraction();
 
       const reportContent = await generateReport();
