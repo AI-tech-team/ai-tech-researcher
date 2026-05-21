@@ -2122,6 +2122,49 @@ ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
   return translated;
 }
 
+// ── v3.1: 既存クレームの英語predicate/valueを日本語化（「今週の論点」表示用）──
+const ClaimsTransSchema = z.object({
+  items: z.array(z.object({ id: z.number().int(), predicate: z.string().max(80), value: z.string().max(150) })),
+});
+
+async function translateClaims(limit = 200): Promise<number> {
+  console.log('[ClaimTrans] クレーム日本語化開始');
+  const rows = await db.select({
+    id: schema.claims.id, subject: schema.claims.subject,
+    predicate: schema.claims.predicate, value: schema.claims.value,
+  }).from(schema.claims).orderBy(desc(schema.claims.createdAt)).limit(limit);
+
+  // predicate か value に日本語が無い＝翻訳対象
+  const targets = rows.filter(r => !JA_CHAR.test(r.predicate) || !JA_CHAR.test(r.value));
+  if (targets.length === 0) { console.log('[ClaimTrans] 対象なし'); return 0; }
+
+  let translated = 0;
+  const BATCH = 25;
+  for (let i = 0; i < targets.length; i += BATCH) {
+    const chunk = targets.slice(i, i + BATCH);
+    try {
+      const { object } = await withRetry(() => generateObject({
+        model: google('gemini-2.5-flash-lite'),
+        schema: ClaimsTransSchema,
+        prompt: `以下のクレームの predicate(述語) と value(値) を自然な日本語に訳してください。固有名詞・モデル名・数値・ベンチマーク名は原語のまま残す。必ず全${chunk.length}件のitemsを返す。
+
+${chunk.map(c => `[${c.id}] subject:${c.subject} / predicate:${c.predicate} / value:${c.value}`).join('\n')}`,
+      }));
+      for (const it of object.items) {
+        if (!it.predicate && !it.value) continue;
+        await db.update(schema.claims)
+          .set({ predicate: it.predicate.slice(0, 80), value: it.value.slice(0, 150) })
+          .where(eq(schema.claims.id, it.id));
+        translated++;
+      }
+    } catch (e: any) {
+      console.warn(`  [ClaimTrans] バッチ失敗(非クリティカル): ${(e.message ?? '').slice(0, 60)}`);
+    }
+  }
+  console.log(`[ClaimTrans] ${translated}件日本語化`);
+  return translated;
+}
+
 // ── v3.1: 既存データのグラウンディングURL(404リダイレクト)を実URLに解決 ──
 async function fixGroundingUrls(limit = 300): Promise<void> {
   console.log('[FixURL] 既存リダイレクトURLの解決開始');
@@ -2245,11 +2288,12 @@ async function main() {
       process.exit(0);
     }
 
-    // v3.1: 英語タイトルの翻訳のみ（バックフィル）。直近分を多めに処理
+    // v3.1: 英語タイトル＋クレームの翻訳のみ（バックフィル）。直近分を多めに処理
     if (pipelineMode === 'translate') {
       let total = 0, n = 0;
       do { n = await translateTitles(80); total += n; } while (n >= 60 && total < 400);
-      console.log(`=== Translate mode 完了（計${total}件）===`);
+      await translateClaims(300);
+      console.log(`=== Translate mode 完了（タイトル計${total}件＋クレーム）===`);
       process.exit(0);
     }
 
@@ -2272,6 +2316,7 @@ async function main() {
         await runEmbeddings();
         await runStoryGrouping();
         await translateTitles();
+        await translateClaims();
       } catch (e: any) {
         console.warn('[Pipeline] ベクトル/翻訳処理失敗(非クリティカル):', e.message);
       }

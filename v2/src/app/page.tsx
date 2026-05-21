@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LayoutGrid, Globe, Bookmark, FileText, Settings,
-  BarChart3, Terminal, Sparkles, RefreshCw, Zap, Network, Telescope, Fingerprint,
+  BarChart3, BrainCircuit, Sparkles, RefreshCw, Zap, Network, Telescope, Fingerprint,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/Toast';
@@ -293,11 +293,11 @@ export default function Home() {
         {/* Logo */}
         <div className="flex items-center gap-2.5 px-2 pt-1">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20 flex-shrink-0">
-            <Terminal className="text-white" size={14} />
+            <BrainCircuit className="text-white" size={15} />
           </div>
           <div className="min-w-0">
             <h2 className="font-bold text-sm font-outfit leading-tight truncate">AI Researcher</h2>
-            <span className="font-mono text-[9px] text-sky-500/70 tracking-widest">v2.0</span>
+            <span className="font-mono text-[9px] text-sky-500/70 tracking-widest">v3.1</span>
           </div>
         </div>
 
