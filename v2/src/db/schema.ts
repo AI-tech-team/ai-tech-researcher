@@ -28,6 +28,10 @@ export const collectedData = sqliteTable("collected_data", {
   rawContent: text("raw_content"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  // v3ベクトル基盤: 同一ストーリーの代表記事ID（自己参照）と束ねた記事数
+  storyId: integer("story_id"),
+  storyCount: integer("story_count").default(1),
+  // embedding (F32_BLOB) はDrizzle非対応のため生SQLで管理（select時に巨大blobを引かないようスキーマ外）
 });
 
 export const reports = sqliteTable("reports", {

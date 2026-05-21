@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Star, Bookmark, ExternalLink, CheckCircle2 } from 'lucide-react';
+import { Star, Bookmark, ExternalLink, CheckCircle2, Newspaper } from 'lucide-react';
 import type { CollectedItem } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -97,6 +97,16 @@ export function ArticleCard({
           {isMatch && (
             <span className="font-mono text-[10px] text-amber-400 border border-amber-500/20 bg-amber-500/10 px-1.5 py-px rounded">
               MATCH
+            </span>
+          )}
+
+          {/* v3: 同一ストーリーを複数ソースが報じた場合のバッジ */}
+          {(item.storyCount ?? 1) > 1 && (
+            <span
+              title={`${item.storyCount}件の関連記事が同一トピックを報じています`}
+              className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-px rounded">
+              <Newspaper size={10} />
+              {item.storyCount}媒体が報じた
             </span>
           )}
 
