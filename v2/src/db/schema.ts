@@ -137,6 +137,16 @@ export const researchQuestions = sqliteTable("research_questions", {
   investigatedAt: text("investigated_at"),
 });
 
+// v3.1 読書DNA: ユーザーの記事行動ログ（4軸プロファイル算出の元データ）
+export const readingEvents = sqliteTable("reading_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  articleId: integer("article_id").references(() => collectedData.id),
+  action: text("action").notNull(), // 'open' | 'favorite' | 'readlater' | 'read'
+  weight: real("weight").default(1),
+  category: text("category"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
 // v3: 理由付き先読みアラート
 export const alerts = sqliteTable("alerts", {
   id: integer("id").primaryKey({ autoIncrement: true }),

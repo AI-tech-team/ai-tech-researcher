@@ -1,12 +1,23 @@
 'use server';
 
 import { db, client } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
-import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief } from '@/types';
+import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief, ReadingProfile } from '@/types';
+
+// 読書DNA: カテゴリ→4軸の寄与（depth:0理論↔100実装 / view:0研究者↔50エンジニア↔100ビジネス / recency:0長期↔100近未来）
+const CAT_AXIS: Record<string, { depth: number; view: number; recency: number }> = {
+  '研究/論文':            { depth: 5,  view: 5,  recency: 25 },
+  'LLM推論':              { depth: 70, view: 45, recency: 60 },
+  'エージェント':          { depth: 75, view: 50, recency: 65 },
+  'ツール/フレームワーク': { depth: 95, view: 45, recency: 60 },
+  'ハードウェア':          { depth: 55, view: 50, recency: 55 },
+  'ビジネス応用':          { depth: 40, view: 95, recency: 75 },
+  'その他':               { depth: 50, view: 50, recency: 50 },
+};
 
 // ─── 共通クエリヘルパー ───────────────────────────────────────────
 
@@ -40,6 +51,15 @@ const COLLECTED_SELECT = {
   storyCount: collectedData.storyCount,
 };
 
+// 読書DNA: 記事行動を記録（4軸プロファイルの元データ）
+async function logReadingEvent(articleId: number, action: string, weight: number, category: string | null) {
+  try {
+    await db.insert(readingEvents).values({ articleId, action, weight, category });
+  } catch (e) {
+    console.error('Failed to log reading event:', e);
+  }
+}
+
 // タイトルとカテゴリから固有技術キーワードを抽出（トピック重み更新用）
 function extractKeywords(title: string | null, category: string | null): string[] {
   const kws: string[] = [];
@@ -53,9 +73,9 @@ function extractKeywords(title: string | null, category: string | null): string[
 
 export async function getReportsData() {
   try {
-    // briefingは自律リサーチタブ専用なので調査レポート一覧からは除外
+    // briefing/learning_recapはメール配信専用なので調査レポート一覧からは除外
     return await db.select().from(reports)
-      .where(sql`${reports.type} != 'briefing'`)
+      .where(sql`${reports.type} NOT IN ('briefing', 'learning_recap')`)
       .orderBy(desc(reports.createdAt));
   } catch (error) {
     console.error("Failed to fetch reports:", error);
@@ -477,6 +497,7 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
     }
     // お気に入り = 強いシグナル
     if (newValue === 1) {
+      await logReadingEvent(id, 'favorite', 3, item?.category ?? null);
       const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
       const now = new Date().toISOString();
       for (const kw of kws) {
@@ -499,6 +520,11 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
 export async function toggleReadLater(id: number, current: boolean) {
   try {
     await db.update(collectedData).set({ isReadLater: current ? 0 : 1 }).where(eq(collectedData.id, id));
+    if (!current) {
+      const [item] = await db.select({ category: collectedData.category })
+        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+      await logReadingEvent(id, 'readlater', 1, item?.category ?? null);
+    }
     revalidatePath('/');
     return { success: true };
   } catch (error) {
@@ -522,6 +548,7 @@ export async function markAsRead(id: number, currentIsRead: boolean) {
           .set({ score: sql`COALESCE(${sources.score}, 0.0) + 0.3` })
           .where(eq(sources.id, item.sourceId));
       }
+      await logReadingEvent(id, 'read', 2, item?.category ?? null);
       // トピック重みを加算（読了 = 弱いシグナル）
       const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
       const now = new Date().toISOString();
@@ -859,6 +886,93 @@ export async function generateResearchBrief(topic: string): Promise<ResearchBrie
     return { topic: t, content: text, relatedArticles: related };
   } catch (error) {
     console.error('Failed to generate research brief:', error);
+    return null;
+  }
+}
+
+export async function getReadingProfile(): Promise<ReadingProfile | null> {
+  try {
+    const now = Date.now();
+    const thirtyAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const sixtyAgo = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const twentyOneAgo = new Date(now - 21 * 24 * 60 * 60 * 1000).toISOString();
+
+    const events = await db.select({
+      category: readingEvents.category,
+      weight: readingEvents.weight,
+      createdAt: readingEvents.createdAt,
+    }).from(readingEvents).orderBy(desc(readingEvents.createdAt)).limit(1000);
+
+    if (events.length === 0) return null;
+
+    // 重み付き4軸の集計
+    let wSum = 0, depthSum = 0, viewSum = 0, recencySum = 0;
+    const catCount = new Map<string, number>();
+    const last30 = new Map<string, number>();
+    const prior30 = new Map<string, number>();
+    const recentCats = new Set<string>();
+
+    for (const e of events) {
+      const cat = e.category ?? 'その他';
+      const w = e.weight ?? 1;
+      const ax = CAT_AXIS[cat] ?? CAT_AXIS['その他'];
+      wSum += w;
+      depthSum += ax.depth * w;
+      viewSum += ax.view * w;
+      recencySum += ax.recency * w;
+      catCount.set(cat, (catCount.get(cat) ?? 0) + 1);
+      const ts = e.createdAt ?? '';
+      if (ts >= thirtyAgo) { last30.set(cat, (last30.get(cat) ?? 0) + 1); }
+      else if (ts >= sixtyAgo) { prior30.set(cat, (prior30.get(cat) ?? 0) + 1); }
+      if (ts >= twentyOneAgo) recentCats.add(cat);
+    }
+
+    const depth = wSum ? Math.round(depthSum / wSum) : 50;
+    const view = wSum ? Math.round(viewSum / wSum) : 50;
+    const recency = wSum ? Math.round(recencySum / wSum) : 50;
+
+    // 広さ: カテゴリ分布のエントロピーを正規化（0=特化, 100=広範）
+    const counts = [...catCount.values()];
+    const total = counts.reduce((a, b) => a + b, 0);
+    let entropy = 0;
+    for (const c of counts) { const p = c / total; entropy -= p * Math.log2(p); }
+    const maxEntropy = Math.log2(Math.max(2, Object.keys(CAT_AXIS).length));
+    const breadth = Math.round((entropy / maxEntropy) * 100);
+
+    const radar = [
+      { axis: '深さ',  leftLabel: '理論派',   rightLabel: '実装派',     value: depth },
+      { axis: '視点',  leftLabel: '研究者',   rightLabel: 'ビジネス',   value: view },
+      { axis: '広さ',  leftLabel: '専門特化', rightLabel: '広範収集',   value: breadth },
+      { axis: '時制',  leftLabel: '長期志向', rightLabel: '近未来志向', value: recency },
+    ];
+
+    const categoryDistribution = [...catCount.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // 関心シフト（直近30日 vs その前30日）
+    const shiftCats = new Set([...last30.keys(), ...prior30.keys()]);
+    const recentShift = [...shiftCats]
+      .map(category => {
+        const delta = (last30.get(category) ?? 0) - (prior30.get(category) ?? 0);
+        return { category, delta, direction: (delta >= 0 ? 'up' : 'down') as 'up' | 'down' };
+      })
+      .filter(s => s.delta !== 0)
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 4);
+
+    // 最近読んでいない分野（過去に読んだが直近21日engagementなし）
+    const neglectedCategories = [...catCount.keys()].filter(c => !recentCats.has(c) && c !== 'その他');
+
+    // ペルソナ（一言）
+    const depthWord = depth >= 65 ? '実装重視' : depth <= 35 ? '理論重視' : 'バランス型';
+    const viewWord = view >= 70 ? 'ビジネス視点' : view <= 35 ? '研究者視点' : 'エンジニア視点';
+    const breadthWord = breadth >= 60 ? '広く収集' : breadth <= 35 ? '専門特化' : '';
+    const persona = [depthWord, viewWord, breadthWord].filter(Boolean).join('・');
+
+    return { totalEvents: events.length, radar, categoryDistribution, recentShift, neglectedCategories, persona };
+  } catch (error) {
+    console.error('Failed to compute reading profile:', error);
     return null;
   }
 }

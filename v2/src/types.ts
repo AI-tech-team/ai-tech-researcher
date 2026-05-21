@@ -160,4 +160,21 @@ export interface ResearchBrief {
   relatedArticles: { title: string; url: string | null }[];
 }
 
+// v3.1 読書DNA
+export interface ReadingAxis {
+  axis: string;       // 軸名（深さ/視点/広さ/時制）
+  leftLabel: string;
+  rightLabel: string;
+  value: number;      // 0-100（右ラベル寄り）
+}
+
+export interface ReadingProfile {
+  totalEvents: number;
+  radar: ReadingAxis[];
+  categoryDistribution: { category: string; count: number }[];
+  recentShift: { category: string; delta: number; direction: 'up' | 'down' }[];
+  neglectedCategories: string[];
+  persona: string;
+}
+
 export type ToastType = 'success' | 'error' | 'info';
