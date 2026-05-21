@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Plus, Trash2, RefreshCw, Hash, Globe, Zap, Tag, Cpu } from 'lucide-react';
+import { Plus, Trash2, Hash, Globe, Zap, Tag, Cpu } from 'lucide-react';
 import { SkeletonRow } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
 import type { Source } from '@/types';

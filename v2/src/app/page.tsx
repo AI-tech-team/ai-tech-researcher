@@ -20,12 +20,12 @@ import { ResearchTab } from '@/components/tabs/ResearchTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
-  getSourcePerformance, getSourceROI, getCategoryTrendData, getModelMentionData,
+  getSourceROI, getCategoryTrendData, getModelMentionData,
   getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
   getBriefing, getActiveAlerts,
 } from './actions';
-import type { CollectedItem, Source, Report, SourcePerformance, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem } from '@/types';
+import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem } from '@/types';
 
 type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'knowledge' | 'research' | 'settings';
 
@@ -89,6 +89,8 @@ export default function Home() {
     loadData();
     try {
       const saved = localStorage.getItem('interestTags');
+      // localStorageからの初期化（マウント時のみ・意図的）
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (saved) setInterestTags(JSON.parse(saved));
     } catch {}
   }, []);
@@ -189,25 +191,25 @@ export default function Home() {
   const unreadCount = collectedItems.filter(i => !i.isRead).length;
 
   const navItems: [Tab, React.ReactNode, string][] = [
-    ['overview', <LayoutGrid size={19} />, '全体概要'],
-    ['data', <Globe size={19} />, `収集データ${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
-    ['readlater', <Bookmark size={19} />, `後で読む${readLaterCount > 0 ? ` (${readLaterCount})` : ''}`],
-    ['reports', <FileText size={19} />, '調査レポート'],
-    ['performance', <BarChart3 size={19} />, 'ソース分析'],
-    ['knowledge', <Network size={19} />, '知識グラフ'],
-    ['research', <Telescope size={19} />, '自律リサーチ'],
-    ['settings', <Settings size={19} />, '設定'],
+    ['overview', <LayoutGrid key="overview" size={19} />, '全体概要'],
+    ['data', <Globe key="data" size={19} />, `収集データ${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
+    ['readlater', <Bookmark key="readlater" size={19} />, `後で読む${readLaterCount > 0 ? ` (${readLaterCount})` : ''}`],
+    ['reports', <FileText key="reports" size={19} />, '調査レポート'],
+    ['performance', <BarChart3 key="performance" size={19} />, 'ソース分析'],
+    ['knowledge', <Network key="knowledge" size={19} />, '知識グラフ'],
+    ['research', <Telescope key="research" size={19} />, '自律リサーチ'],
+    ['settings', <Settings key="settings" size={19} />, '設定'],
   ];
 
   const mobileNavItems: [Tab, React.ReactNode][] = [
-    ['overview', <LayoutGrid size={22} />],
-    ['data', <Globe size={22} />],
-    ['readlater', <Bookmark size={22} />],
-    ['reports', <FileText size={22} />],
-    ['performance', <BarChart3 size={22} />],
-    ['knowledge', <Network size={22} />],
-    ['research', <Telescope size={22} />],
-    ['settings', <Settings size={22} />],
+    ['overview', <LayoutGrid key="overview" size={22} />],
+    ['data', <Globe key="data" size={22} />],
+    ['readlater', <Bookmark key="readlater" size={22} />],
+    ['reports', <FileText key="reports" size={22} />],
+    ['performance', <BarChart3 key="performance" size={22} />],
+    ['knowledge', <Network key="knowledge" size={22} />],
+    ['research', <Telescope key="research" size={22} />],
+    ['settings', <Settings key="settings" size={22} />],
   ];
 
   const tabContent = (

@@ -1,9 +1,12 @@
-# ESLint クリーンアップ（あとで対応）
+# ESLint クリーンアップ（✅ 解決済み 2026-05-21）
 
-> 2026-05-21 時点。**ビルド・型・デプロイには影響なし**（`next build` 成功、TypeScriptクリーン、IDE診断クリーン）。
-> ESLintの「error」扱いだが Next.js のビルドはlintを実行しないためデプロイはブロックされない。
-> v3で新規作成した `KnowledgeTab.tsx` / `ResearchTab.tsx` / `Markdown.tsx` は lint クリーン。
-> 以下は**作業前から全体に存在していた**パターン。
+> **対応済み**: `npm run lint` は 0 件（exit 0）。採用した方針:
+> - `@typescript-eslint/no-explicit-any` を設定で off（catch節・JSON解析・AI SDKメタデータ等の意図的な多用のため）
+> - `react/jsx-key`（navItems等16件）と未使用import/変数はコードで修正
+> - `react-hooks/set-state-in-effect`（localStorage初期化・ページリセットの正当なパターン2件）は行単位でdisable
+> - 一回限りのデータ投入/移行スクリプトは globalIgnores に追加
+>
+> 以下は当時の分析記録（参考）。
 
 ## 内訳（計127件）
 
