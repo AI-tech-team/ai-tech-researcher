@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutGrid, Globe, Bookmark, FileText, Settings,
-  BarChart3, BrainCircuit, Sparkles, RefreshCw, Zap, Network, Telescope, Fingerprint,
+  BarChart3, BrainCircuit, Sparkles, RefreshCw, Zap, Network, Telescope, Fingerprint, Layers,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/Toast';
@@ -28,30 +28,31 @@ import {
 } from './actions';
 import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile } from '@/types';
 
-type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'performance' | 'knowledge' | 'research' | 'dna' | 'settings';
+// トップレベルタブ（モバイルナビ過密解消のため分析系はinsightに集約）
+type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'insight' | 'settings';
+// インサイト配下のサブタブ
+type InsightSub = 'knowledge' | 'research' | 'dna' | 'performance';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: '全体概要',
   data: '収集データ',
   readlater: '後で読む',
   reports: '調査レポート',
-  performance: 'ソース分析',
-  knowledge: '知識グラフ',
-  research: '自律リサーチ',
-  dna: '読書DNA',
+  insight: 'インサイト',
   settings: '設定',
 };
-
 const TAB_SHORT: Record<Tab, string> = {
-  overview: '概要',
-  data: 'データ',
-  readlater: '後読み',
-  reports: 'レポート',
-  performance: '分析',
-  knowledge: '知識',
-  research: 'リサーチ',
-  dna: 'DNA',
-  settings: '設定',
+  overview: '概要', data: 'データ', readlater: '後読み', reports: 'レポート', insight: 'インサイト', settings: '設定',
+};
+
+const INSIGHT_SUBS: { id: InsightSub; label: string; icon: React.ReactNode }[] = [
+  { id: 'knowledge',   label: '知識グラフ',   icon: <Network size={14} /> },
+  { id: 'research',    label: '自律リサーチ', icon: <Telescope size={14} /> },
+  { id: 'dna',         label: '読書DNA',      icon: <Fingerprint size={14} /> },
+  { id: 'performance', label: 'ソース分析',   icon: <BarChart3 size={14} /> },
+];
+const INSIGHT_LABELS: Record<InsightSub, string> = {
+  knowledge: '知識グラフ', research: '自律リサーチ', dna: '読書DNA', performance: 'ソース分析',
 };
 
 const SLIDE = {
@@ -64,6 +65,7 @@ const SLIDE = {
 export default function Home() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [insightSub, setInsightSub] = useState<InsightSub>('knowledge');
   const [sourcesList, setSourcesList] = useState<Source[]>([]);
   const [collectedItems, setCollectedItems] = useState<CollectedItem[]>([]);
   const [reportsList, setReportsList] = useState<Report[]>([]);
@@ -85,12 +87,14 @@ export default function Home() {
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [loadedGroups, setLoadedGroups] = useState<Record<InsightSub, boolean>>({ knowledge: false, research: false, dna: false, performance: false });
+  const loadingRef = useRef<Record<string, boolean>>({});
   const [isSyncing, setIsSyncing] = useState(false);
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
 
   useEffect(() => {
-    loadData();
+    loadCore();
     try {
       const saved = localStorage.getItem('interestTags');
       // localStorageからの初期化（マウント時のみ・意図的）
@@ -99,48 +103,78 @@ export default function Home() {
     } catch {}
   }, []);
 
-  async function loadData() {
+  // コア（記事・ソース）＋概要タブ分のみ起動時に取得。分析系は開いた時に遅延ロード
+  async function loadCore() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, performance, catTrend, modelMentions, matrix, trending, logs, conflicts, lbs, krels, balerts, kstats, brief, aalerts, prof] = await Promise.all([
+    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, conflicts] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
       getActivityData(),
-      getSourceROI(),
       getCategoryTrendData(),
       getModelMentionData(),
-      getKeywordCategoryMatrix(),
       getTrendingKeywords(),
-      getPipelineLogs(),
       getConflictingClaims(),
-      getBenchmarkLeaderboards(),
-      getKnowledgeRelations(),
-      getBenchmarkAlerts(),
-      getKnowledgeStats(),
-      getBriefing(),
-      getActiveAlerts(),
-      getReadingProfile(),
     ]);
     setSourcesList(srcs as Source[]);
     setCollectedItems(data as CollectedItem[]);
     setReportsList(reportsData as Report[]);
     setActivityData(activity);
-    setSourcePerformance(performance as any[]);
     setCategoryTrendData(catTrend);
     setModelMentionData(modelMentions);
-    setKwMatrix(matrix as any);
     setTrendingKeywords(trending);
-    setPipelineLogs(logs);
     setConflictingClaims(conflicts as ConflictingClaim[]);
-    setLeaderboards(lbs as BenchmarkLeaderboard[]);
-    setKnowledgeRelations(krels as KnowledgeRelation[]);
-    setBenchmarkAlerts(balerts as BenchmarkAlert[]);
-    setKnowledgeStats(kstats as KnowledgeStats);
-    setBriefing(brief as BriefingReport | null);
-    setActiveAlerts(aalerts as AlertItem[]);
-    setReadingProfile(prof as ReadingProfile | null);
     setIsLoadingData(false);
   }
+
+  // インサイト各グループのデータ取得（実体）
+  async function fetchGroup(g: InsightSub) {
+    if (g === 'knowledge') {
+      const [lbs, krels, balerts, kstats] = await Promise.all([
+        getBenchmarkLeaderboards(), getKnowledgeRelations(), getBenchmarkAlerts(), getKnowledgeStats(),
+      ]);
+      setLeaderboards(lbs as BenchmarkLeaderboard[]);
+      setKnowledgeRelations(krels as KnowledgeRelation[]);
+      setBenchmarkAlerts(balerts as BenchmarkAlert[]);
+      setKnowledgeStats(kstats as KnowledgeStats);
+    } else if (g === 'research') {
+      const [brief, aalerts] = await Promise.all([getBriefing(), getActiveAlerts()]);
+      setBriefing(brief as BriefingReport | null);
+      setActiveAlerts(aalerts as AlertItem[]);
+    } else if (g === 'dna') {
+      const prof = await getReadingProfile();
+      setReadingProfile(prof as ReadingProfile | null);
+    } else if (g === 'performance') {
+      const [perf, matrix, logs] = await Promise.all([getSourceROI(), getKeywordCategoryMatrix(), getPipelineLogs()]);
+      setSourcePerformance(perf as any[]);
+      setKwMatrix(matrix as any);
+      setPipelineLogs(logs);
+    }
+    setLoadedGroups(prev => ({ ...prev, [g]: true }));
+  }
+
+  // 未取得なら取得（重複防止）
+  async function ensureGroup(g: InsightSub) {
+    if (loadedGroups[g] || loadingRef.current[g]) return;
+    loadingRef.current[g] = true;
+    try { await fetchGroup(g); } finally { loadingRef.current[g] = false; }
+  }
+
+  // 変更後の再読込: コア＋既に開いたグループを最新化
+  async function refresh() {
+    await loadCore();
+    const opened = (Object.keys(loadedGroups) as InsightSub[]).filter(g => loadedGroups[g]);
+    await Promise.all(opened.map(fetchGroup));
+  }
+
+  const selectTab = (tab: Tab) => {
+    setActiveTab(tab);
+    if (tab === 'insight') ensureGroup(insightSub);
+  };
+  const selectInsight = (sub: InsightSub) => {
+    setInsightSub(sub);
+    ensureGroup(sub);
+  };
 
   const handleSyncData = async () => {
     if (isSyncing) return;
@@ -149,7 +183,7 @@ export default function Home() {
       const res = await fetch('/api/collect', { method: 'POST' });
       const result = await res.json();
       if (result.success) {
-        await loadData();
+        await refresh();
         toast('データ同期が完了しました', 'success');
       } else {
         toast(`同期エラー: ${result.message ?? '不明なエラー'}`, 'error');
@@ -178,47 +212,43 @@ export default function Home() {
 
   const handleAddSource = async (keyword: string) => {
     await addSource(keyword);
-    await loadData();
+    await refresh();
   };
 
   const handleDeleteSource = async (id: number) => {
     await deleteSource(id);
-    await loadData();
+    await refresh();
   };
 
   const handleEvolve = async () => {
     const res = await fetch('/api/evolve', { method: 'POST' });
     const result = await res.json();
     if (!result.success) throw new Error(result.message ?? '不明なエラー');
-    await loadData();
+    await refresh();
   };
 
   const readLaterCount = collectedItems.filter(i => i.isReadLater).length;
   const unreadCount = collectedItems.filter(i => !i.isRead).length;
+  const currentLabel = activeTab === 'insight' ? INSIGHT_LABELS[insightSub] : TAB_LABELS[activeTab];
 
   const navItems: [Tab, React.ReactNode, string][] = [
     ['overview', <LayoutGrid key="overview" size={19} />, '全体概要'],
     ['data', <Globe key="data" size={19} />, `収集データ${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
     ['readlater', <Bookmark key="readlater" size={19} />, `後で読む${readLaterCount > 0 ? ` (${readLaterCount})` : ''}`],
     ['reports', <FileText key="reports" size={19} />, '調査レポート'],
-    ['performance', <BarChart3 key="performance" size={19} />, 'ソース分析'],
-    ['knowledge', <Network key="knowledge" size={19} />, '知識グラフ'],
-    ['research', <Telescope key="research" size={19} />, '自律リサーチ'],
-    ['dna', <Fingerprint key="dna" size={19} />, '読書DNA'],
+    ['insight', <Layers key="insight" size={19} />, 'インサイト'],
     ['settings', <Settings key="settings" size={19} />, '設定'],
   ];
-
   const mobileNavItems: [Tab, React.ReactNode][] = [
     ['overview', <LayoutGrid key="overview" size={22} />],
     ['data', <Globe key="data" size={22} />],
     ['readlater', <Bookmark key="readlater" size={22} />],
     ['reports', <FileText key="reports" size={22} />],
-    ['performance', <BarChart3 key="performance" size={22} />],
-    ['knowledge', <Network key="knowledge" size={22} />],
-    ['research', <Telescope key="research" size={22} />],
-    ['dna', <Fingerprint key="dna" size={22} />],
+    ['insight', <Layers key="insight" size={22} />],
     ['settings', <Settings key="settings" size={22} />],
   ];
+
+  const insightLoading = !loadedGroups[insightSub];
 
   const tabContent = (
     <AnimatePresence mode="wait">
@@ -247,31 +277,36 @@ export default function Home() {
       {activeTab === 'reports' && (
         <motion.div key="reports" {...SLIDE}>
           <ReportsTab reportsList={reportsList} isLoadingData={isLoadingData}
-            collectedItemsCount={collectedItems.length} onReload={loadData} />
+            collectedItemsCount={collectedItems.length} onReload={refresh} />
         </motion.div>
       )}
-      {activeTab === 'performance' && (
-        <motion.div key="performance" {...SLIDE}>
-          <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}
-            sourcePerformance={sourcePerformance} kwMatrix={kwMatrix}
-            pipelineLogs={pipelineLogs} isLoadingData={isLoadingData} />
-        </motion.div>
-      )}
-      {activeTab === 'knowledge' && (
-        <motion.div key="knowledge" {...SLIDE}>
-          <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
-            alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={isLoadingData} />
-        </motion.div>
-      )}
-      {activeTab === 'research' && (
-        <motion.div key="research" {...SLIDE}>
-          <ResearchTab briefing={briefing} alerts={activeAlerts}
-            isLoadingData={isLoadingData} onReload={loadData} />
-        </motion.div>
-      )}
-      {activeTab === 'dna' && (
-        <motion.div key="dna" {...SLIDE}>
-          <ReadingDnaTab profile={readingProfile} isLoadingData={isLoadingData} />
+      {activeTab === 'insight' && (
+        <motion.div key="insight" {...SLIDE} className="space-y-5">
+          {/* サブナビ（知識/リサーチ/DNA/分析） */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {INSIGHT_SUBS.map(s => (
+              <button key={s.id} onClick={() => selectInsight(s.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${insightSub === s.id ? 'bg-indigo-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
+                {s.icon}{s.label}
+              </button>
+            ))}
+          </div>
+          {insightSub === 'knowledge' && (
+            <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
+              alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={insightLoading} />
+          )}
+          {insightSub === 'research' && (
+            <ResearchTab briefing={briefing} alerts={activeAlerts}
+              isLoadingData={insightLoading} onReload={refresh} />
+          )}
+          {insightSub === 'dna' && (
+            <ReadingDnaTab profile={readingProfile} isLoadingData={insightLoading} />
+          )}
+          {insightSub === 'performance' && (
+            <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}
+              sourcePerformance={sourcePerformance} kwMatrix={kwMatrix}
+              pipelineLogs={pipelineLogs} isLoadingData={insightLoading} />
+          )}
         </motion.div>
       )}
       {activeTab === 'settings' && (
@@ -279,7 +314,7 @@ export default function Home() {
           <SettingsTab sourcesList={sourcesList} isLoadingData={isLoadingData}
             interestTags={interestTags} onInterestTagsChange={setInterestTags}
             onAddSource={handleAddSource} onDeleteSource={handleDeleteSource}
-            onEvolve={handleEvolve} onReload={loadData} />
+            onEvolve={handleEvolve} onReload={refresh} />
         </motion.div>
       )}
     </AnimatePresence>
@@ -304,7 +339,7 @@ export default function Home() {
         {/* Nav */}
         <nav className="flex flex-col gap-0.5">
           {navItems.map(([tab, icon, label]) => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
+            <button key={tab} onClick={() => selectTab(tab)}
               className={`sidebar-item ${activeTab === tab ? 'active' : ''}`}>
               {icon}
               <span className="truncate">{label}</span>
@@ -330,7 +365,7 @@ export default function Home() {
         {/* Desktop header */}
         <div className="hidden md:flex flex-col gap-3 px-6 pt-5 pb-4 border-b border-white/5">
           <div className="flex items-center justify-between">
-            <h1 className="text-lg font-bold font-outfit">{TAB_LABELS[activeTab]}</h1>
+            <h1 className="text-lg font-bold font-outfit">{currentLabel}</h1>
             <button onClick={handleSyncData} disabled={isSyncing}
               className={`btn-primary flex items-center gap-1.5 ${isSyncing ? 'opacity-40 cursor-not-allowed' : ''}`}>
               <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
@@ -363,7 +398,7 @@ export default function Home() {
         <div className="md:hidden flex items-center justify-between px-4 pt-3 pb-2.5 border-b border-white/5 bg-[#03060f]/90 backdrop-blur-md sticky top-0 z-30">
           <div className="flex items-center gap-2">
             <div className="live-dot" />
-            <span className="font-mono text-[11px] text-slate-400 tracking-wide">{TAB_LABELS[activeTab]}</span>
+            <span className="font-mono text-[11px] text-slate-400 tracking-wide">{currentLabel}</span>
           </div>
           <button onClick={handleSyncData} disabled={isSyncing}
             className="btn-primary flex items-center gap-1.5 disabled:opacity-40">
@@ -395,7 +430,7 @@ export default function Home() {
           return (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => selectTab(tab)}
               className={`flex-1 flex flex-col items-center justify-center gap-0.5 py-2.5 relative transition-colors ${isActive ? 'text-sky-400' : 'text-slate-500'}`}
             >
               {count != null && (
