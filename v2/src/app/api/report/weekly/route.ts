@@ -10,7 +10,7 @@ export async function POST() {
   try {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const since = sevenDaysAgo.toISOString();
+    const since = sevenDaysAgo.toISOString().replace('T', ' ').slice(0, 19);
 
     const recentData = await db.select().from(collectedData)
       .where(gte(collectedData.createdAt, since))
@@ -50,7 +50,7 @@ export async function POST() {
       prompt: `今日の日付: ${today}\n\n【今週の収集データ（${recentData.length}件）】\n${contextStr}${comparisonSection}`,
     });
 
-    const reportDate = new Date().toISOString().split('T')[0];
+    const reportDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
     const [inserted] = await db.insert(reports).values({
       type: 'weekly',

@@ -10,7 +10,7 @@ export async function POST() {
   try {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const since = thirtyDaysAgo.toISOString();
+    const since = thirtyDaysAgo.toISOString().replace('T', ' ').slice(0, 19);
 
     const recentData = await db.select().from(collectedData)
       .where(gte(collectedData.createdAt, since))
@@ -38,7 +38,7 @@ export async function POST() {
       prompt: `【今月の収集データ（${recentData.length}件）】\n${contextStr}`,
     });
 
-    const reportDate = new Date().toISOString().split('T')[0];
+    const reportDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
     const [inserted] = await db.insert(reports).values({
       type: 'monthly',

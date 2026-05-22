@@ -26,6 +26,13 @@ interface SettingsTabProps {
 
 type RunState = 'idle' | 'running' | 'done' | 'error';
 
+// Tailwindは動的クラス名(border-${color}-500)を生成しないため、完全な文字列で持つ
+const COLOR_CLS: Record<string, string> = {
+  sky:     'border-sky-500/20 bg-sky-500/5 hover:bg-sky-500/10 hover:border-sky-500/30',
+  purple:  'border-purple-500/20 bg-purple-500/5 hover:bg-purple-500/10 hover:border-purple-500/30',
+  emerald: 'border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 hover:border-emerald-500/30',
+};
+
 export function SettingsTab({
   sourcesList, isLoadingData, interestTags, onInterestTagsChange,
   onAddSource, onDeleteSource, onEvolve, onReload,
@@ -147,7 +154,7 @@ export function SettingsTab({
               className={`flex flex-col items-start gap-1 p-4 rounded-xl border transition-all text-left disabled:opacity-50 disabled:cursor-not-allowed
                 ${state === 'done'  ? 'border-emerald-500/30 bg-emerald-500/5' :
                   state === 'error' ? 'border-red-500/30 bg-red-500/5' :
-                  `border-${color}-500/20 bg-${color}-500/5 hover:bg-${color}-500/10 hover:border-${color}-500/30`}`}>
+                  (COLOR_CLS[color] ?? COLOR_CLS.sky)}`}>
               <span className="font-mono text-xs font-bold text-slate-300">{btnLabel(state, label)}</span>
               <span className="font-mono text-[10px] text-slate-600">{desc}</span>
               {state === 'running' && <div className="w-full h-0.5 bg-slate-800 rounded mt-1 overflow-hidden"><div className="h-full bg-sky-500 animate-pulse w-1/2" /></div>}
@@ -187,8 +194,8 @@ export function SettingsTab({
             <Cpu size={13} className="text-indigo-400" /> 情報ソース
           </h3>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] text-emerald-500 border border-emerald-500/20 bg-emerald-500/08 px-2 py-px rounded">{activeCount} ACTIVE</span>
-            <span className="font-mono text-[10px] text-sky-400 border border-sky-500/20 bg-sky-500/08 px-2 py-px rounded">{candidateCount} CANDIDATE</span>
+            <span className="font-mono text-[10px] text-emerald-500 border border-emerald-500/20 bg-emerald-500/10 px-2 py-px rounded">{activeCount} ACTIVE</span>
+            <span className="font-mono text-[10px] text-sky-400 border border-sky-500/20 bg-sky-500/10 px-2 py-px rounded">{candidateCount} CANDIDATE</span>
           </div>
         </div>
 
