@@ -78,17 +78,19 @@ const KnowledgeSchema = z.object({
   })).max(5),
 });
 
+// summaryは超過しやすく max(300) だとスキーマ不一致で評価ごと失敗→フィード丸ごと0件になる。
+// 余裕を持たせ(600)、挿入時に切り詰める。
 const ArticleEvalSchema = z.object({
   items: z.array(z.object({
     importance: z.number().int().min(0).max(10),
     category: z.enum(CATS),
-    summary: z.string().max(300),
+    summary: z.string().max(600),
   })),
 });
 
 const HnEvalSchema = z.object({
   items: z.array(z.object({
-    summary: z.string().max(300),
+    summary: z.string().max(600),
     category: z.enum(CATS),
   })),
 });
@@ -183,7 +185,7 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   while ((m = itemRegex.exec(xml)) !== null) {
     const chunk = m[0];
     const get = (tag: string) =>
-      (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\[CDATA\[)?([\\s\\S]*?)(?:\]\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim();
+      (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim();
     const title = get('title');
     // Atom は <link href="url"/> 形式を使う
     const link = isAtom
@@ -231,7 +233,7 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
       sourceId: source.id,
       title: item.title,
       url: item.link,
-      summary: ev.summary,
+      summary: (ev.summary ?? '').slice(0, 300),
       category: ev.category ?? 'その他',
       importanceScore: Math.min(10, ev.importance + authorityBonus),
       publishedAt: pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString(),
@@ -319,7 +321,7 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   while ((m = entryRegex.exec(xml)) !== null) {
     const chunk = m[1];
     const get = (tag: string) =>
-      (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\[CDATA\[)?([\\s\\S]*?)(?:\]\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim();
+      (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim();
     const title = get('title').replace(/\s+/g, ' ');
     const link = chunk.match(/<link[^>]+href="([^"]+)"[^>]*rel="alternate"/)?.[1]
                ?? chunk.match(/<link[^>]+rel="alternate"[^>]+href="([^"]+)"/)?.[1]
