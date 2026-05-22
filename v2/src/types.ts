@@ -177,4 +177,14 @@ export interface ReadingProfile {
   persona: string;
 }
 
+// v3.2 ベクトル活用: 今週の話題の塊（複数記事が報じたトピック）
+export interface TopicCluster {
+  storyId: number;
+  headline: string;
+  size: number;
+  category: string | null;
+  importance: number;
+  members: { id: number; title: string; url: string | null }[];
+}
+
 export type ToastType = 'success' | 'error' | 'info';

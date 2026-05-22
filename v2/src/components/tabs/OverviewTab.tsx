@@ -1,12 +1,12 @@
 "use client";
 
-import { TrendingUp, Globe, FileText, Star, BarChart3, Database, Brain, Flame, ArrowUpRight, ArrowDownRight, Minus, Zap } from 'lucide-react';
+import { TrendingUp, Globe, FileText, Star, BarChart3, Database, Brain, Flame, ArrowUpRight, ArrowDownRight, Minus, Zap, Layers, ExternalLink } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar as RechartsBar,
 } from 'recharts';
 import { SkeletonStat } from '@/components/Skeleton';
-import type { CollectedItem, Source, Report, TrendingKeyword, ConflictingClaim } from '@/types';
+import type { CollectedItem, Source, Report, TrendingKeyword, ConflictingClaim, TopicCluster } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8',
@@ -33,12 +33,13 @@ interface OverviewTabProps {
   modelMentionData: { model: string; count: number }[];
   trendingKeywords: TrendingKeyword[];
   conflictingClaims: ConflictingClaim[];
+  topicClusters?: TopicCluster[];
   isLoadingData: boolean;
 }
 
 export function OverviewTab({
   sourcesList, collectedItems, reportsList, activityData,
-  categoryTrendData, modelMentionData, trendingKeywords, conflictingClaims, isLoadingData,
+  categoryTrendData, modelMentionData, trendingKeywords, conflictingClaims, topicClusters = [], isLoadingData,
 }: OverviewTabProps) {
   const chartData = [
     { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length },
@@ -87,6 +88,35 @@ export function OverviewTab({
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* 今週の話題の塊（複数記事が報じたトピック） */}
+      {topicClusters.length > 0 && (
+        <div className="glass-card border-cyan-500/20">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
+            <Layers size={16} className="text-cyan-400" /> 今週の話題の塊
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {topicClusters.map(c => (
+              <div key={c.storyId} className="rounded-xl border border-cyan-500/10 bg-cyan-500/5 p-3">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="font-mono text-[10px] text-cyan-300 bg-cyan-500/15 px-1.5 py-0.5 rounded">{c.size}件</span>
+                  {c.category && <span className="font-mono text-[10px] text-slate-500">{c.category}</span>}
+                </div>
+                <p className="text-sm font-semibold text-white leading-snug mb-1.5">{c.headline}</p>
+                <div className="flex flex-col gap-0.5">
+                  {c.members.slice(1, 4).map(m => (
+                    <a key={m.id} href={m.url ?? '#'} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-cyan-300 transition-colors">
+                      <ExternalLink size={9} className="flex-shrink-0" />
+                      <span className="truncate">{m.title}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
