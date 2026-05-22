@@ -24,7 +24,7 @@ import {
   getSourceROI, getCategoryTrendData, getModelMentionData,
   getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
-  getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations,
+  getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations, getCrossInsight,
 } from './actions';
 import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
@@ -83,6 +83,7 @@ export default function Home() {
   const [benchmarkAlerts, setBenchmarkAlerts] = useState<BenchmarkAlert[]>([]);
   const [knowledgeStats, setKnowledgeStats] = useState<KnowledgeStats>({ entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 });
   const [briefing, setBriefing] = useState<BriefingReport | null>(null);
+  const [crossInsight, setCrossInsight] = useState<BriefingReport | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<AlertItem[]>([]);
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
   const [topicClusters, setTopicClusters] = useState<TopicCluster[]>([]);
@@ -142,9 +143,10 @@ export default function Home() {
       setBenchmarkAlerts(balerts as BenchmarkAlert[]);
       setKnowledgeStats(kstats as KnowledgeStats);
     } else if (g === 'research') {
-      const [brief, aalerts] = await Promise.all([getBriefing(), getActiveAlerts()]);
+      const [brief, aalerts, ci] = await Promise.all([getBriefing(), getActiveAlerts(), getCrossInsight()]);
       setBriefing(brief as BriefingReport | null);
       setActiveAlerts(aalerts as AlertItem[]);
+      setCrossInsight(ci as BriefingReport | null);
     } else if (g === 'dna') {
       const [prof, recs] = await Promise.all([getReadingProfile(), getRecommendations()]);
       setReadingProfile(prof as ReadingProfile | null);
@@ -302,7 +304,7 @@ export default function Home() {
               alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={insightLoading} />
           )}
           {insightSub === 'research' && (
-            <ResearchTab briefing={briefing} alerts={activeAlerts}
+            <ResearchTab briefing={briefing} crossInsight={crossInsight} alerts={activeAlerts}
               isLoadingData={insightLoading} onReload={refresh} />
           )}
           {insightSub === 'dna' && (

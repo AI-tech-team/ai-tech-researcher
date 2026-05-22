@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Telescope, Bell, X, Sparkles, Search, Sunrise, ExternalLink } from 'lucide-react';
+import { Telescope, Bell, X, Sparkles, Search, Sunrise, ExternalLink, Lightbulb } from 'lucide-react';
 import { useToast } from '@/components/Toast';
 import { Markdown } from '@/components/Markdown';
 import { SkeletonStat } from '@/components/Skeleton';
@@ -16,12 +16,13 @@ const SEVERITY_META: Record<string, { mark: string; color: string; bg: string; b
 
 interface ResearchTabProps {
   briefing: BriefingReport | null;
+  crossInsight?: BriefingReport | null;
   alerts: AlertItem[];
   isLoadingData: boolean;
   onReload: () => Promise<void>;
 }
 
-export function ResearchTab({ briefing, alerts, isLoadingData, onReload }: ResearchTabProps) {
+export function ResearchTab({ briefing, crossInsight = null, alerts, isLoadingData, onReload }: ResearchTabProps) {
   const { toast } = useToast();
   const [topic, setTopic] = useState('');
   const [brief, setBrief] = useState<ResearchBrief | null>(null);
@@ -53,6 +54,19 @@ export function ResearchTab({ briefing, alerts, isLoadingData, onReload }: Resea
 
   return (
     <div className="space-y-8">
+
+      {/* 今週の横断インサイト */}
+      {crossInsight?.content && (
+        <div className="glass-card border-purple-500/20">
+          <div className="flex justify-between items-center mb-3 border-b border-white/5 pb-2">
+            <span className="font-mono text-[10px] text-purple-300 tracking-wider uppercase flex items-center gap-1.5">
+              <Lightbulb size={13} /> 今週の横断インサイト
+            </span>
+            <span className="text-xs text-slate-400 bg-white/5 px-2 py-0.5 rounded-full">{crossInsight.reportDate}</span>
+          </div>
+          <Markdown content={crossInsight.content} />
+        </div>
+      )}
 
       {/* 先読みアラート */}
       <div>

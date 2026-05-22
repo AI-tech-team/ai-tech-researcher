@@ -73,9 +73,9 @@ function extractKeywords(title: string | null, category: string | null): string[
 
 export async function getReportsData() {
   try {
-    // briefing/learning_recapはメール配信専用なので調査レポート一覧からは除外
+    // briefing/learning_recap/cross_insightはメール/インサイト専用なので調査レポート一覧からは除外
     return await db.select().from(reports)
-      .where(sql`${reports.type} NOT IN ('briefing', 'learning_recap')`)
+      .where(sql`${reports.type} NOT IN ('briefing', 'learning_recap', 'cross_insight')`)
       .orderBy(desc(reports.createdAt));
   } catch (error) {
     console.error("Failed to fetch reports:", error);
@@ -805,6 +805,22 @@ export async function getBriefing(): Promise<BriefingReport | null> {
     return rows[0] ?? null;
   } catch (error) {
     console.error('Failed to fetch briefing:', error);
+    return null;
+  }
+}
+
+export async function getCrossInsight(): Promise<BriefingReport | null> {
+  try {
+    const rows = await db.select({
+      id: reports.id, content: reports.content, reportDate: reports.reportDate, createdAt: reports.createdAt,
+    })
+      .from(reports)
+      .where(eq(reports.type, 'cross_insight'))
+      .orderBy(desc(reports.createdAt))
+      .limit(1);
+    return rows[0] ?? null;
+  } catch (error) {
+    console.error('Failed to fetch cross insight:', error);
     return null;
   }
 }
