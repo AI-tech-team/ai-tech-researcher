@@ -24,9 +24,9 @@ import {
   getSourceROI, getCategoryTrendData, getModelMentionData,
   getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
-  getBriefing, getActiveAlerts, getReadingProfile,
+  getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations,
 } from './actions';
-import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile } from '@/types';
+import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
 // トップレベルタブ（モバイルナビ過密解消のため分析系はinsightに集約）
 type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'insight' | 'settings';
@@ -85,6 +85,8 @@ export default function Home() {
   const [briefing, setBriefing] = useState<BriefingReport | null>(null);
   const [activeAlerts, setActiveAlerts] = useState<AlertItem[]>([]);
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
+  const [topicClusters, setTopicClusters] = useState<TopicCluster[]>([]);
+  const [recommendations, setRecommendations] = useState<CollectedItem[]>([]);
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [loadedGroups, setLoadedGroups] = useState<Record<InsightSub, boolean>>({ knowledge: false, research: false, dna: false, performance: false });
@@ -106,7 +108,7 @@ export default function Home() {
   // コア（記事・ソース）＋概要タブ分のみ起動時に取得。分析系は開いた時に遅延ロード
   async function loadCore() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, conflicts] = await Promise.all([
+    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, conflicts, clusters] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
@@ -115,6 +117,7 @@ export default function Home() {
       getModelMentionData(),
       getTrendingKeywords(),
       getConflictingClaims(),
+      getTopicClusters(),
     ]);
     setSourcesList(srcs as Source[]);
     setCollectedItems(data as CollectedItem[]);
@@ -124,6 +127,7 @@ export default function Home() {
     setModelMentionData(modelMentions);
     setTrendingKeywords(trending);
     setConflictingClaims(conflicts as ConflictingClaim[]);
+    setTopicClusters(clusters as TopicCluster[]);
     setIsLoadingData(false);
   }
 
@@ -142,8 +146,9 @@ export default function Home() {
       setBriefing(brief as BriefingReport | null);
       setActiveAlerts(aalerts as AlertItem[]);
     } else if (g === 'dna') {
-      const prof = await getReadingProfile();
+      const [prof, recs] = await Promise.all([getReadingProfile(), getRecommendations()]);
       setReadingProfile(prof as ReadingProfile | null);
+      setRecommendations(recs as CollectedItem[]);
     } else if (g === 'performance') {
       const [perf, matrix, logs] = await Promise.all([getSourceROI(), getKeywordCategoryMatrix(), getPipelineLogs()]);
       setSourcePerformance(perf as any[]);
@@ -256,7 +261,8 @@ export default function Home() {
         <motion.div key="overview" {...SLIDE}>
           <OverviewTab sourcesList={sourcesList} collectedItems={collectedItems} reportsList={reportsList}
             activityData={activityData} categoryTrendData={categoryTrendData} modelMentionData={modelMentionData}
-            trendingKeywords={trendingKeywords} conflictingClaims={conflictingClaims} isLoadingData={isLoadingData} />
+            trendingKeywords={trendingKeywords} conflictingClaims={conflictingClaims}
+            topicClusters={topicClusters} isLoadingData={isLoadingData} />
         </motion.div>
       )}
       {activeTab === 'data' && (
@@ -300,7 +306,7 @@ export default function Home() {
               isLoadingData={insightLoading} onReload={refresh} />
           )}
           {insightSub === 'dna' && (
-            <ReadingDnaTab profile={readingProfile} isLoadingData={insightLoading} />
+            <ReadingDnaTab profile={readingProfile} recommendations={recommendations} isLoadingData={insightLoading} />
           )}
           {insightSub === 'performance' && (
             <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}

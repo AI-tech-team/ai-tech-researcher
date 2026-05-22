@@ -6,7 +6,7 @@ import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray 
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
-import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief, ReadingProfile } from '@/types';
+import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief, ReadingProfile, TopicCluster } from '@/types';
 
 // 読書DNA: カテゴリ→4軸の寄与（depth:0理論↔100実装 / view:0研究者↔50エンジニア↔100ビジネス / recency:0長期↔100近未来）
 const CAT_AXIS: Record<string, { depth: number; view: number; recency: number }> = {
@@ -977,38 +977,144 @@ export async function getReadingProfile(): Promise<ReadingProfile | null> {
   }
 }
 
+// クエリを埋め込み、ベクトル近傍検索（旧: Geminiキーワード展開＋LIKE）
 export async function semanticSearch(query: string): Promise<CollectedItem[]> {
   const sanitized = query.trim().slice(0, 200);
   if (!sanitized) return [];
   try {
-    const { text } = await generateText({
-      model: google('gemini-2.5-flash-lite'),
-      prompt: `以下の検索クエリを、DBのtitleとsummary検索に使える日本語・英語キーワード6個以内に展開してください。JSON配列のみ出力: ["kw1", "kw2", ...]
-クエリ: ${sanitized}`,
+    const { embeddings } = await embedMany({
+      model: google.embedding('gemini-embedding-001'),
+      values: [sanitized],
+      providerOptions: { google: { outputDimensionality: 768, taskType: 'SEMANTIC_SIMILARITY' } },
     });
+    const vecStr = JSON.stringify(embeddings[0]);
+    const nn = await client.execute({
+      sql: `SELECT cd.id AS id, vector_distance_cos(cd.embedding, vector32(?)) AS dist
+            FROM vector_top_k('collected_embedding_idx', vector32(?), 50) AS v
+            JOIN collected_data cd ON cd.rowid = v.id
+            ORDER BY dist ASC`,
+      args: [vecStr, vecStr],
+    });
+    const ids = nn.rows.map(r => Number(r.id));
+    if (ids.length === 0) {
+      // 埋め込み未生成等のフォールバック: 部分一致
+      const rows = await db.select(COLLECTED_SELECT)
+        .from(collectedData)
+        .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+        .where(or(like(collectedData.title, `%${sanitized}%`), like(collectedData.summary, `%${sanitized}%`)))
+        .orderBy(desc(collectedData.createdAt))
+        .limit(50);
+      return parseCollectedRows(rows);
+    }
+    const rows = await db.select(COLLECTED_SELECT)
+      .from(collectedData)
+      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+      .where(inArray(collectedData.id, ids));
+    const order = new Map(ids.map((id, i) => [id, i]));
+    return parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
+  } catch (error) {
+    console.error('Semantic search failed:', error);
+    return [];
+  }
+}
 
-    let keywords: string[] = [sanitized];
-    try {
-      keywords = JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
-    } catch { /* fallback to original query */ }
+// 今週の話題の塊（複数記事が報じたトピック = story_idで束ねたもの）
+export async function getTopicClusters(): Promise<TopicCluster[]> {
+  try {
+    const sevenAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const groups = await db.select({
+      storyId: collectedData.storyId,
+      size: count(),
+      importance: sql<number>`SUM(${collectedData.importanceScore})`,
+    })
+      .from(collectedData)
+      .where(and(gte(collectedData.createdAt, sevenAgo), isNotNull(collectedData.storyId)))
+      .groupBy(collectedData.storyId)
+      .having(sql`COUNT(*) >= 2`)
+      .orderBy(desc(count()), desc(sql`SUM(${collectedData.importanceScore})`))
+      .limit(6);
+    if (groups.length === 0) return [];
 
-    const conditions = keywords.slice(0, 6).flatMap(kw => [
-      like(collectedData.title, `%${kw}%`),
-      like(collectedData.summary, `%${kw}%`),
-    ]);
+    const storyIds = groups.map(g => g.storyId as number);
+    const members = await db.select({
+      storyId: collectedData.storyId,
+      id: collectedData.id,
+      title: collectedData.title,
+      titleJa: collectedData.titleJa,
+      url: collectedData.url,
+      category: collectedData.category,
+      importanceScore: collectedData.importanceScore,
+    })
+      .from(collectedData)
+      .where(inArray(collectedData.storyId, storyIds))
+      .orderBy(desc(collectedData.importanceScore));
 
-    if (conditions.length === 0) return [];
+    const byStory = new Map<number, typeof members>();
+    for (const m of members) {
+      if (m.storyId == null) continue;
+      const arr = byStory.get(m.storyId) ?? [];
+      arr.push(m);
+      byStory.set(m.storyId, arr);
+    }
+
+    return groups.map(g => {
+      const ms = byStory.get(g.storyId as number) ?? [];
+      const head = ms[0];
+      return {
+        storyId: g.storyId as number,
+        headline: (head?.titleJa || head?.title) ?? '無題',
+        size: Number(g.size),
+        category: head?.category ?? null,
+        importance: Number(g.importance),
+        members: ms.slice(0, 5).map(m => ({ id: m.id, title: (m.titleJa || m.title) ?? '無題', url: m.url })),
+      };
+    });
+  } catch (error) {
+    console.error('Failed to fetch topic clusters:', error);
+    return [];
+  }
+}
+
+// 読書DNA連動の推薦: エンゲージ記事の重心に近い「未読・未お気に入り」記事
+export async function getRecommendations(): Promise<CollectedItem[]> {
+  try {
+    const ev = await db.select({ articleId: readingEvents.articleId })
+      .from(readingEvents).orderBy(desc(readingEvents.createdAt)).limit(40);
+    const engagedIds = [...new Set(ev.map(e => e.articleId).filter((v): v is number => v != null))];
+    if (engagedIds.length < 2) return [];
+
+    const embRes = await client.execute({
+      sql: `SELECT vector_extract(embedding) AS emb FROM collected_data
+            WHERE embedding IS NOT NULL AND id IN (${engagedIds.map(() => '?').join(',')})`,
+      args: engagedIds,
+    });
+    const vecs = embRes.rows.map(r => { try { return JSON.parse(r.emb as string) as number[]; } catch { return null; } })
+      .filter((v): v is number[] => Array.isArray(v) && v.length > 0);
+    if (vecs.length === 0) return [];
+
+    const dim = vecs[0].length;
+    const centroid = new Array(dim).fill(0);
+    for (const v of vecs) for (let i = 0; i < dim; i++) centroid[i] += v[i];
+    for (let i = 0; i < dim; i++) centroid[i] /= vecs.length;
+
+    const nn = await client.execute({
+      sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), 40) AS v
+            JOIN collected_data cd ON cd.rowid = v.id
+            WHERE cd.is_read = 0 AND cd.is_favorited = 0`,
+      args: [JSON.stringify(centroid)],
+    });
+    const engagedSet = new Set(engagedIds);
+    const recIds = nn.rows.map(r => Number(r.id)).filter(id => !engagedSet.has(id)).slice(0, 8);
+    if (recIds.length === 0) return [];
 
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-      .where(or(...conditions))
-      .orderBy(desc(collectedData.createdAt))
-      .limit(50);
-
-    return parseCollectedRows(rows);
+      .where(inArray(collectedData.id, recIds));
+    const order = new Map(recIds.map((id, i) => [id, i]));
+    return parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
   } catch (error) {
-    console.error("Semantic search failed:", error);
+    console.error('Failed to fetch recommendations:', error);
     return [];
   }
 }
