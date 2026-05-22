@@ -2,7 +2,7 @@ import { google } from '@ai-sdk/google';
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { db } from '@/db';
-import { collectedData } from '@/db/schema';
+import { collectedData, readingEvents } from '@/db/schema';
 import { desc, eq, like, or } from 'drizzle-orm';
 
 export const maxDuration = 60;
@@ -89,11 +89,12 @@ ${context}
           articleId: z.number().describe('対象の記事ID'),
         }),
         execute: async ({ articleId }) => {
-          const [item] = await db.select({ id: collectedData.id, isReadLater: collectedData.isReadLater, title: collectedData.title })
+          const [item] = await db.select({ id: collectedData.id, isReadLater: collectedData.isReadLater, title: collectedData.title, category: collectedData.category })
             .from(collectedData).where(eq(collectedData.id, articleId)).limit(1);
           if (!item) return `ID:${articleId} の記事が見つかりません`;
           const newVal = item.isReadLater ? 0 : 1;
           await db.update(collectedData).set({ isReadLater: newVal }).where(eq(collectedData.id, articleId));
+          if (newVal) await db.insert(readingEvents).values({ articleId, action: 'readlater', weight: 1, category: item.category });
           return `「${item.title}」を${newVal ? '後で読むに追加' : '後で読むから解除'}しました`;
         },
       }),
@@ -103,11 +104,12 @@ ${context}
           articleId: z.number().describe('対象の記事ID'),
         }),
         execute: async ({ articleId }) => {
-          const [item] = await db.select({ id: collectedData.id, isFavorited: collectedData.isFavorited, title: collectedData.title, sourceId: collectedData.sourceId })
+          const [item] = await db.select({ id: collectedData.id, isFavorited: collectedData.isFavorited, title: collectedData.title, category: collectedData.category })
             .from(collectedData).where(eq(collectedData.id, articleId)).limit(1);
           if (!item) return `ID:${articleId} の記事が見つかりません`;
           const newVal = item.isFavorited ? 0 : 1;
           await db.update(collectedData).set({ isFavorited: newVal }).where(eq(collectedData.id, articleId));
+          if (newVal) await db.insert(readingEvents).values({ articleId, action: 'favorite', weight: 3, category: item.category });
           return `「${item.title}」を${newVal ? 'お気に入りに追加' : 'お気に入りから解除'}しました`;
         },
       }),

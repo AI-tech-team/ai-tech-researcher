@@ -20,6 +20,12 @@ const CAT_AXIS: Record<string, { depth: number; view: number; recency: number }>
   'その他':               { depth: 50, view: 50, recency: 50 },
 };
 
+// created_at等はSQLiteのCURRENT_TIMESTAMP（"YYYY-MM-DD HH:MM:SS" 空白区切り）で格納される。
+// 比較しきい値もこの形式に揃える（ISOの"T"/"Z"だと文字列比較で境界1日分ずれるため）。
+function sqlTs(d: Date): string {
+  return d.toISOString().replace('T', ' ').slice(0, 19);
+}
+
 // ─── 共通クエリヘルパー ───────────────────────────────────────────
 
 function parseCollectedRows(rows: any[]): CollectedItem[] {
@@ -154,7 +160,7 @@ export async function getActivityData() {
       cnt: count(),
     })
       .from(collectedData)
-      .where(gte(collectedData.createdAt, sevenDaysAgo.toISOString()))
+      .where(gte(collectedData.createdAt, sqlTs(sevenDaysAgo)))
       .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`);
 
     const result: { name: string; count: number }[] = [];
@@ -263,7 +269,7 @@ export async function getCategoryTrendData() {
       cnt: count(),
     })
       .from(collectedData)
-      .where(gte(collectedData.createdAt, sevenDaysAgo.toISOString()))
+      .where(gte(collectedData.createdAt, sqlTs(sevenDaysAgo)))
       .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`, collectedData.category);
 
     const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'];
@@ -295,7 +301,7 @@ export async function getModelMentionData() {
 
     const rows = await db.select({ summary: collectedData.summary, title: collectedData.title })
       .from(collectedData)
-      .where(gte(collectedData.createdAt, thirtyDaysAgo.toISOString()));
+      .where(gte(collectedData.createdAt, sqlTs(thirtyDaysAgo)));
 
     const fullText = rows.map(r => `${r.title ?? ''} ${r.summary ?? ''}`).join(' ');
 
@@ -325,8 +331,8 @@ export async function getModelMentionData() {
 export async function getTrendingKeywords(): Promise<TrendingKeyword[]> {
   try {
     const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgo = sqlTs(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
+    const fourteenDaysAgo = sqlTs(new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000));
 
     const [thisWeekRows, lastWeekRows] = await Promise.all([
       db.select({
@@ -575,7 +581,7 @@ export async function markAsRead(id: number, currentIsRead: boolean) {
 
 export async function getConflictingClaims(): Promise<ConflictingClaim[]> {
   try {
-    const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const twoWeeksAgo = sqlTs(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
 
     const rows = await db.select({
       id: claims.id,
@@ -915,9 +921,9 @@ export async function generateResearchBrief(topic: string): Promise<ResearchBrie
 export async function getReadingProfile(): Promise<ReadingProfile | null> {
   try {
     const now = Date.now();
-    const thirtyAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const sixtyAgo = new Date(now - 60 * 24 * 60 * 60 * 1000).toISOString();
-    const twentyOneAgo = new Date(now - 21 * 24 * 60 * 60 * 1000).toISOString();
+    const thirtyAgo = sqlTs(new Date(now - 30 * 24 * 60 * 60 * 1000));
+    const sixtyAgo = sqlTs(new Date(now - 60 * 24 * 60 * 60 * 1000));
+    const twentyOneAgo = sqlTs(new Date(now - 21 * 24 * 60 * 60 * 1000));
 
     const events = await db.select({
       category: readingEvents.category,
@@ -1043,7 +1049,7 @@ export async function semanticSearch(query: string): Promise<CollectedItem[]> {
 // 今週の話題の塊（複数記事が報じたトピック = story_idで束ねたもの）
 export async function getTopicClusters(): Promise<TopicCluster[]> {
   try {
-    const sevenAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const sevenAgo = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
     const groups = await db.select({
       storyId: collectedData.storyId,
       size: count(),
