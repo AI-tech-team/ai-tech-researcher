@@ -1081,11 +1081,65 @@ async function sendFailureEmail(error: Error) {
   }
 }
 
+// ── v3.2 抽出品質ゲート ───────────────────────────────────────────────
+// 文の断片・一般名詞をエンティティとして弾く（ASCIIで大文字/数字が無い＝固有名詞でない可能性大）
+function looksLikeEntity(s: string): boolean {
+  const t = (s ?? '').trim();
+  if (!t || t.length > 40) return false;
+  if (/[、,]/.test(t)) return false;            // カンマ/読点 = 文の断片
+  if (t.split(/\s+/).length > 5) return false;  // 単語数過多 = 文
+  const hasCJK = /[ぁ-んァ-ヶ一-龯]/.test(t);
+  const hasUpperOrDigit = /[A-Z0-9]/.test(t);
+  if (!hasCJK && !hasUpperOrDigit) return false; // 小文字ASCIIのみ = 一般名詞の可能性大
+  return true;
+}
+
+// ハードウェアスペック・価格等はベンチマークでないため除外
+const BENCH_SPEC_RE = /(cores?|RAM|メモリ|memory|TOPS|MHz|GHz|\dGB|\dMB|\dKB|nm\b|watt|ワット|price|価格|cost|円|ドル|\$|tokens?\/s|context window|コンテキスト|parameters?|params?|パラメータ)/i;
+function isValidBenchmarkName(name: string): boolean {
+  const t = (name ?? '').trim();
+  if (!t || t.length < 2 || t.length > 50) return false;
+  if (BENCH_SPEC_RE.test(t)) return false;
+  return true;
+}
+
+// ベンチマーク名の表記ゆれを正規化（リーダーボード集約のため）
+const BENCH_ALIASES: [RegExp, string][] = [
+  [/chatbot\s*arena|lmarena|arena\s*elo/i, 'Chatbot Arena (Elo)'],
+  [/mmlu[-\s]?pro/i, 'MMLU-Pro'],
+  [/\bmmlu\b/i, 'MMLU'],
+  [/gsm[-\s]?8k/i, 'GSM8K'],
+  [/swe[-\s]?bench/i, 'SWE-bench'],
+  [/human\s*eval/i, 'HumanEval'],
+  [/\bmmmu\b/i, 'MMMU'],
+  [/\bgpqa\b/i, 'GPQA'],
+  [/\baime\b/i, 'AIME'],
+  [/arc[-\s]?agi/i, 'ARC-AGI'],
+  [/live\s*code\s*bench/i, 'LiveCodeBench'],
+];
+function canonicalBenchmarkName(name: string): string {
+  const t = (name ?? '').trim();
+  for (const [re, canon] of BENCH_ALIASES) if (re.test(t)) return canon;
+  return t;
+}
+
 // ── v3: エンティティ正規化（GPT-4o / GPT4o / gpt-4 omni → 同一ノード）─────
 let _entityCache: Map<string, { id: number; canonicalName: string }> = new Map();
 
+// 既知の主要モデル/企業の表記ゆれ → 正規キー（NFKC・英数字のみ化の前に適用）
+const ENTITY_ALIAS_KEYS: [RegExp, string][] = [
+  [/^gpt[-\s]?4\s*o(mni)?$/i, 'gpt4o'],
+  [/^gpt[-\s]?4\.?5$/i, 'gpt45'],
+  [/^claude\s*3\.?5\s*sonnet$/i, 'claude35sonnet'],
+  [/^gemini\s*1\.?5\s*(pro|flash)$/i, 'gemini15$1'],
+];
 function normalizeEntityKey(name: string): string {
-  return name.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const t = (name ?? '').trim();
+  for (const [re, key] of ENTITY_ALIAS_KEYS) {
+    const m = t.match(re);
+    if (m) return key.replace('$1', (m[1] ?? '').toLowerCase());
+  }
+  return t.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 async function resolveEntity(rawName: string, type = 'model'): Promise<{ id: number; canonicalName: string } | null> {
@@ -1186,14 +1240,16 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
         claimCount++;
       }
 
-      // ── benchmarks（時系列なので全件保存）──
+      // ── benchmarks（時系列なので全件保存。スペック等のノイズは除外）──
       for (const b of object.benchmarks) {
         if (!Number.isFinite(b.score)) continue;
+        if (!isValidBenchmarkName(b.benchmark)) continue;       // ハードスペック/価格等を除外
+        if (!looksLikeEntity(b.entity)) continue;               // エンティティが文の断片なら除外
         const entity = await resolveEntity(b.entity);
         await db.insert(schema.benchmarks).values({
           entityId: entity?.id ?? null,
           entityName: entity?.canonicalName ?? b.entity.trim(),
-          benchmarkName: b.benchmark.trim(),
+          benchmarkName: canonicalBenchmarkName(b.benchmark),  // 表記ゆれを正規化
           score: b.score,
           unit: b.unit ?? null,
           articleId: article.id,
@@ -1204,8 +1260,9 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
         benchCount++;
       }
 
-      // ── relations（エッジ重複排除・矛盾stale）──
+      // ── relations（断片を除外・エッジ重複排除・矛盾stale）──
       for (const r of object.relations) {
+        if (!looksLikeEntity(r.subject) || !looksLikeEntity(r.object)) continue; // 文の断片を除外
         const subj = await resolveEntity(r.subject);
         const obj = await resolveEntity(r.object);
         const subjName = subj?.canonicalName ?? r.subject.trim();
@@ -1722,16 +1779,23 @@ async function evolveSources() {
 
     let newStatus: string = source.status ?? 'candidate';
 
+    // 低品質間引き: 十分ヒットしているのに平均重要度が低く採用ゼロ → グラウンディング予算の無駄なので停止
+    const lowQuality = hitCount14d >= 4 && avgImportance < 4 && adoptionCount === 0;
+
     if (source.status === 'candidate') {
-      if (hitCount14d >= 3 && lastAdoptedAt) {
+      if (lowQuality) {
+        newStatus = 'stopped'; stoppedCount++;
+      } else if (hitCount14d >= 3 && lastAdoptedAt) {
         newStatus = 'active'; promoted++;
       } else if (daysSinceCreated >= 14) {
         newStatus = 'stopped'; stoppedCount++;
       }
     } else if (source.status === 'active') {
-      if (daysSinceAdopted >= 14) { newStatus = 'low-priority'; demoted++; }
+      if (lowQuality) { newStatus = 'low-priority'; demoted++; }
+      else if (daysSinceAdopted >= 14) { newStatus = 'low-priority'; demoted++; }
     } else if (source.status === 'low-priority') {
-      if (daysSinceAdopted < 14) { newStatus = 'active'; reactivated++;
+      if (lowQuality && daysSinceCreated >= 21) { newStatus = 'stopped'; stoppedCount++; }
+      else if (daysSinceAdopted < 14) { newStatus = 'active'; reactivated++;
       } else if (daysSinceAdopted >= 30) { newStatus = 'stopped'; stoppedCount++; }
     }
 
@@ -2199,6 +2263,41 @@ async function fixGroundingUrls(limit = 300): Promise<void> {
   console.log(`[FixURL] 解決${fixed}件, 除去${removed}件`);
 }
 
+// ── v3.2: 既存データのクリーンアップ（断片関係削除・無効ベンチ削除・ベンチ名正規化）──
+async function runDataCleanup(): Promise<void> {
+  console.log('[Cleanup] データクリーンアップ開始');
+
+  // 1. 関係: 文の断片（looksLikeEntityを満たさない）を削除
+  const rels = await db.select({ id: schema.relations.id, s: schema.relations.subjectName, o: schema.relations.objectName })
+    .from(schema.relations);
+  const badRel = rels.filter(r => !looksLikeEntity(r.s) || !looksLikeEntity(r.o)).map(r => r.id);
+  let relDel = 0;
+  for (let i = 0; i < badRel.length; i += 100) {
+    const chunk = badRel.slice(i, i + 100);
+    if (chunk.length) { await db.delete(schema.relations).where(inArray(schema.relations.id, chunk)); relDel += chunk.length; }
+  }
+
+  // 2. ベンチマーク: 無効（スペック等）を削除し、残りの名称を正規化
+  const benches = await db.select({ id: schema.benchmarks.id, name: schema.benchmarks.benchmarkName })
+    .from(schema.benchmarks);
+  const badBench = benches.filter(b => !isValidBenchmarkName(b.name)).map(b => b.id);
+  let benchDel = 0;
+  for (let i = 0; i < badBench.length; i += 100) {
+    const chunk = badBench.slice(i, i + 100);
+    if (chunk.length) { await db.delete(schema.benchmarks).where(inArray(schema.benchmarks.id, chunk)); benchDel += chunk.length; }
+  }
+  let benchNorm = 0;
+  for (const b of benches) {
+    if (!isValidBenchmarkName(b.name)) continue;
+    const canon = canonicalBenchmarkName(b.name);
+    if (canon !== b.name) {
+      await db.update(schema.benchmarks).set({ benchmarkName: canon }).where(eq(schema.benchmarks.id, b.id));
+      benchNorm++;
+    }
+  }
+  console.log(`[Cleanup] 関係削除${relDel}, ベンチ削除${benchDel}, ベンチ名正規化${benchNorm}`);
+}
+
 async function logPipeline(collected: number, failed: number, durationMs: number) {
   try {
     await db.insert(schema.pipelineLogs).values({
@@ -2278,6 +2377,13 @@ async function main() {
     if (pipelineMode === 'knowledge') {
       await runKnowledgeExtraction(14, 60);
       console.log('=== Knowledge mode 完了 ===');
+      process.exit(0);
+    }
+
+    // v3.2: 既存データのクリーンアップ（断片関係・無効ベンチ削除＋ベンチ名正規化）
+    if (pipelineMode === 'cleanup') {
+      await runDataCleanup();
+      console.log('=== Cleanup mode 完了 ===');
       process.exit(0);
     }
 
