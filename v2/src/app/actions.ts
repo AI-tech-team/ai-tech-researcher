@@ -148,22 +148,22 @@ export async function getActivityData() {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
+    // JST基準で集計（createdAtはUTC格納。+9hでJST日付に揃え、ラベルもJSTで生成）
     const rows = await db.select({
-      date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt})`.as('date'),
+      date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`.as('date'),
       cnt: count(),
     })
       .from(collectedData)
       .where(gte(collectedData.createdAt, sevenDaysAgo.toISOString()))
-      .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt})`);
+      .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`);
 
-    const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
     const result: { name: string; count: number }[] = [];
     for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const d = new Date(Date.now() - i * 86400000);
+      const dateStr = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      const name = d.toLocaleDateString('ja-JP', { weekday: 'short', timeZone: 'Asia/Tokyo' });
       const found = rows.find(r => r.date === dateStr);
-      result.push({ name: dayNames[d.getDay()], count: found ? Number(found.cnt) : 0 });
+      result.push({ name, count: found ? Number(found.cnt) : 0 });
     }
     return result;
   } catch (error) {
@@ -256,24 +256,24 @@ export async function getCategoryTrendData() {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
+    // JST基準で集計（+9hでJST日付に統一、ラベルもJSTで生成）
     const rows = await db.select({
-      date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt})`,
+      date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`,
       category: collectedData.category,
       cnt: count(),
     })
       .from(collectedData)
       .where(gte(collectedData.createdAt, sevenDaysAgo.toISOString()))
-      .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt})`, collectedData.category);
+      .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`, collectedData.category);
 
     const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'];
-    const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
 
     const result: any[] = [];
     for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
-      const entry: any = { name: `${d.getMonth() + 1}/${d.getDate()}(${dayNames[d.getDay()]})` };
+      const d = new Date(Date.now() - i * 86400000);
+      const dateStr = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+      const md = d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short', timeZone: 'Asia/Tokyo' });
+      const entry: any = { name: md };
       for (const cat of CATS) {
         const found = rows.find(r => r.date === dateStr && r.category === cat);
         entry[cat] = found ? Number(found.cnt) : 0;
@@ -592,6 +592,7 @@ export async function getConflictingClaims(): Promise<ConflictingClaim[]> {
       .where(and(
         gte(claims.createdAt, twoWeeksAgo),
         eq(claims.confidence, 'high'),
+        eq(claims.status, 'active'),   // stale(陳腐化済み)は論点から除外
       ))
       .orderBy(desc(claims.createdAt));
 
