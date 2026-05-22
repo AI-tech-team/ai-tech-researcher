@@ -6,6 +6,7 @@ import {
   ResponsiveContainer, BarChart, Bar as RechartsBar,
 } from 'recharts';
 import { SkeletonStat } from '@/components/Skeleton';
+import { useMounted } from '@/lib/useMounted';
 import type { CollectedItem, Source, Report, TrendingKeyword, ConflictingClaim, TopicCluster } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -41,6 +42,7 @@ export function OverviewTab({
   sourcesList, collectedItems, reportsList, activityData,
   categoryTrendData, modelMentionData, trendingKeywords, conflictingClaims, topicClusters = [], isLoadingData,
 }: OverviewTabProps) {
+  const mounted = useMounted();
   const chartData = [
     { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length },
     { name: '候補', value: sourcesList.filter(s => s.status === 'candidate').length },
@@ -141,6 +143,7 @@ export function OverviewTab({
           <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
             <BarChart3 size={16} className="text-sky-400" /> 収集アクティビティ（直近7日）
           </h3>
+          {mounted && (
           <ResponsiveContainer width="100%" height="85%">
             <AreaChart data={activityData}>
               <defs>
@@ -156,20 +159,23 @@ export function OverviewTab({
               <Area type="monotone" dataKey="count" name="収集件数" stroke="#38bdf8" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCount)" />
             </AreaChart>
           </ResponsiveContainer>
+          )}
         </div>
 
         <div className="glass-card h-[220px] md:h-[260px]">
           <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
             <Database size={16} className="text-purple-400" /> ソース健全性
           </h3>
+          {mounted && (
           <ResponsiveContainer width="100%" height="85%">
             <BarChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
-              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }} />
+              <Tooltip {...TOOLTIP_STYLE} />
               <RechartsBar dataKey="value" name="件数" fill="#818cf8" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -211,17 +217,19 @@ export function OverviewTab({
           <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
             <TrendingUp size={16} className="text-emerald-400" /> カテゴリ別トレンド（直近7日）
           </h3>
+          {mounted && (
           <ResponsiveContainer width="100%" height="85%">
             <AreaChart data={categoryTrendData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
               <YAxis stroke="#475569" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-              <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }} />
+              <Tooltip {...TOOLTIP_STYLE} />
               {CATEGORY_LIST.map(cat => (
                 <Area key={cat} type="monotone" dataKey={cat} stackId="1" stroke={CATEGORY_COLORS[cat]} fill={CATEGORY_COLORS[cat]} fillOpacity={0.6} />
               ))}
             </AreaChart>
           </ResponsiveContainer>
+          )}
         </div>
 
         <div className="glass-card h-[220px] md:h-[260px]">
@@ -234,7 +242,7 @@ export function OverviewTab({
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
                 <XAxis type="number" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
                 <YAxis type="category" dataKey="model" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} width={65} />
-                <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }} />
+                <Tooltip {...TOOLTIP_STYLE} />
                 <RechartsBar dataKey="count" name="言及数" fill="#f472b6" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>

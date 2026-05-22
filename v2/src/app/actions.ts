@@ -6,6 +6,7 @@ import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray 
 import { revalidatePath } from 'next/cache';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
+import { cached } from '@/lib/cache';
 import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief, ReadingProfile, TopicCluster } from '@/types';
 
 // 読書DNA: カテゴリ→4軸の寄与（depth:0理論↔100実装 / view:0研究者↔50エンジニア↔100ビジネス / recency:0長期↔100近未来）
@@ -287,6 +288,7 @@ export async function getCategoryTrendData() {
 }
 
 export async function getModelMentionData() {
+ return cached('modelMentions', 180_000, async () => {
   try {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -317,6 +319,7 @@ export async function getModelMentionData() {
     console.error("Failed to fetch model mentions:", error);
     return [];
   }
+ });
 }
 
 export async function getTrendingKeywords(): Promise<TrendingKeyword[]> {
@@ -410,6 +413,7 @@ export async function logPipelineRun(data: { date: string; collected: number; fa
 }
 
 export async function getKeywordCategoryMatrix() {
+ return cached('kwMatrix', 180_000, async () => {
   try {
     const rows = await db.select({
       keyword: sources.value,
@@ -449,6 +453,7 @@ export async function getKeywordCategoryMatrix() {
     console.error("Failed to fetch keyword category matrix:", error);
     return { keywords: [], categories: [], matrix: [], maxCount: 1 };
   }
+ });
 }
 
 // ─── データ操作 ───────────────────────────────────────────────────

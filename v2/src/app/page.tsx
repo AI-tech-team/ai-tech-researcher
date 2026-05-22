@@ -191,7 +191,7 @@ export default function Home() {
       const result = await res.json();
       if (result.success) {
         await refresh();
-        toast('データ同期が完了しました', 'success');
+        toast(result.message ?? 'データ同期が完了しました', 'success');
       } else {
         toast(`同期エラー: ${result.message ?? '不明なエラー'}`, 'error');
       }
@@ -204,11 +204,13 @@ export default function Home() {
 
   const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
+    toast(currentlyFavorited ? 'お気に入りを解除しました' : '⭐ お気に入りに追加しました', 'success');
     await toggleFavorite(id, currentlyFavorited);
   };
 
   const handleToggleReadLater = async (id: number, current: boolean) => {
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isReadLater: current ? 0 : 1 } : item));
+    toast(current ? '「後で読む」を解除しました' : '🔖 「後で読む」に追加しました', 'success');
     await toggleReadLater(id, current);
   };
 
