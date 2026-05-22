@@ -2448,13 +2448,17 @@ async function ensureSources() {
     { type: 'rss', value: 'https://www.wired.com/feed/tag/ai/latest/rss',    score: 6 }, // 旧URL(404)から移行
   ];
   for (const src of required) {
-    const existing = await db.select({ id: schema.sources.id })
+    const existing = await db.select({ id: schema.sources.id, status: schema.sources.status })
       .from(schema.sources)
       .where(eq(schema.sources.value, src.value))
       .limit(1);
     if (existing.length === 0) {
       await db.insert(schema.sources).values({ type: src.type as any, value: src.value, status: 'active', score: src.score });
       console.log(`[Init] ソース追加: ${src.value}`);
+    } else if (existing[0].status !== 'active') {
+      // 必須フィードがlow-priority等に落ちていたらactiveへ復帰（収集供給源を維持）
+      await db.update(schema.sources).set({ status: 'active' }).where(eq(schema.sources.id, existing[0].id));
+      console.log(`[Init] ソース復帰(active): ${src.value}`);
     }
   }
 

@@ -79,6 +79,9 @@ export async function POST() {
     const updateQueries: ReturnType<typeof buildSourceUpdate>[] = [];
 
     for (const source of allSources) {
+      // フィード型(RSS/HN/ArXiv/GitHub/PwC)は常にactive維持・降格対象外（収集の主要供給源のため）
+      if (['rss', 'hn', 'arxiv', 'github-trending', 'pwc'].includes(source.type ?? '')) continue;
+
       const daysSinceCreated = (now.getTime() - new Date(source.createdAt ?? now).getTime()) / 86400000;
       const hitCount14d = hitCountMap.get(source.id) ?? 0;
       const lastAdoptedAt = lastAdoptionMap.get(source.id);
