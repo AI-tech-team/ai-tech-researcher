@@ -788,11 +788,11 @@ async function generateReport(): Promise<string | null> {
   const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const fourteenDaysAgoISO = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [recentData, thisWeekCounts, lastWeekCounts] = await Promise.all([
+  const [rawRecent, thisWeekCounts, lastWeekCounts, recentClaims, recentBench] = await Promise.all([
     db.select().from(schema.collectedData)
       .where(gte(schema.collectedData.createdAt, sevenDaysAgoISO))
       .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
-      .limit(15),
+      .limit(40),
     db.select({ category: schema.collectedData.category, cnt: count() })
       .from(schema.collectedData)
       .where(gte(schema.collectedData.createdAt, sevenDaysAgoISO))
@@ -804,13 +804,44 @@ async function generateReport(): Promise<string | null> {
         lt(schema.collectedData.createdAt, sevenDaysAgoISO),
       ))
       .groupBy(schema.collectedData.category),
+    db.select({ subject: schema.claims.subject, predicate: schema.claims.predicate, value: schema.claims.value })
+      .from(schema.claims)
+      .where(and(eq(schema.claims.status, 'active'), gte(schema.claims.createdAt, sevenDaysAgoISO)))
+      .orderBy(desc(schema.claims.createdAt))
+      .limit(12),
+    db.select({ entityName: schema.benchmarks.entityName, benchmarkName: schema.benchmarks.benchmarkName, score: schema.benchmarks.score, unit: schema.benchmarks.unit })
+      .from(schema.benchmarks)
+      .where(gte(schema.benchmarks.createdAt, sevenDaysAgoISO))
+      .orderBy(desc(schema.benchmarks.createdAt))
+      .limit(12),
   ]);
 
-  if (recentData.length === 0) { console.log('[Report] データなし、スキップ'); return null; }
+  if (rawRecent.length === 0) { console.log('[Report] データなし、スキップ'); return null; }
+
+  // 重複ストーリーを集約（同一story_idは代表1件に。N媒体が報じたを注記）
+  const seenStory = new Set<number>();
+  const recentData: typeof rawRecent = [];
+  for (const d of rawRecent) {
+    if (d.storyId != null) { if (seenStory.has(d.storyId)) continue; seenStory.add(d.storyId); }
+    recentData.push(d);
+    if (recentData.length >= 15) break;
+  }
 
   const contextStr = recentData
-    .map(d => `[重要度:${d.importanceScore ?? 5}/10][${d.category ?? '未分類'}] ${d.title}\n${d.summary}\nURL: ${d.url}\n公開日: ${d.publishedAt?.split('T')[0] ?? '不明'}`)
+    .map(d => {
+      const multi = (d.storyCount ?? 1) > 1 ? `（${d.storyCount}媒体が報じた）` : '';
+      return `[重要度:${d.importanceScore ?? 5}/10][${d.category ?? '未分類'}]${multi} ${d.titleJa || d.title}\n${d.summary}\nURL: ${d.url}\n公開日: ${d.publishedAt?.split('T')[0] ?? '不明'}`;
+    })
     .join('\n\n---\n\n');
+
+  // 検証済みの事実・数値（レポートの根拠引用用）
+  const evidenceLines = [
+    ...recentClaims.map(c => `- ${c.subject}: ${c.predicate} = ${c.value}`),
+    ...recentBench.map(b => `- ${b.entityName} / ${b.benchmarkName}: ${b.score}${b.unit ?? ''}`),
+  ];
+  const evidenceText = evidenceLines.length > 0
+    ? '\n\n【検証済みの事実・数値（レポートで根拠として引用してよい）】\n' + evidenceLines.join('\n')
+    : '';
 
   const lastWeekMap = new Map(lastWeekCounts.map(r => [r.category, Number(r.cnt)]));
   const trendLines = thisWeekCounts
@@ -863,10 +894,11 @@ async function generateReport(): Promise<string | null> {
 【ルール】
 - 全体1500〜2000文字
 - 具体的な数値・ベンチマーク・実装詳細を含める
+- 提示された「検証済みの事実・数値」は積極的に根拠として引用する
 - 主観的な「すごい」ではなく客観的な事実ベースで記述
 - 重要度が高い記事ほど詳しく解説する
 - 絵文字・箇条書きを活用して読みやすく`,
-    prompt: `今日の日付: ${todayJST}${trendText}${prevContext}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
+    prompt: `今日の日付: ${todayJST}${trendText}${prevContext}${evidenceText}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
   }));
 
   const [insertedReport] = await db.insert(schema.reports).values({
@@ -1464,6 +1496,34 @@ async function detectAlerts() {
     }
   } catch (e: any) { console.warn('  [Alerts] 関係検知失敗:', e.message?.slice(0, 60)); }
 
+  // 3. 注目の急増（言及の先読み）: claims.subjectの出現が先週比で急増したエンティティ
+  try {
+    const since7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const since14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const [thisWeek, prevWeek] = await Promise.all([
+      db.select({ subject: schema.claims.subject, c: count() })
+        .from(schema.claims).where(gte(schema.claims.createdAt, since7)).groupBy(schema.claims.subject),
+      db.select({ subject: schema.claims.subject, c: count() })
+        .from(schema.claims).where(and(gte(schema.claims.createdAt, since14), lt(schema.claims.createdAt, since7))).groupBy(schema.claims.subject),
+    ]);
+    const prevMap = new Map(prevWeek.map(r => [r.subject, Number(r.c)]));
+    for (const t of thisWeek) {
+      const nowC = Number(t.c);
+      const prevC = prevMap.get(t.subject) ?? 0;
+      if (nowC >= 3 && nowC >= prevC * 2 && looksLikeEntity(t.subject)) {
+        await insertAlert({
+          type: 'trend_surge',
+          title: `${t.subject} への注目が急増`,
+          reason: `「${t.subject}」への言及が先週${prevC}件→今週${nowC}件に急増しています。近く重要な発表・動向がある可能性があり、先回りでの確認をおすすめします。`,
+          entityName: t.subject,
+          severity: nowC >= 5 ? 'high' : 'watch',
+          dedupeKey: `surge:${t.subject}:${today}`,
+        });
+      }
+    }
+  } catch (e: any) { console.warn('  [Alerts] 急増検知失敗:', e.message?.slice(0, 60)); }
+
   console.log(`[Alerts] ${created}件の新規アラート`);
 }
 
@@ -1705,6 +1765,56 @@ async function generateLearningRecap(): Promise<string | null> {
     return text;
   } catch (e: any) {
     console.warn('[Recap] 生成失敗(非クリティカル):', e.message?.slice(0, 60));
+    return null;
+  }
+}
+
+// ── v3.2 横断インサイト: 知識グラフ×収集×行動を統合した週次考察 ──
+async function generateCrossInsight(): Promise<string | null> {
+  try {
+    console.log('[CrossInsight] 横断インサイト生成開始');
+    const since7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const [topArticles, rels, alertRows, engaged] = await Promise.all([
+      db.select({ title: schema.collectedData.title, titleJa: schema.collectedData.titleJa, category: schema.collectedData.category, importance: schema.collectedData.importanceScore })
+        .from(schema.collectedData).where(gte(schema.collectedData.createdAt, since7))
+        .orderBy(desc(schema.collectedData.importanceScore)).limit(12),
+      db.select({ s: schema.relations.subjectName, t: schema.relations.relationType, o: schema.relations.objectName })
+        .from(schema.relations).where(eq(schema.relations.status, 'active')).orderBy(desc(schema.relations.validFrom)).limit(10),
+      db.select({ title: schema.alerts.title })
+        .from(schema.alerts).where(eq(schema.alerts.status, 'active')).orderBy(desc(schema.alerts.createdAt)).limit(5),
+      db.select({ category: schema.readingEvents.category, c: count() })
+        .from(schema.readingEvents).where(gte(schema.readingEvents.createdAt, since7)).groupBy(schema.readingEvents.category).orderBy(desc(count())).limit(3),
+    ]);
+    if (topArticles.length < 3) { console.log('[CrossInsight] データ不足、スキップ'); return null; }
+
+    const relLabel: Record<string, string> = { outperforms: '上回る', supersedes: '置換', competes_with: '競合', builds_on: '基づく', acquired_by: '買収', cites: '引用' };
+    const ctx = [
+      `【今週の主要トピック】\n${topArticles.map(a => `- [${a.category ?? '—'}](重要度${a.importance ?? '-'}) ${a.titleJa || a.title}`).join('\n')}`,
+      rels.length ? `【知識グラフの関係】\n${rels.map(r => `- ${r.s} ${relLabel[r.t] ?? r.t} ${r.o}`).join('\n')}` : '',
+      alertRows.length ? `【先読みアラート】\n${alertRows.map(a => `- ${a.title}`).join('\n')}` : '',
+      engaged.length ? `【あなたが今週よく読んだ分野】\n${engaged.map(e => `${e.category}(${e.c})`).join('、')}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    const { text } = await withRetry(() => generateText({
+      model: google('gemini-2.5-flash'),
+      system: `あなたはAI業界の戦略アナリスト兼パーソナルブレーンです。今週の主要トピック・知識グラフの関係・先読みアラート・読者の関心を横断的に統合し、点と点をつなぐ「考察」をMarkdownで書いてください。
+【構成】
+## 🔭 今週の構図
+業界全体で何が起きているかの俯瞰（2〜3段落）。トピック間のつながり・因果を読む。
+## 🎯 あなたにとっての意味
+読者の関心分野を踏まえ、特に注目すべき点と理由。
+## ♟️ 次の一手
+来週意識すべきこと・確認すべきことを2〜3点。
+【ルール】1000〜1400字。表面的な要約でなく「つながり」と「示唆」を述べる。`,
+      prompt: ctx,
+    }));
+
+    const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    await db.insert(schema.reports).values({ type: 'cross_insight', content: text, reportDate: reportDateJST });
+    console.log('[CrossInsight] 生成完了');
+    return text;
+  } catch (e: any) {
+    console.warn('[CrossInsight] 失敗(非クリティカル):', e.message?.slice(0, 60));
     return null;
   }
 }
@@ -2463,6 +2573,8 @@ async function main() {
         // 日曜: 学びの振り返り（パーソナルダイジェスト）
         const recap = await generateLearningRecap();
         if (recap) await sendEmail(recap, '学びの振り返り');
+        // 日曜: 横断インサイト（アプリ内表示用・メールはしない）
+        await generateCrossInsight();
       }
 
       if (dayOfMonth === 1) {
