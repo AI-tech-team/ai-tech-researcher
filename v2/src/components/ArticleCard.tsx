@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useRef, useLayoutEffect } from 'react';
 import { Star, Bookmark, ExternalLink, CheckCircle2, Newspaper } from 'lucide-react';
 import type { CollectedItem } from '@/types';
 
@@ -37,6 +37,16 @@ export function ArticleCard({
   item, interestTags, onToggleFavorite, onToggleReadLater, onMarkAsRead, showReadLater = true,
 }: ArticleCardProps) {
   const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const summaryRef = useRef<HTMLParagraphElement>(null);
+  const [isClamped, setIsClamped] = useState(false);
+
+  // 文字数ではなく実際に2行で切り詰められているかで展開可否を判定（短い日本語でも崩れない）
+  useLayoutEffect(() => {
+    const el = summaryRef.current;
+    if (el && !summaryExpanded) {
+      setIsClamped(el.scrollHeight > el.clientHeight + 2);
+    }
+  }, [item.summary, summaryExpanded]);
 
   const color  = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
   // 正規化スコアが利用可能で2以上差があれば表示、なければ生スコア
@@ -52,7 +62,7 @@ export function ArticleCard({
     [item.title, item.summary, item.category].some(f => f?.toLowerCase().includes(tag.toLowerCase()))
   );
   const dateStr = item.publishedAt ?? item.createdAt;
-  const canExpand = (item.summary?.length ?? 0) > 100;
+  const showToggle = isClamped || summaryExpanded;
 
   return (
     <div className="article-row group">
@@ -161,12 +171,13 @@ export function ArticleCard({
         {/* Row 3: summary（タップで展開） */}
         <div>
           <p
-            onClick={() => canExpand && setSummaryExpanded(v => !v)}
-            className={`text-slate-500 text-xs leading-relaxed ${canExpand ? 'cursor-pointer' : ''} ${summaryExpanded ? '' : 'line-clamp-2'}`}
+            ref={summaryRef}
+            onClick={() => showToggle && setSummaryExpanded(v => !v)}
+            className={`text-slate-500 text-xs leading-relaxed ${showToggle ? 'cursor-pointer' : ''} ${summaryExpanded ? '' : 'line-clamp-2'}`}
           >
             {item.summary ?? 'サマリーなし'}
           </p>
-          {canExpand && (
+          {showToggle && (
             <button
               onClick={() => setSummaryExpanded(v => !v)}
               className="font-mono text-[10px] text-slate-700 hover:text-slate-400 transition-colors mt-0.5"
