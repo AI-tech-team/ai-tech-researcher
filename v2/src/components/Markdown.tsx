@@ -5,7 +5,8 @@ import React, { Fragment } from 'react';
 // インライン要素のMarkdownパーサー
 function parseInline(text: string): React.ReactNode {
   const parts: React.ReactNode[] = [];
-  const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
+  // リンク [text](url) / 太字 / 斜体 / コード
+  const regex = /(\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let key = 0;
@@ -13,7 +14,16 @@ function parseInline(text: string): React.ReactNode {
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
     const m = match[0];
-    if (m.startsWith('**'))
+    const link = m.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (link) {
+      const [, label, url] = link;
+      // http(s)のみリンク化（javascript:等やリダイレクトURLは弾く）
+      if (/^https?:\/\//.test(url) && !url.includes('vertexaisearch.cloud.google.com')) {
+        parts.push(<a key={key++} href={url} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:text-sky-300 underline underline-offset-2">{label}</a>);
+      } else {
+        parts.push(label);
+      }
+    } else if (m.startsWith('**'))
       parts.push(<strong key={key++} className="text-white font-semibold">{m.slice(2, -2)}</strong>);
     else if (m.startsWith('*'))
       parts.push(<em key={key++} className="text-slate-300 italic">{m.slice(1, -1)}</em>);

@@ -3,8 +3,9 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import { DefaultChatTransport } from 'ai';
-import { Sparkles, User, Send, X } from 'lucide-react';
+import { Sparkles, User, Send, X, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Markdown } from '@/components/Markdown';
 
 interface MobileChatModalProps {
   isOpen: boolean;
@@ -15,7 +16,7 @@ export function MobileChatModal({ isOpen, onClose }: MobileChatModalProps) {
   const [chatInput, setChatInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const { messages, sendMessage, status } = useChat({
+  const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({ api: '/api/chat' }),
   });
   const isLoading = status === 'streaming' || status === 'submitted';
@@ -88,11 +89,17 @@ export function MobileChatModal({ isOpen, onClose }: MobileChatModalProps) {
                       ? 'bg-white/10 text-slate-200 rounded-tr-sm'
                       : 'bg-gradient-to-br from-sky-500/10 to-purple-500/10 border border-white/5 text-slate-200 rounded-tl-sm'
                   }`}>
-                    {textContent}
+                    {m.role === 'user' ? textContent : <Markdown content={textContent} />}
                   </div>
                 </div>
               );
             })}
+            {error && (
+              <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                <AlertCircle size={16} className="flex-shrink-0" />
+                <span>応答の取得に失敗しました。もう一度お試しください。</span>
+              </div>
+            )}
             {isLoading && (
               <div className="flex gap-3">
                 <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-gradient-to-br from-sky-400 to-purple-500 text-white">
