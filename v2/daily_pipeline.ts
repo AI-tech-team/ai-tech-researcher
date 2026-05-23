@@ -167,6 +167,19 @@ function isNearDuplicate(title: string, cache: string[], threshold = 0.75): bool
   return cache.some(existing => jaccardSim(title, existing) >= threshold);
 }
 
+// LLM評価の前にDB既収集URLを除外する（同一記事の再評価＝トークン浪費を防ぐ）。
+// 全件が既収集なら呼び出し元はLLMをスキップできる。
+async function filterUnseenUrls<T>(items: T[], getUrl: (i: T) => string | null | undefined): Promise<T[]> {
+  if (items.length === 0) return items;
+  const urls = items.map(getUrl).filter((u): u is string => !!u);
+  if (urls.length === 0) return items;
+  const existing = await db.select({ url: schema.collectedData.url })
+    .from(schema.collectedData)
+    .where(inArray(schema.collectedData.url, urls));
+  const seen = new Set(existing.map(r => r.url));
+  return items.filter(i => { const u = getUrl(i); return !u || !seen.has(u); });
+}
+
 // ── RSS収集（RSS/Atom両対応）─────────────────────────────────────────
 async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenDaysAgo: string): Promise<number> {
   const res = await fetch(source.value, {
@@ -209,22 +222,25 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
 
   if (recent.length === 0) return 0;
 
-  const batchText = recent.map((item, i) => `[${i}] ${item.title}\n${item.description}`).join('\n\n');
+  const fresh = await filterUnseenUrls(recent, it => it.link);
+  if (fresh.length === 0) return 0;
+
+  const batchText = fresh.map((item, i) => `[${i}] ${item.title}\n${item.description}`).join('\n\n');
   const { object } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下の記事をAI技術の観点で評価してください。AI技術と無関係な記事はimportance: 0にしてください。各記事のimportance(0-10)、category、日本語summary(150文字)を生成してください。必ず${recent.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下の記事をAI技術の観点で評価してください。AI技術と無関係な記事はimportance: 0にしてください。各記事のimportance(0-10)、category、日本語summary(150文字)を生成してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = object.items;
-  if (evaluations.length !== recent.length) {
-    console.warn(`  [RSS] 評価数不一致: LLM=${evaluations.length}件 / 取得=${recent.length}件`);
+  if (evaluations.length !== fresh.length) {
+    console.warn(`  [RSS] 評価数不一致: LLM=${evaluations.length}件 / 取得=${fresh.length}件`);
   }
   const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
-  for (let i = 0; i < recent.length; i++) {
-    const item = recent[i];
+  for (let i = 0; i < fresh.length; i++) {
+    const item = fresh[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 4) continue;
     if (isNearDuplicate(item.title, titleCache)) continue;
@@ -272,7 +288,10 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
 
   if (candidates.length === 0) return 0;
 
-  const batchText = candidates.map((item, i) => `[${i}] [HN Score:${item.score}] ${item.title}`).join('\n');
+  const fresh = await filterUnseenUrls(candidates, it => it.url);
+  if (fresh.length === 0) return 0;
+
+  const batchText = fresh.map((item, i) => `[${i}] [HN Score:${item.score}] ${item.title}`).join('\n');
   const { object: hnObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: HnEvalSchema,
@@ -282,8 +301,8 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
-  for (let i = 0; i < candidates.length; i++) {
-    const item = candidates[i];
+  for (let i = 0; i < fresh.length; i++) {
+    const item = fresh[i];
     const ev = evaluations[i];
     if (!ev) continue;
     if (isNearDuplicate(item.title, titleCache)) continue;
@@ -337,22 +356,25 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
 
   if (recent.length === 0) return 0;
 
-  const batchText = recent.map((e, i) => `[${i}] ${e.title}\n${e.summary}`).join('\n\n');
+  const fresh = await filterUnseenUrls(recent, it => it.url);
+  if (fresh.length === 0) return 0;
+
+  const batchText = fresh.map((e, i) => `[${i}] ${e.title}\n${e.summary}`).join('\n\n');
   const { object: arxivObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。必ず${recent.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = arxivObject.items;
-  if (evaluations.length !== recent.length) {
-    console.warn(`  [ArXiv] 評価数不一致: LLM=${evaluations.length}件 / 取得=${recent.length}件`);
+  if (evaluations.length !== fresh.length) {
+    console.warn(`  [ArXiv] 評価数不一致: LLM=${evaluations.length}件 / 取得=${fresh.length}件`);
   }
   const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
-  for (let i = 0; i < recent.length; i++) {
-    const item = recent[i];
+  for (let i = 0; i < fresh.length; i++) {
+    const item = fresh[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 5) continue;
     if (isNearDuplicate(item.title, titleCache)) continue;
@@ -386,7 +408,10 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
   const items: any[] = json.items ?? [];
   if (items.length === 0) return 0;
 
-  const candidates = items.slice(0, 10);
+  const allCandidates = items.slice(0, 10);
+  const candidates = await filterUnseenUrls(allCandidates, (r: any) => r.html_url);
+  if (candidates.length === 0) return 0;
+
   const batchText = candidates.map((r: any, i: number) =>
     `[${i}] [⭐${r.stargazers_count}] ${r.full_name}\n${r.description ?? ''}\nTopics: ${(r.topics ?? []).slice(0, 5).join(', ')}`
   ).join('\n\n');
@@ -437,28 +462,32 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
   const json = await res.json();
   const results: any[] = json.results ?? [];
 
-  const recent = results.filter(p => p.published && p.published >= sevenDaysAgo).slice(0, 10);
-  if (recent.length === 0) return 0;
+  const recentAll = results.filter(p => p.published && p.published >= sevenDaysAgo).slice(0, 10);
+  if (recentAll.length === 0) return 0;
 
-  const batchText = recent.map((p, i) =>
+  const pwcUrl = (p: any) => p.paper_url ?? (p.arxiv_id ? `https://arxiv.org/abs/${p.arxiv_id}` : null);
+  const fresh = await filterUnseenUrls(recentAll, pwcUrl);
+  if (fresh.length === 0) return 0;
+
+  const batchText = fresh.map((p, i) =>
     `[${i}] ${p.title}\n${p.abstract?.slice(0, 400) ?? ''}\nTasks: ${(p.tasks ?? []).slice(0, 3).map((t: any) => t.name).join(', ')}`
   ).join('\n\n');
 
   const { object: pwcObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。必ず${recent.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = pwcObject.items;
-  if (evaluations.length !== recent.length) {
-    console.warn(`  [PwC] 評価数不一致: LLM=${evaluations.length}件 / 取得=${recent.length}件`);
+  if (evaluations.length !== fresh.length) {
+    console.warn(`  [PwC] 評価数不一致: LLM=${evaluations.length}件 / 取得=${fresh.length}件`);
   }
   const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
-  for (let i = 0; i < recent.length; i++) {
-    const item = recent[i];
+  for (let i = 0; i < fresh.length; i++) {
+    const item = fresh[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 5) continue;
     if (isNearDuplicate(item.title, titleCache)) continue;
@@ -2448,6 +2477,12 @@ async function ensureSources() {
     // テックメディア（AI特化カテゴリ）
     { type: 'rss', value: 'https://venturebeat.com/category/ai/feed/',       score: 6 },
     { type: 'rss', value: 'https://www.wired.com/feed/tag/ai/latest/rss',    score: 6 }, // 旧URL(404)から移行
+    // v4: 無料カバレッジ拡充（検索が唯一拾えていた種類＝日本語/コミュニティ/個人ブログを内製化）
+    { type: 'rss', value: 'https://zenn.dev/topics/ai/feed',                 score: 6 }, // Zenn AIトピック
+    { type: 'rss', value: 'https://qiita.com/tags/AI/feed.atom',             score: 5 }, // Qiita AIタグ(Atom)
+    { type: 'rss', value: 'https://www.reddit.com/r/LocalLLaMA/.rss',        score: 5 }, // Reddit LocalLLaMA(Atom)
+    { type: 'rss', value: 'https://lobste.rs/t/ai.rss',                      score: 5 }, // Lobsters AIタグ
+    { type: 'rss', value: 'https://simonwillison.net/atom/everything/',      score: 7 }, // Simon Willison(高信号な個人AIブログ)
   ];
   for (const src of required) {
     const existing = await db.select({ id: schema.sources.id, status: schema.sources.status })
