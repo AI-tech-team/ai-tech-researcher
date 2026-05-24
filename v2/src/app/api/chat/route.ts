@@ -3,91 +3,89 @@ import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { db } from '@/db';
 import { collectedData, readingEvents } from '@/db/schema';
-import { desc, eq, like, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+import { hybridSearch, type RetrievedDoc } from '@/lib/retrieval';
 
 export const maxDuration = 60;
+
+function msgText(m: any): string {
+  if (typeof m?.content === 'string') return m.content;
+  if (Array.isArray(m?.content)) return m.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('');
+  return '';
+}
+
+// 検索結果をLLM文脈用のテキストに整形（ID・重要度・何媒体が報道・本文抜粋・URL付き）
+function docsToContext(docs: RetrievedDoc[]): string {
+  if (docs.length === 0) return '(関連する収集記事は見つかりませんでした)';
+  return docs.map(d => {
+    const title = d.titleJa || d.title || '(無題)';
+    const corrob = d.storyCount > 1 ? `（${d.storyCount}媒体が報道）` : '';
+    const body = d.snippet ? `${d.summary ?? ''}\n抜粋: ${d.snippet}` : (d.summary ?? '');
+    return `[ID:${d.id}][${d.category ?? '未分類'}|重要度${d.importance}]${corrob} ${title}\n${body}${d.url ? `\nURL: ${d.url}` : ''}`;
+  }).join('\n\n---\n\n');
+}
 
 export async function POST(req: Request) {
   const { messages } = await req.json();
   const modelMessages = await convertToModelMessages(messages);
 
-  // #deep コマンド検出
-  const lastMsg = modelMessages[modelMessages.length - 1];
-  const lastText = typeof lastMsg?.content === 'string'
-    ? lastMsg.content
-    : Array.isArray(lastMsg?.content)
-      ? lastMsg.content.filter((p: any) => p.type === 'text').map((p: any) => p.text).join('')
-      : '';
+  const userTexts = modelMessages.filter((m: any) => m.role === 'user').map(msgText).filter(Boolean);
+  const lastText = userTexts[userTexts.length - 1] ?? '';
+  // フォロー質問に強くするため直近2発話で検索
+  const retrievalQuery = userTexts.slice(-2).join(' ');
 
+  // #deep コマンド: 自前コーパスを根拠にした深掘りリサーチ（外部検索なし）
   if (lastText.startsWith('#deep ')) {
     const theme = lastText.slice(6).trim();
+    const docs = await hybridSearch(theme, 15);
     const result = streamText({
       model: google('gemini-2.5-flash-lite'),
-      tools: { google_search: google.tools.googleSearch({}) },
-      system: `あなたはAI技術の深掘りリサーチャーです。指定されたテーマについて、最新情報を幅広く調査し、
-エンジニア向けの詳細な分析レポートを日本語Markdown形式で作成してください。
-構成: ## 概要 / ## 主要な動向（5件以上） / ## 技術的詳細 / ## 今後の展望`,
-      prompt: `テーマ「${theme}」について深掘りリサーチしてください。最新の技術動向、重要な発表、実装例を含めて2000文字以上の詳細レポートを作成してください。`,
-      stopWhen: stepCountIs(3),
+      stopWhen: stepCountIs(2),
+      system: `あなたはAI Tech Researcherの深掘りリサーチャーです。
+**以下の収集済みコーパスの情報のみ**を根拠に、テーマについてエンジニア向けの詳細分析を日本語Markdownで作成してください。
+コーパスに無い事実は推測で補わず「収集データには見当たらない」と明記すること。各論点には[ID:数字]で出典を示してください。
+構成: ## 概要 / ## 主要な動向 / ## 技術的詳細 / ## 未解決・今後の注目点
+
+【収集コーパス】
+${docsToContext(docs)}`,
+      prompt: `テーマ「${theme}」について、上記コーパスを根拠に深掘りレポートを作成してください。`,
     });
     return result.toUIMessageStreamResponse();
   }
 
-  const recentData = await db
-    .select({ id: collectedData.id, title: collectedData.title, summary: collectedData.summary, category: collectedData.category })
-    .from(collectedData)
-    .orderBy(desc(collectedData.createdAt))
-    .limit(20);
-
-  const context = recentData
-    .map(d => `[ID:${d.id}][${d.category ?? '未分類'}] ${d.title}: ${d.summary}`)
-    .join('\n');
+  // 通常チャット: ハイブリッドRAGで関連記事を文脈注入
+  const docs = await hybridSearch(retrievalQuery || lastText, 8);
 
   const result = streamText({
     model: google('gemini-2.5-flash-lite'),
     messages: modelMessages,
     stopWhen: stepCountIs(3),
     system: `あなたは"Research Copilot"、AI Tech Researcherダッシュボードのアシスタントです。
-以下は最近収集した最新AI技術情報です（各記事には[ID:数字]が付いています）：
+以下はユーザーの質問に関連して収集データベースを検索した記事です（各記事に[ID:数字]）:
 
-${context}
+${docsToContext(docs)}
 
-これらの情報をもとに、ユーザーの質問に日本語で答えてください。
-ツールを使って記事の検索・お気に入り登録・後で読む登録も行えます。
-「#deep テーマ」と送信するとそのテーマの深掘りリサーチを実行します。`,
+【回答ルール】
+- 回答は**上記の収集データに基づいて**ください。出典として[ID:数字]を示すと親切です。
+- 上記に該当が無い場合は推測で断定せず「収集データには見当たりません」と述べ、必要に応じて search_articles ツールで再検索してください。
+- 必ず日本語で回答してください。
+- 「#deep テーマ」でそのテーマの深掘りリサーチ（収集データ根拠）を実行できます。`,
     tools: {
       search_articles: tool({
-        description: 'DBの記事をキーワードで検索して、関連する記事ID・タイトル・要約を返す',
+        description: '収集データベースを意味検索＋全文検索のハイブリッドで検索し、関連記事を返す',
         inputSchema: z.object({
-          keywords: z.string().describe('検索キーワード（スペース区切りで複数可）'),
+          keywords: z.string().describe('検索したい内容（自然文・キーワードどちらでも可）'),
         }),
         execute: async ({ keywords }) => {
-          const kws = keywords.split(/\s+/).slice(0, 4);
-          const conditions = kws.flatMap(kw => [
-            like(collectedData.title, `%${kw}%`),
-            like(collectedData.summary, `%${kw}%`),
-          ]);
-          const rows = await db.select({
-            id: collectedData.id,
-            title: collectedData.title,
-            summary: collectedData.summary,
-            category: collectedData.category,
-            importanceScore: collectedData.importanceScore,
-          })
-            .from(collectedData)
-            .where(or(...conditions))
-            .orderBy(desc(collectedData.importanceScore))
-            .limit(5);
-          return rows.length > 0
-            ? rows.map(r => `ID:${r.id} [${r.category}] ${r.title} (重要度:${r.importanceScore})`).join('\n')
+          const found = await hybridSearch(keywords, 6);
+          return found.length > 0
+            ? found.map(r => `ID:${r.id} [${r.category}] ${r.titleJa || r.title} (重要度:${r.importance})`).join('\n')
             : '該当する記事が見つかりませんでした';
         },
       }),
       toggle_read_later: tool({
         description: '記事IDを指定して「後で読む」リストへの追加・解除を行う',
-        inputSchema: z.object({
-          articleId: z.number().describe('対象の記事ID'),
-        }),
+        inputSchema: z.object({ articleId: z.number().describe('対象の記事ID') }),
         execute: async ({ articleId }) => {
           const [item] = await db.select({ id: collectedData.id, isReadLater: collectedData.isReadLater, title: collectedData.title, category: collectedData.category })
             .from(collectedData).where(eq(collectedData.id, articleId)).limit(1);
@@ -100,9 +98,7 @@ ${context}
       }),
       toggle_favorite: tool({
         description: '記事IDを指定してお気に入りの追加・解除を行う',
-        inputSchema: z.object({
-          articleId: z.number().describe('対象の記事ID'),
-        }),
+        inputSchema: z.object({ articleId: z.number().describe('対象の記事ID') }),
         execute: async ({ articleId }) => {
           const [item] = await db.select({ id: collectedData.id, isFavorited: collectedData.isFavorited, title: collectedData.title, category: collectedData.category })
             .from(collectedData).where(eq(collectedData.id, articleId)).limit(1);

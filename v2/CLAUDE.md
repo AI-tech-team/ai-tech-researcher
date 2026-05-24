@@ -207,8 +207,11 @@ v3: event → queue → parallel workers → DB → downstream triggers
   low-priorityへ降格＝無駄な巡回/評価を防ぐ安全網。必須/高価値score>3は対象外)。
   残: 重要度合成(LLM＋corroboration＋権威。※エンゲージは計測でほぼ0のため当面除外)／
   キーワードを検索トリガーでなく関連度ブースト＋発見シグナルへ転用。
-- ⬜ **フェーズ3 ハイブリッドRAG**: vector_top_k＋FTS5＋知識グラフ＋ハルシネーションガード。
-  チャット＆夜間リサーチを自前コーパスRAGへ → Grounding全廃で**検索0%達成**。
+- 🔄 **フェーズ3 ハイブリッドRAG**: ✅FTS5(trigram・CJK対応)構築＋同期トリガ。
+  ✅`src/lib/retrieval.ts` hybridSearch(vector_top_k＋FTS5をRRF統合)。
+  ✅チャット刷新(直近20件固定→全コーパスRAG＋[ID]出典＋ハルシネーションガード)。#deepも自前コーパス化。
+  残: 夜間リサーチを自前コーパスRAGへ／キーワードGrounding収集の停止 → **検索0%の最終スイッチ**。
+  ※スキーマ追加: `scripts/migrate_v4_fts.ts`（collected_fts・本番適用済）。
 
 ## 残課題メモ
 - 自動発見の品質ゲートにborderline(benzinga/trullion等)が数件混入 → evolveの収量監視で淘汰予定。
