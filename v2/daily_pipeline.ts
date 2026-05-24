@@ -2439,6 +2439,35 @@ async function runDeepExtraction(maxArticles = 25): Promise<void> {
   console.log(`[DeepExtract] 本文抽出 ${done}/${rows.length}件`);
 }
 
+// ── v4: フィード自己監視（沈黙した自動発見フィードを降格し巡回/評価の無駄を防ぐ）──
+// CDATAバグのような「気づかず収量0」を防ぐ安全網。必須/高価値(score>3)は対象外。
+async function monitorFeedHealth(): Promise<void> {
+  const now = Date.now();
+  const cutoff = new Date(now - 21 * 24 * 60 * 60 * 1000).toISOString();
+
+  const lastRows = await db.select({
+    sid: schema.collectedData.sourceId,
+    last: sql<string>`MAX(${schema.collectedData.createdAt})`,
+  }).from(schema.collectedData).groupBy(schema.collectedData.sourceId);
+  const lastMap = new Map(lastRows.map(r => [r.sid, r.last]));
+
+  const feeds = await db.select().from(schema.sources)
+    .where(and(eq(schema.sources.status, 'active'), eq(schema.sources.type, 'rss' as any)));
+
+  let demoted = 0;
+  for (const f of feeds) {
+    if ((f.score ?? 0) > 3) continue; // 自動発見フィード(score<=3)のみ対象。必須は守る
+    const created = f.createdAt ? new Date(f.createdAt).getTime() : now;
+    if (now - created < 21 * 24 * 60 * 60 * 1000) continue; // 登録21日未満は猶予
+    const last = lastMap.get(f.id);
+    if (last && last >= cutoff) continue; // 直近21日に収量あり
+    await db.update(schema.sources).set({ status: 'low-priority' }).where(eq(schema.sources.id, f.id));
+    demoted++;
+    console.log(`[FeedHealth] 沈黙フィードを降格: ${f.value}`);
+  }
+  if (demoted > 0) console.log(`[FeedHealth] ${demoted}件降格(自動発見・21日収量0)`);
+}
+
 // ── v3.2: 既存データのクリーンアップ（断片関係削除・無効ベンチ削除・ベンチ名正規化）──
 async function runDataCleanup(): Promise<void> {
   console.log('[Cleanup] データクリーンアップ開始');
@@ -2673,6 +2702,7 @@ async function main() {
       }
 
       await evolveSources();
+      await monitorFeedHealth();
     }
 
     const durationMs = Date.now() - startTime;
