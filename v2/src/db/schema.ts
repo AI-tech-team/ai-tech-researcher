@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, unique } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const sources = sqliteTable("sources", {
@@ -140,12 +140,24 @@ export const researchQuestions = sqliteTable("research_questions", {
 // v3.1 読書DNA: ユーザーの記事行動ログ（4軸プロファイル算出の元データ）
 export const readingEvents = sqliteTable("reading_events", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id"), // v6: マルチユーザー（null=旧データ/オーナー）
   articleId: integer("article_id").references(() => collectedData.id),
   action: text("action").notNull(), // 'open' | 'favorite' | 'readlater' | 'read'
   weight: real("weight").default(1),
   category: text("category"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+// v6: ユーザー別の記事状態（お気に入り/後で読む/既読）。記事は共有・状態はユーザー別
+export const userArticleState = sqliteTable("user_article_state", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  articleId: integer("article_id").notNull(),
+  isFavorited: integer("is_favorited").default(0),
+  isReadLater: integer("is_read_later").default(0),
+  isRead: integer("is_read").default(0),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+}, (t) => [unique().on(t.userId, t.articleId)]);
 
 // v3: 理由付き先読みアラート
 export const alerts = sqliteTable("alerts", {

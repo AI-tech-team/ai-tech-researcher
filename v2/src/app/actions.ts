@@ -1,9 +1,10 @@
 'use server';
 
 import { db, client } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
+import { auth } from '@/auth';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
 import { cached } from '@/lib/cache';
@@ -58,10 +59,41 @@ const COLLECTED_SELECT = {
   storyCount: collectedData.storyCount,
 };
 
-// 読書DNA: 記事行動を記録（4軸プロファイルの元データ）
-async function logReadingEvent(articleId: number, action: string, weight: number, category: string | null) {
+// v6: ログイン中ユーザーの users.id を取得（未ログインは undefined）
+async function currentUserId(): Promise<number | undefined> {
   try {
-    await db.insert(readingEvents).values({ articleId, action, weight, category });
+    const session = await auth();
+    return (session?.user as { id?: number } | undefined)?.id;
+  } catch { return undefined; }
+}
+
+// v6: 取得済み記事リストに、ログインユーザーのお気に入り/後で読む/既読を上書き
+async function overlayUserState<T extends { id: number; isFavorited?: number | null; isReadLater?: number | null; isRead?: number | null }>(
+  items: T[], userId: number | undefined,
+): Promise<T[]> {
+  // 未ログインまたは空なら全て0（グローバル列は使わない）
+  for (const it of items) { it.isFavorited = 0; it.isReadLater = 0; it.isRead = 0; }
+  if (!userId || items.length === 0) return items;
+  const ids = items.map(i => i.id);
+  const states = await db.select({
+    articleId: userArticleState.articleId,
+    isFavorited: userArticleState.isFavorited,
+    isReadLater: userArticleState.isReadLater,
+    isRead: userArticleState.isRead,
+  }).from(userArticleState)
+    .where(and(eq(userArticleState.userId, userId), inArray(userArticleState.articleId, ids)));
+  const map = new Map(states.map(s => [s.articleId, s]));
+  for (const it of items) {
+    const s = map.get(it.id);
+    if (s) { it.isFavorited = s.isFavorited ?? 0; it.isReadLater = s.isReadLater ?? 0; it.isRead = s.isRead ?? 0; }
+  }
+  return items;
+}
+
+// 読書DNA: 記事行動を記録（4軸プロファイルの元データ）。userIdでユーザー別に分離
+async function logReadingEvent(articleId: number, action: string, weight: number, category: string | null, userId?: number) {
+  try {
+    await db.insert(readingEvents).values({ articleId, action, weight, category, userId: userId ?? null });
   } catch (e) {
     console.error('Failed to log reading event:', e);
   }
@@ -106,12 +138,14 @@ function urlDomain(url: string | null): string | null {
 
 export async function getCollectedDataList(): Promise<CollectedItem[]> {
   try {
+    const userId = await currentUserId();
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
       .orderBy(desc(collectedData.createdAt))
       .limit(100);
     const items = parseCollectedRows(rows);
+    await overlayUserState(items, userId);
 
     // 複数媒体が報じたストーリーについて、媒体（ドメイン）一覧を付与
     const multiStoryIds = [...new Set(
@@ -492,13 +526,20 @@ export async function deleteSource(id: number) {
 
 export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
   try {
+    const userId = await currentUserId();
+    if (!userId) return { success: false, needLogin: true };
     const newValue = currentlyFavorited ? 0 : 1;
     const [item] = await db.select({
       sourceId: collectedData.sourceId,
       title: collectedData.title,
       category: collectedData.category,
     }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
-    await db.update(collectedData).set({ isFavorited: newValue }).where(eq(collectedData.id, id));
+    await db.insert(userArticleState)
+      .values({ userId, articleId: id, isFavorited: newValue })
+      .onConflictDoUpdate({
+        target: [userArticleState.userId, userArticleState.articleId],
+        set: { isFavorited: newValue, updatedAt: new Date().toISOString() },
+      });
     if (item?.sourceId) {
       await db.insert(adoptionLogs).values({ sourceId: item.sourceId, isAdopted: newValue });
       const delta = newValue === 1 ? 2.0 : -1.0;
@@ -508,7 +549,7 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
     }
     // お気に入り = 強いシグナル
     if (newValue === 1) {
-      await logReadingEvent(id, 'favorite', 3, item?.category ?? null);
+      await logReadingEvent(id, 'favorite', 3, item?.category ?? null, userId);
       const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
       const now = new Date().toISOString();
       for (const kw of kws) {
@@ -530,11 +571,19 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
 
 export async function toggleReadLater(id: number, current: boolean) {
   try {
-    await db.update(collectedData).set({ isReadLater: current ? 0 : 1 }).where(eq(collectedData.id, id));
+    const userId = await currentUserId();
+    if (!userId) return { success: false, needLogin: true };
+    const newValue = current ? 0 : 1;
+    await db.insert(userArticleState)
+      .values({ userId, articleId: id, isReadLater: newValue })
+      .onConflictDoUpdate({
+        target: [userArticleState.userId, userArticleState.articleId],
+        set: { isReadLater: newValue, updatedAt: new Date().toISOString() },
+      });
     if (!current) {
       const [item] = await db.select({ category: collectedData.category })
         .from(collectedData).where(eq(collectedData.id, id)).limit(1);
-      await logReadingEvent(id, 'readlater', 1, item?.category ?? null);
+      await logReadingEvent(id, 'readlater', 1, item?.category ?? null, userId);
     }
     revalidatePath('/');
     return { success: true };
@@ -546,7 +595,15 @@ export async function toggleReadLater(id: number, current: boolean) {
 
 export async function markAsRead(id: number, currentIsRead: boolean) {
   try {
-    await db.update(collectedData).set({ isRead: currentIsRead ? 0 : 1 }).where(eq(collectedData.id, id));
+    const userId = await currentUserId();
+    if (!userId) return { success: false, needLogin: true };
+    const newValue = currentIsRead ? 0 : 1;
+    await db.insert(userArticleState)
+      .values({ userId, articleId: id, isRead: newValue })
+      .onConflictDoUpdate({
+        target: [userArticleState.userId, userArticleState.articleId],
+        set: { isRead: newValue, updatedAt: new Date().toISOString() },
+      });
     if (!currentIsRead) {
       const [item] = await db.select({
         sourceId: collectedData.sourceId,
@@ -559,7 +616,7 @@ export async function markAsRead(id: number, currentIsRead: boolean) {
           .set({ score: sql`COALESCE(${sources.score}, 0.0) + 0.3` })
           .where(eq(sources.id, item.sourceId));
       }
-      await logReadingEvent(id, 'read', 2, item?.category ?? null);
+      await logReadingEvent(id, 'read', 2, item?.category ?? null, userId);
       // トピック重みを加算（読了 = 弱いシグナル）
       const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
       const now = new Date().toISOString();
@@ -991,6 +1048,8 @@ export async function generateResearchBrief(topic: string): Promise<ResearchBrie
 
 export async function getReadingProfile(): Promise<ReadingProfile | null> {
   try {
+    const userId = await currentUserId();
+    if (!userId) return null;
     const now = Date.now();
     const thirtyAgo = sqlTs(new Date(now - 30 * 24 * 60 * 60 * 1000));
     const sixtyAgo = sqlTs(new Date(now - 60 * 24 * 60 * 60 * 1000));
@@ -1000,7 +1059,7 @@ export async function getReadingProfile(): Promise<ReadingProfile | null> {
       category: readingEvents.category,
       weight: readingEvents.weight,
       createdAt: readingEvents.createdAt,
-    }).from(readingEvents).orderBy(desc(readingEvents.createdAt)).limit(1000);
+    }).from(readingEvents).where(eq(readingEvents.userId, userId)).orderBy(desc(readingEvents.createdAt)).limit(1000);
 
     if (events.length === 0) return null;
 
@@ -1094,6 +1153,7 @@ export async function semanticSearch(query: string): Promise<CollectedItem[]> {
             ORDER BY dist ASC`,
       args: [vecStr, vecStr],
     });
+    const userId = await currentUserId();
     const ids = nn.rows.map(r => Number(r.id));
     if (ids.length === 0) {
       // 埋め込み未生成等のフォールバック: 部分一致
@@ -1103,14 +1163,18 @@ export async function semanticSearch(query: string): Promise<CollectedItem[]> {
         .where(or(like(collectedData.title, `%${sanitized}%`), like(collectedData.summary, `%${sanitized}%`)))
         .orderBy(desc(collectedData.createdAt))
         .limit(50);
-      return parseCollectedRows(rows);
+      const fb = parseCollectedRows(rows);
+      await overlayUserState(fb, userId);
+      return fb;
     }
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
       .where(inArray(collectedData.id, ids));
     const order = new Map(ids.map((id, i) => [id, i]));
-    return parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
+    const items = parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
+    await overlayUserState(items, userId);
+    return items;
   } catch (error) {
     console.error('Semantic search failed:', error);
     return [];
@@ -1177,8 +1241,10 @@ export async function getTopicClusters(): Promise<TopicCluster[]> {
 // 読書DNA連動の推薦: エンゲージ記事の重心に近い「未読・未お気に入り」記事
 export async function getRecommendations(): Promise<CollectedItem[]> {
   try {
+    const userId = await currentUserId();
+    if (!userId) return [];
     const ev = await db.select({ articleId: readingEvents.articleId })
-      .from(readingEvents).orderBy(desc(readingEvents.createdAt)).limit(40);
+      .from(readingEvents).where(eq(readingEvents.userId, userId)).orderBy(desc(readingEvents.createdAt)).limit(40);
     const engagedIds = [...new Set(ev.map(e => e.articleId).filter((v): v is number => v != null))];
     if (engagedIds.length < 2) return [];
 
@@ -1199,8 +1265,9 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
     const nn = await client.execute({
       sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), 40) AS v
             JOIN collected_data cd ON cd.rowid = v.id
-            WHERE cd.is_read = 0 AND cd.is_favorited = 0`,
-      args: [JSON.stringify(centroid)],
+            LEFT JOIN user_article_state uas ON uas.article_id = cd.id AND uas.user_id = ?
+            WHERE COALESCE(uas.is_read, 0) = 0 AND COALESCE(uas.is_favorited, 0) = 0`,
+      args: [JSON.stringify(centroid), userId],
     });
     const engagedSet = new Set(engagedIds);
     const recIds = nn.rows.map(r => Number(r.id)).filter(id => !engagedSet.has(id)).slice(0, 8);
@@ -1211,7 +1278,9 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
       .where(inArray(collectedData.id, recIds));
     const order = new Map(recIds.map((id, i) => [id, i]));
-    return parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
+    const items = parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
+    await overlayUserState(items, userId);
+    return items;
   } catch (error) {
     console.error('Failed to fetch recommendations:', error);
     return [];
