@@ -214,9 +214,26 @@ v3: event → queue → parallel workers → DB → downstream triggers
   残: キーワードGrounding収集の停止 → **検索0%の最終スイッチ**（下記の再計測後に実施）。
   ※スキーマ追加: `scripts/migrate_v4_fts.ts`（collected_fts・本番適用済）。
 
+---
+
+# v4.5 実装計画（検索/RAGエンジンの超強化）
+
+ハイブリッド検索を **vector + FTS5 + GraphRAG の3エンジン** に。本文(rawContent)を活かし回答精度を底上げ。
+コスト最優先（LLMリランク不採用・RRF＋非対称埋め込みで品質確保・埋め込みは増分のみ）。
+
+- ✅ **A パッセージレベルRAG**: `content_chunks`テーブル＋`chunk_embedding_idx`。本文を~1500字チャンク化し
+  埋め込み(`runChunkEmbeddings`)。hybridSearchが記事＋チャンクの意味検索＋FTS5をRRF統合し、最良チャンクをsnippet化。
+- ✅ **C 非対称埋め込み**: 文書=`RETRIEVAL_DOCUMENT`/クエリ=`RETRIEVAL_QUERY`。全コーパス再埋め込み済。
+- ✅ **B GraphRAG（第3エンジン）**: `retrieval.ts` graphContext()。クエリ中の固有名詞→entities照合→
+  benchmarks/relations/claimsを構造化注入。チャットの文脈に「関連知識」として追加。
+- ✅ **D ドリルダウン**: チャットに `fetch_article(id)` ツール（本文全文を読む多段深掘り）。
+- ✅ **E 本文知識抽出**: `runKnowledgeExtraction` を summary→rawContent(3000字上限)ベースに。
+- バックフィル: 497記事再埋め込み / 177記事→361チャンク。`PIPELINE_MODE=reembed`/`chunks`、`migrate_v45_chunks.ts`(適用済)。
+
 ## 残課題メモ
 - **検索0%の最終スイッチ手順**: 新フィード(26本＋自動発見)をCI数サイクル熟成 → `scripts/measure_v4.ts`で
   再計測し「検索のユニーク貢献が無料に吸収されたか」を確認 → 吸収済なら collectData の
   keywordRounds を 0 に（またはキーワード収集を停止）して検索0%達成。劣化させないための順序。
 - 自動発見の品質ゲートにborderline(benzinga/trullion等)が数件混入 → monitorFeedHealthで21日後に淘汰。
 - vertexaisearchの壊れURL(5件)は既存 `PIPELINE_MODE=fixurls` で掃除可（低優先）。
+- v4.5残: GraphRAGの夜間リサーチへの適用／nightlyにもgraphContext注入（任意・低優先）。
