@@ -1,6 +1,6 @@
 "use client";
 
-import { Fingerprint, TrendingUp, TrendingDown, EyeOff, Compass, Star, ArrowRight } from 'lucide-react';
+import { Fingerprint, TrendingUp, TrendingDown, EyeOff, Compass, ArrowRight } from 'lucide-react';
 import { SkeletonStat } from '@/components/Skeleton';
 import type { ReadingProfile, CollectedItem } from '@/types';
 
@@ -14,10 +14,9 @@ interface ReadingDnaTabProps {
   recommendations?: CollectedItem[];
   isLoadingData: boolean;
   onNavigateToArticle?: (id: number) => void;
-  onToggleFavorite?: (id: number, current: boolean) => void;
 }
 
-export function ReadingDnaTab({ profile, recommendations = [], isLoadingData, onNavigateToArticle, onToggleFavorite }: ReadingDnaTabProps) {
+export function ReadingDnaTab({ profile, recommendations = [], isLoadingData, onNavigateToArticle }: ReadingDnaTabProps) {
   if (isLoadingData) {
     return <div className="space-y-4"><SkeletonStat /><SkeletonStat /></div>;
   }
@@ -137,21 +136,20 @@ export function ReadingDnaTab({ profile, recommendations = [], isLoadingData, on
           <p className="text-[11px] text-slate-500 mb-3">あなたの読書傾向に近いのに、まだ読んでいない記事です（クリックで記事タブの該当箇所へ）</p>
           <div className="flex flex-col gap-2">
             {recommendations.map(r => {
-              const isFav = !!r.isFavorited;
+              const sc = r.importanceScore ?? 0;
+              const scoreColor = sc >= 9 ? '#f87171' : sc >= 8 ? '#fb923c' : '#64748b';
               return (
                 <div key={r.id}
                   onClick={() => onNavigateToArticle?.(r.id)}
                   className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 hover:bg-white/5 transition-colors cursor-pointer group">
                   <div className="min-w-0 flex-1">
                     <p className="text-xs text-slate-200 leading-snug truncate group-hover:text-white transition-colors">{r.titleJa || r.title}</p>
-                    <span className="font-mono text-[10px] text-slate-600">{r.category ?? '—'} ・ 重要度{r.importanceScore ?? '-'}</span>
+                    <span className="font-mono text-[10px] text-slate-600">{r.category ?? '—'}</span>
                   </div>
-                  <button
-                    onClick={e => { e.stopPropagation(); onToggleFavorite?.(r.id, isFav); }}
-                    title={isFav ? 'お気に入り解除' : 'お気に入り'}
-                    className="p-1.5 rounded-md hover:bg-white/10 transition-colors flex-shrink-0">
-                    <Star size={14} className={isFav ? 'fill-amber-400 text-amber-400' : 'text-slate-500 hover:text-amber-400 transition-colors'} />
-                  </button>
+                  <span className="font-mono text-[10px] px-1.5 py-px rounded border font-bold flex-shrink-0"
+                    style={{ color: scoreColor, borderColor: `${scoreColor}28`, background: `${scoreColor}10` }}>
+                    ★{sc}
+                  </span>
                   <ArrowRight size={13} className="text-slate-600 group-hover:text-indigo-400 transition-colors flex-shrink-0" />
                 </div>
               );
