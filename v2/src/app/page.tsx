@@ -200,7 +200,6 @@ export default function Home() {
 
   const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
-    setRecommendations(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
     toast(currentlyFavorited ? 'お気に入りを解除しました' : '⭐ お気に入りに追加しました', 'success');
     await toggleFavorite(id, currentlyFavorited);
   };
@@ -305,7 +304,7 @@ export default function Home() {
           )}
           {insightSub === 'dna' && (
             <ReadingDnaTab profile={readingProfile} recommendations={recommendations} isLoadingData={insightLoading}
-              onNavigateToArticle={navigateToArticle} onToggleFavorite={handleToggleFavorite} />
+              onNavigateToArticle={navigateToArticle} />
           )}
           {insightSub === 'performance' && (
             <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}

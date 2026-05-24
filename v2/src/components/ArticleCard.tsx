@@ -56,6 +56,8 @@ export function ArticleCard({
     ? item.normalizedImportanceScore
     : (item.importanceScore ?? 0);
   const rawScore = item.importanceScore ?? 0;
+  // 重要度バッジの色（高=赤/中=橙/低=スレート）。全記事に★スコアを表示する。
+  const scoreColor = displayScore >= 9 ? '#f87171' : displayScore >= 8 ? '#fb923c' : '#64748b';
   const isRead = !!item.isRead;
   const isFav  = !!item.isFavorited;
   const isRL   = !!item.isReadLater;
@@ -92,19 +94,13 @@ export function ArticleCard({
             </span>
           )}
 
-          {displayScore >= 8 && (
-            <span className="font-mono text-[10px] px-1.5 py-px rounded border font-bold flex-shrink-0"
-              style={{
-                color: displayScore >= 9 ? '#f87171' : '#fb923c',
-                borderColor: displayScore >= 9 ? '#f8717128' : '#fb923c28',
-                background: displayScore >= 9 ? '#f8717110' : '#fb923c10',
-              }}>
-              {/* 正規化スコアと生スコアが異なる場合は両方表示 */}
-              {item.normalizedImportanceScore != null && item.normalizedImportanceScore !== rawScore
-                ? `★${rawScore}→${item.normalizedImportanceScore}`
-                : `★${rawScore}`}
-            </span>
-          )}
+          <span className="font-mono text-[10px] px-1.5 py-px rounded border font-bold flex-shrink-0"
+            style={{ color: scoreColor, borderColor: `${scoreColor}28`, background: `${scoreColor}10` }}>
+            {/* 正規化スコアと生スコアが異なる場合は両方表示 */}
+            {item.normalizedImportanceScore != null && item.normalizedImportanceScore !== rawScore
+              ? `★${rawScore}→${item.normalizedImportanceScore}`
+              : `★${rawScore}`}
+          </span>
 
           {isMatch && (
             <span className="font-mono text-[10px] text-amber-400 border border-amber-500/20 bg-amber-500/10 px-1.5 py-px rounded">
@@ -125,8 +121,8 @@ export function ArticleCard({
             </span>
           )}
 
-          {/* Actions（星などは常時表示） */}
-          <div className="ml-auto flex items-center gap-0.5 transition-opacity duration-150">
+          {/* Actions */}
+          <div className="ml-auto flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-150">
             {onMarkAsRead && (
               <button
                 onClick={() => onMarkAsRead(item.id, isRead)}
