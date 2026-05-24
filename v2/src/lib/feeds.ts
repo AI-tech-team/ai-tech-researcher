@@ -80,3 +80,35 @@ export async function discoverFeedUrl(domain: string): Promise<string | null> {
   }
   return null;
 }
+
+// ── v4: 本文ディープ抽出（無料・LLM不使用）──────────────────────────────
+// <article>/<main>を優先し、ナビ・スクリプト等を除いた本文テキストを返す。
+export function extractMainText(html: string): string {
+  const scoped =
+    html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1] ??
+    html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1] ??
+    html;
+  return scoped
+    .replace(/<(script|style|nav|header|footer|aside|form|svg|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// 記事URLから本文テキストを取得（HTML以外・抽出失敗時はnull）。maxCharsで上限。
+export async function fetchArticleText(url: string, maxChars = 6000): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+      signal: AbortSignal.timeout(12000),
+      redirect: 'follow',
+    });
+    if (!res.ok) return null;
+    if (!/html/i.test(res.headers.get('content-type') ?? '')) return null; // PDF等はスキップ
+    const text = extractMainText(await res.text());
+    if (text.length < 200) return null; // JS依存ページ等で抽出失敗
+    return text.slice(0, maxChars);
+  } catch { return null; }
+}
