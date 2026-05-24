@@ -1,6 +1,6 @@
 "use client";
 
-import { Fingerprint, TrendingUp, TrendingDown, EyeOff, Compass, ExternalLink } from 'lucide-react';
+import { Fingerprint, TrendingUp, TrendingDown, EyeOff, Compass, Star, ArrowRight } from 'lucide-react';
 import { SkeletonStat } from '@/components/Skeleton';
 import type { ReadingProfile, CollectedItem } from '@/types';
 
@@ -13,9 +13,11 @@ interface ReadingDnaTabProps {
   profile: ReadingProfile | null;
   recommendations?: CollectedItem[];
   isLoadingData: boolean;
+  onNavigateToArticle?: (id: number) => void;
+  onToggleFavorite?: (id: number, current: boolean) => void;
 }
 
-export function ReadingDnaTab({ profile, recommendations = [], isLoadingData }: ReadingDnaTabProps) {
+export function ReadingDnaTab({ profile, recommendations = [], isLoadingData, onNavigateToArticle, onToggleFavorite }: ReadingDnaTabProps) {
   if (isLoadingData) {
     return <div className="space-y-4"><SkeletonStat /><SkeletonStat /></div>;
   }
@@ -132,18 +134,28 @@ export function ReadingDnaTab({ profile, recommendations = [], isLoadingData }: 
           <h3 className="text-sm font-bold font-outfit mb-1 flex items-center gap-2">
             <Compass size={16} className="text-indigo-400" /> あなたへのおすすめ（見逃している記事）
           </h3>
-          <p className="text-[11px] text-slate-500 mb-3">あなたの読書傾向に近いのに、まだ読んでいない記事です</p>
+          <p className="text-[11px] text-slate-500 mb-3">あなたの読書傾向に近いのに、まだ読んでいない記事です（クリックで記事タブの該当箇所へ）</p>
           <div className="flex flex-col gap-2">
-            {recommendations.map(r => (
-              <a key={r.id} href={r.url ?? '#'} target="_blank" rel="noopener noreferrer"
-                className="flex items-start gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 hover:bg-white/5 transition-colors group">
-                <ExternalLink size={12} className="text-slate-600 group-hover:text-indigo-400 transition-colors flex-shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <p className="text-xs text-slate-200 leading-snug truncate">{r.titleJa || r.title}</p>
-                  <span className="font-mono text-[10px] text-slate-600">{r.category ?? '—'} ・ 重要度{r.importanceScore ?? '-'}</span>
+            {recommendations.map(r => {
+              const isFav = !!r.isFavorited;
+              return (
+                <div key={r.id}
+                  onClick={() => onNavigateToArticle?.(r.id)}
+                  className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 hover:bg-white/5 transition-colors cursor-pointer group">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-slate-200 leading-snug truncate group-hover:text-white transition-colors">{r.titleJa || r.title}</p>
+                    <span className="font-mono text-[10px] text-slate-600">{r.category ?? '—'} ・ 重要度{r.importanceScore ?? '-'}</span>
+                  </div>
+                  <button
+                    onClick={e => { e.stopPropagation(); onToggleFavorite?.(r.id, isFav); }}
+                    title={isFav ? 'お気に入り解除' : 'お気に入り'}
+                    className="p-1.5 rounded-md hover:bg-white/10 transition-colors flex-shrink-0">
+                    <Star size={14} className={isFav ? 'fill-amber-400 text-amber-400' : 'text-slate-500 hover:text-amber-400 transition-colors'} />
+                  </button>
+                  <ArrowRight size={13} className="text-slate-600 group-hover:text-indigo-400 transition-colors flex-shrink-0" />
                 </div>
-              </a>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

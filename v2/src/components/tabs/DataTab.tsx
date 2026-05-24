@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { Search, Brain, Award, Database, Eye, Tag, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Brain, Award, Database, Eye, Tag, ChevronLeft, ChevronRight, Sparkles, Star, Bookmark } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { SkeletonCard } from '@/components/Skeleton';
 import { semanticSearch } from '@/app/actions';
@@ -15,11 +15,13 @@ interface DataTabProps {
   onToggleFavorite: (id: number, current: boolean) => void;
   onToggleReadLater: (id: number, current: boolean) => void;
   onMarkAsRead: (id: number, current: boolean) => void;
+  focusArticleId?: number | null;
+  onClearFocus?: () => void;
 }
 
 export function DataTab({
   collectedItems, isLoadingData, interestTags,
-  onToggleFavorite, onToggleReadLater, onMarkAsRead,
+  onToggleFavorite, onToggleReadLater, onMarkAsRead, focusArticleId, onClearFocus,
 }: DataTabProps) {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
@@ -29,12 +31,14 @@ export function DataTab({
   const [semanticResults, setSemanticResults] = useState<CollectedItem[] | null>(null);
   const [sortByImportance, setSortByImportance] = useState(false);
   const [unreadOnly, setUnreadOnly] = useState(false);
+  const [segment, setSegment] = useState<'new' | 'favorite' | 'readlater'>('new');
   const [page, setPage] = useState(0);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
   const PAGE_SIZE = 20;
 
   // フィルタ変更時にページを先頭へ戻す（意図的なリセット）
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setPage(0); }, [searchQuery, categoryFilter, tagFilter, sortByImportance, unreadOnly, semanticResults]);
+  useEffect(() => { setPage(0); }, [searchQuery, categoryFilter, tagFilter, sortByImportance, unreadOnly, segment, semanticResults]);
 
   const categories = ['all', ...Array.from(new Set(collectedItems.map(i => i.category).filter(Boolean))) as string[]];
 
@@ -51,7 +55,8 @@ export function DataTab({
     const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
     const matchTag = tagFilter === 'all' || (item.tags ?? []).includes(tagFilter);
     const matchUnread = !unreadOnly || !item.isRead;
-    return matchSearch && matchCategory && matchTag && matchUnread;
+    const matchSegment = segment === 'new' ? true : segment === 'favorite' ? !!item.isFavorited : !!item.isReadLater;
+    return matchSearch && matchCategory && matchTag && matchUnread && matchSegment;
   });
 
   const sortedItems = [...filteredItems].sort((a, b) => {
@@ -66,8 +71,34 @@ export function DataTab({
   });
 
   const unreadCount = collectedItems.filter(i => !i.isRead).length;
+  const favCount = collectedItems.filter(i => i.isFavorited).length;
+  const readLaterCount = collectedItems.filter(i => i.isReadLater).length;
   const totalPages = Math.ceil(sortedItems.length / PAGE_SIZE);
   const pagedItems = sortedItems.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  // 他タブ（読書DNAのおすすめ等）から指定された記事へジャンプ＋ハイライト
+  useEffect(() => {
+    if (focusArticleId == null) return;
+    // フィルタが該当記事を除外している可能性があるのでリセット（反映後に再実行）
+    if (segment !== 'new' || categoryFilter !== 'all' || tagFilter !== 'all' || unreadOnly || semanticResults) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSegment('new'); setCategoryFilter('all'); setTagFilter('all'); setUnreadOnly(false); setSemanticResults(null);
+      return;
+    }
+    const idx = sortedItems.findIndex(i => i.id === focusArticleId);
+    if (idx < 0) { onClearFocus?.(); return; }
+    const targetPage = Math.floor(idx / PAGE_SIZE);
+    if (page !== targetPage) {
+      setPage(targetPage);
+      return;
+    }
+    document.getElementById(`article-${focusArticleId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightId(focusArticleId);
+    onClearFocus?.();
+    const t = setTimeout(() => setHighlightId(null), 2200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusArticleId, sortedItems, page, segment, categoryFilter, tagFilter, unreadOnly, semanticResults]);
 
   const handleSemanticSearch = async () => {
     if (!searchQuery.trim() || isSemanticSearching) return;
@@ -91,6 +122,20 @@ export function DataTab({
 
   return (
     <div className="space-y-4">
+      {/* Segment: 新着 / お気に入り / 後で読む */}
+      <div className="flex items-center gap-1.5">
+        {([
+          ['new', '新着', unreadCount, <Sparkles key="n" size={13} />],
+          ['favorite', 'お気に入り', favCount, <Star key="f" size={13} />],
+          ['readlater', '後で読む', readLaterCount, <Bookmark key="r" size={13} />],
+        ] as const).map(([key, label, count, icon]) => (
+          <button key={key} onClick={() => setSegment(key)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${segment === key ? 'bg-sky-500 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
+            {icon}{label}{count > 0 && <span className="opacity-70 font-mono">({count})</span>}
+          </button>
+        ))}
+      </div>
+
       {/* Search */}
       <div className="flex gap-2">
         <div className="relative flex-1">
@@ -183,6 +228,7 @@ export function DataTab({
                 onToggleFavorite={onToggleFavorite}
                 onToggleReadLater={handleToggleReadLaterLocal}
                 onMarkAsRead={onMarkAsRead}
+                highlighted={item.id === highlightId}
               />
             ))}
           </div>
@@ -210,8 +256,14 @@ export function DataTab({
         </>
       ) : (
         <div className="glass-card text-center py-20 text-slate-400">
-          <Database size={48} className="mx-auto mb-4 opacity-20" />
-          <p>データが見つかりません。</p>
+          {segment === 'readlater' ? <Bookmark size={48} className="mx-auto mb-4 opacity-20" />
+            : segment === 'favorite' ? <Star size={48} className="mx-auto mb-4 opacity-20" />
+            : <Database size={48} className="mx-auto mb-4 opacity-20" />}
+          <p>
+            {segment === 'readlater' ? '「後で読む」に登録した記事はありません。'
+              : segment === 'favorite' ? 'お気に入り登録した記事はありません。'
+              : 'データが見つかりません。'}
+          </p>
         </div>
       )}
     </div>
