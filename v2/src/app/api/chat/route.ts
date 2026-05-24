@@ -83,6 +83,19 @@ ${docsToContext(docs)}
             : '該当する記事が見つかりませんでした';
         },
       }),
+      fetch_article: tool({
+        description: '記事IDを指定して本文(あれば抽出済み全文)を取得し、詳しく読む。深掘り・根拠確認に使う',
+        inputSchema: z.object({ articleId: z.number().describe('対象の記事ID') }),
+        execute: async ({ articleId }) => {
+          const [item] = await db.select({
+            title: collectedData.title, titleJa: collectedData.titleJa,
+            summary: collectedData.summary, raw: collectedData.rawContent, url: collectedData.url,
+          }).from(collectedData).where(eq(collectedData.id, articleId)).limit(1);
+          if (!item) return `ID:${articleId} の記事が見つかりません`;
+          const body = (item.raw ?? item.summary ?? '(本文なし)').slice(0, 4000);
+          return `タイトル: ${item.titleJa || item.title}\nURL: ${item.url ?? ''}\n本文:\n${body}`;
+        },
+      }),
       toggle_read_later: tool({
         description: '記事IDを指定して「後で読む」リストへの追加・解除を行う',
         inputSchema: z.object({ articleId: z.number().describe('対象の記事ID') }),

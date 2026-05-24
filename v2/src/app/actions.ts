@@ -878,7 +878,7 @@ export async function generateResearchBrief(topic: string): Promise<ResearchBrie
       const { embeddings } = await embedMany({
         model: google.embedding('gemini-embedding-001'),
         values: [t],
-        providerOptions: { google: { outputDimensionality: 768, taskType: 'SEMANTIC_SIMILARITY' } },
+        providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
       });
       const res = await client.execute({
         sql: `SELECT tt.title AS title, tt.url AS url
@@ -1013,7 +1013,7 @@ export async function semanticSearch(query: string): Promise<CollectedItem[]> {
     const { embeddings } = await embedMany({
       model: google.embedding('gemini-embedding-001'),
       values: [sanitized],
-      providerOptions: { google: { outputDimensionality: 768, taskType: 'SEMANTIC_SIMILARITY' } },
+      providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
     });
     const vecStr = JSON.stringify(embeddings[0]);
     const nn = await client.execute({

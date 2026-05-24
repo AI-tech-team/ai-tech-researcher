@@ -1235,6 +1235,7 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
     id: schema.collectedData.id,
     title: schema.collectedData.title,
     summary: schema.collectedData.summary,
+    rawContent: schema.collectedData.rawContent,
     url: schema.collectedData.url,
     publishedAt: schema.collectedData.publishedAt,
   })
@@ -1264,7 +1265,7 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
   除外: CPUコア数・RAM/メモリ容量・TOPS・クロック等のハードウェアスペック、価格、トークン数、'1'のような順位/件数、ベンチ名が曖昧なもの。
 【relations】エンティティ間の明確な関係を最大5つ。subject+relation(${RELATION_TYPES.join('/')})+object。具体的な固有名詞同士のみ（一般名詞・文の断片は除外）。例: "Claude 4" outperforms "GPT-4"。
 
-記事: ${article.title ?? ''}\n${article.summary ?? ''}`,
+記事: ${article.title ?? ''}\n${(article.rawContent ?? article.summary ?? '').slice(0, 3000)}`,
       }));
 
       // ── claims（stale移行つき）──
@@ -2156,6 +2157,8 @@ ${contextText}`,
 // ── v3: 埋め込み生成（embeddingはDrizzle非管理のため生SQL）────────────
 const EMBED_DIM = 768;
 const EMBED_BATCH = 50;
+// v4.5: RAG非対称埋め込み。文書側はRETRIEVAL_DOCUMENT（クエリ側はretrieval.tsでRETRIEVAL_QUERY）
+const EMBED_TASK_DOC = 'RETRIEVAL_DOCUMENT';
 
 async function runEmbeddings(limit = 120): Promise<number> {
   console.log('[Embed] 埋め込み生成開始');
@@ -2178,7 +2181,7 @@ async function runEmbeddings(limit = 120): Promise<number> {
       const { embeddings } = await withRetry(() => embedMany({
         model: google.embedding('gemini-embedding-001'),
         values,
-        providerOptions: { google: { outputDimensionality: EMBED_DIM, taskType: 'SEMANTIC_SIMILARITY' } },
+        providerOptions: { google: { outputDimensionality: EMBED_DIM, taskType: EMBED_TASK_DOC } },
       }));
       for (let j = 0; j < chunk.length; j++) {
         const vec = embeddings[j];
@@ -2195,6 +2198,59 @@ async function runEmbeddings(limit = 120): Promise<number> {
   }
   console.log(`[Embed] ${embedded}件ベクトル化`);
   return embedded;
+}
+
+// v4.5-A: 本文をチャンク分割して埋め込む（パッセージレベルRAG）。
+function chunkText(text: string, size = 1500, overlap = 150): string[] {
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  if (clean.length <= size) return [clean];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < clean.length && chunks.length < 8) { // 最大8チャンク/記事（コスト制御）
+    chunks.push(clean.slice(start, start + size));
+    start += size - overlap;
+  }
+  return chunks;
+}
+
+async function runChunkEmbeddings(limit = 40): Promise<number> {
+  console.log('[Chunk] チャンク埋め込み生成開始');
+  const res = await client.execute({
+    sql: `SELECT id, raw_content FROM collected_data
+          WHERE raw_content IS NOT NULL
+            AND id NOT IN (SELECT DISTINCT article_id FROM content_chunks)
+          ORDER BY importance_score DESC, created_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  const arts = res.rows.map(r => ({ id: Number(r.id), raw: String(r.raw_content ?? '') }));
+  if (arts.length === 0) { console.log('[Chunk] 対象なし'); return 0; }
+
+  let total = 0;
+  for (const a of arts) {
+    const chunks = chunkText(a.raw);
+    if (chunks.length === 0) continue;
+    try {
+      const { embeddings } = await withRetry(() => embedMany({
+        model: google.embedding('gemini-embedding-001'),
+        values: chunks,
+        providerOptions: { google: { outputDimensionality: EMBED_DIM, taskType: EMBED_TASK_DOC } },
+      }));
+      for (let i = 0; i < chunks.length; i++) {
+        const vec = embeddings[i];
+        if (!vec || vec.length !== EMBED_DIM) continue;
+        await client.execute({
+          sql: `INSERT INTO content_chunks (article_id, chunk_index, text, embedding) VALUES (?, ?, ?, vector32(?))`,
+          args: [a.id, i, chunks[i], JSON.stringify(vec)],
+        });
+        total++;
+      }
+    } catch (e: any) {
+      console.warn(`  [Chunk] 失敗(非クリティカル) art=${a.id}: ${(e.message ?? '').slice(0, 60)}`);
+    }
+  }
+  console.log(`[Chunk] ${arts.length}記事 → ${total}チャンク埋め込み`);
+  return total;
 }
 
 // ── v3: 意味的重複排除（同一ストーリーをstory_idでグループ化）──────────
@@ -2601,6 +2657,21 @@ async function main() {
       process.exit(0);
     }
 
+    // v4.5: 全記事を非対称(RETRIEVAL_DOCUMENT)で再埋め込み（バックフィル）
+    if (pipelineMode === 'reembed') {
+      await client.execute(`UPDATE collected_data SET embedding = NULL`);
+      await runEmbeddings(2000);
+      console.log('=== Reembed mode 完了 ===');
+      process.exit(0);
+    }
+
+    // v4.5: 本文チャンク埋め込みのみ実行（バックフィル）
+    if (pipelineMode === 'chunks') {
+      await runChunkEmbeddings(2000);
+      console.log('=== Chunks mode 完了 ===');
+      process.exit(0);
+    }
+
     // v3.2: 既存データのクリーンアップ（断片関係・無効ベンチ削除＋ベンチ名正規化）
     if (pipelineMode === 'cleanup') {
       await runDataCleanup();
@@ -2652,6 +2723,7 @@ async function main() {
       // v3: ベクトル化 → 意味的重複排除（失敗しても主処理は継続）
       try {
         await runEmbeddings();
+        await runChunkEmbeddings(); // v4.5: パッセージレベル埋め込み
         await runStoryGrouping();
         await translateTitles();
         await translateClaims();
