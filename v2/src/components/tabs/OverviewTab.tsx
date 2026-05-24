@@ -1,13 +1,13 @@
 "use client";
 
-import { TrendingUp, Globe, FileText, Star, BarChart3, Database, Brain, Flame, ArrowUpRight, ArrowDownRight, Minus, Zap, Layers, ExternalLink } from 'lucide-react';
+import { TrendingUp, Globe, FileText, Star, BarChart3, Brain, Flame, ArrowUpRight, ArrowDownRight, Minus, Layers, ExternalLink, Rss, Hash, Cpu } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar as RechartsBar,
 } from 'recharts';
 import { SkeletonStat } from '@/components/Skeleton';
 import { useMounted } from '@/lib/useMounted';
-import type { CollectedItem, Source, Report, TrendingKeyword, ConflictingClaim, TopicCluster } from '@/types';
+import type { CollectedItem, Source, Report, TrendingKeyword, TopicCluster } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8',
@@ -23,7 +23,23 @@ const CATEGORY_LIST = Object.keys(CATEGORY_COLORS);
 const TOOLTIP_STYLE = {
   contentStyle: { background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' },
   itemStyle: { color: '#38bdf8' },
+  labelStyle: { color: '#cbd5e1' },
 };
+
+// ソース種別ごとのアイコン
+function sourceIcon(type: string) {
+  if (type === 'keyword') return <Hash size={12} className="text-sky-400" />;
+  if (type.includes('github')) return <Star size={12} className="text-slate-300" />;
+  if (type === 'hn' || type === 'arxiv' || type === 'url') return <Cpu size={12} className="text-emerald-400" />;
+  return <Rss size={12} className="text-orange-400" />;
+}
+
+// フィードURL/値を短い表示名に
+function sourceLabel(s: Source): string {
+  const v = s.value ?? '';
+  if (s.type === 'keyword') return v;
+  try { return new URL(v).hostname.replace(/^www\./, ''); } catch { return v.replace(/^https?:\/\//, '').slice(0, 40); }
+}
 
 interface OverviewTabProps {
   sourcesList: Source[];
@@ -33,33 +49,137 @@ interface OverviewTabProps {
   categoryTrendData: any[];
   modelMentionData: { model: string; count: number }[];
   trendingKeywords: TrendingKeyword[];
-  conflictingClaims: ConflictingClaim[];
   topicClusters?: TopicCluster[];
   isLoadingData: boolean;
 }
 
 export function OverviewTab({
   sourcesList, collectedItems, reportsList, activityData,
-  categoryTrendData, modelMentionData, trendingKeywords, conflictingClaims, topicClusters = [], isLoadingData,
+  categoryTrendData, modelMentionData, trendingKeywords, topicClusters = [], isLoadingData,
 }: OverviewTabProps) {
   const mounted = useMounted();
-  const chartData = [
-    { name: '稼働中', value: sourcesList.filter(s => s.status === 'active').length },
-    { name: '候補', value: sourcesList.filter(s => s.status === 'candidate').length },
-    { name: '低優先度', value: sourcesList.filter(s => s.status === 'low-priority').length },
-  ];
+  const activeSources = sourcesList.filter(s => s.status === 'active').sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
   const stats = [
-    { label: '有効な情報源', value: sourcesList.filter(s => s.status === 'active').length, color: 'text-sky-400', icon: <TrendingUp size={20} /> },
-    { label: '収集データ件数', value: collectedItems.length, color: 'text-purple-400', icon: <Globe size={20} /> },
-    { label: '生成レポート数', value: reportsList.length, color: 'text-emerald-400', icon: <FileText size={20} /> },
-    { label: 'お気に入り数', value: collectedItems.filter(i => i.isFavorited).length, color: 'text-amber-400', icon: <Star size={20} /> },
+    { label: '有効な情報源', value: activeSources.length, color: 'text-sky-400', icon: <Rss size={18} /> },
+    { label: '収集データ', value: collectedItems.length, color: 'text-purple-400', icon: <Globe size={18} /> },
+    { label: '生成レポート', value: reportsList.length, color: 'text-emerald-400', icon: <FileText size={18} /> },
+    { label: 'お気に入り', value: collectedItems.filter(i => i.isFavorited).length, color: 'text-amber-400', icon: <Star size={18} /> },
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
 
-      {/* Trending Keywords */}
+      {/* ── サマリー統計 ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {isLoadingData
+          ? Array.from({ length: 4 }).map((_, i) => <SkeletonStat key={i} />)
+          : stats.map((stat, idx) => (
+            <div key={idx} className="glass-card !p-4 flex items-center gap-3">
+              <div className={`p-2.5 rounded-xl bg-white/5 ${stat.color} flex-shrink-0`}>{stat.icon}</div>
+              <div className="min-w-0">
+                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider truncate">{stat.label}</p>
+                <h3 className="text-2xl font-bold font-outfit leading-tight">{stat.value}</h3>
+              </div>
+            </div>
+          ))
+        }
+      </div>
+
+      {/* ── 有効な情報源 ── */}
+      <div className="glass-card">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold font-outfit flex items-center gap-2">
+            <Rss size={16} className="text-sky-400" /> 有効な情報源
+          </h3>
+          <span className="font-mono text-[10px] text-emerald-400 border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 rounded">
+            {activeSources.length} ACTIVE
+          </span>
+        </div>
+        {activeSources.length === 0 ? (
+          <p className="text-xs text-slate-500">稼働中の情報源がありません</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+            {activeSources.map(s => (
+              <div key={s.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
+                <span className="flex-shrink-0">{sourceIcon(s.type)}</span>
+                <span className="text-xs text-slate-300 truncate flex-1" title={s.value}>{sourceLabel(s)}</span>
+                <span className="font-mono text-[10px] text-slate-600 flex-shrink-0">{(s.score ?? 0).toFixed(0)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── 収集アクティビティ ── */}
+      <div className="glass-card h-[240px]">
+        <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
+          <BarChart3 size={16} className="text-sky-400" /> 収集アクティビティ（直近7日）
+        </h3>
+        {mounted && (
+          <ResponsiveContainer width="100%" height="85%">
+            <AreaChart data={activityData}>
+              <defs>
+                <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="name" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#475569" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+              <Tooltip {...TOOLTIP_STYLE} />
+              <Area type="monotone" dataKey="count" name="収集件数" stroke="#38bdf8" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCount)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* ── カテゴリ別トレンド ＋ モデル言及頻度 ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2 glass-card h-[240px]">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
+            <TrendingUp size={16} className="text-emerald-400" /> カテゴリ別トレンド（直近7日）
+          </h3>
+          {mounted && (
+            <ResponsiveContainer width="100%" height="85%">
+              <AreaChart data={categoryTrendData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="#475569" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip {...TOOLTIP_STYLE} />
+                {CATEGORY_LIST.map(cat => (
+                  <Area key={cat} type="monotone" dataKey={cat} stackId="1" stroke={CATEGORY_COLORS[cat]} fill={CATEGORY_COLORS[cat]} fillOpacity={0.6} />
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="glass-card h-[240px]">
+          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
+            <Brain size={16} className="text-pink-400" /> モデル言及頻度（30日）
+          </h3>
+          {modelMentionData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="85%">
+              <BarChart data={modelMentionData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                <XAxis type="number" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis type="category" dataKey="model" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} width={65} />
+                <Tooltip {...TOOLTIP_STYLE} />
+                <RechartsBar dataKey="count" name="言及数" fill="#f472b6" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-[80%] text-slate-500 text-xs text-center gap-1">
+              <span>データなし</span>
+              <span>30日分蓄積後に表示</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── 急上昇トレンド ── */}
       {trendingKeywords.length > 0 && (
         <div className="glass-card border-orange-500/20">
           <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
@@ -94,7 +214,7 @@ export function OverviewTab({
         </div>
       )}
 
-      {/* 今週の話題の塊（複数記事が報じたトピック） */}
+      {/* ── 今週の話題の塊 ── */}
       {topicClusters.length > 0 && (
         <div className="glass-card border-cyan-500/20">
           <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
@@ -122,138 +242,6 @@ export function OverviewTab({
           </div>
         </div>
       )}
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {isLoadingData
-          ? Array.from({ length: 4 }).map((_, i) => <SkeletonStat key={i} />)
-          : stats.map((stat, idx) => (
-            <div key={idx} className="glass-card">
-              <div className={`p-2 rounded-lg bg-white/5 ${stat.color} inline-flex mb-3`}>{stat.icon}</div>
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider mb-1">{stat.label}</p>
-              <h3 className="text-2xl md:text-3xl font-bold font-outfit">{stat.value}</h3>
-            </div>
-          ))
-        }
-      </div>
-
-      {/* Row 1 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 glass-card h-[220px] md:h-[260px]">
-          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
-            <BarChart3 size={16} className="text-sky-400" /> 収集アクティビティ（直近7日）
-          </h3>
-          {mounted && (
-          <ResponsiveContainer width="100%" height="85%">
-            <AreaChart data={activityData}>
-              <defs>
-                <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#38bdf8" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="name" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} />
-              <YAxis stroke="#475569" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-              <Tooltip {...TOOLTIP_STYLE} />
-              <Area type="monotone" dataKey="count" name="収集件数" stroke="#38bdf8" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCount)" />
-            </AreaChart>
-          </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="glass-card h-[220px] md:h-[260px]">
-          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
-            <Database size={16} className="text-purple-400" /> ソース健全性
-          </h3>
-          {mounted && (
-          <ResponsiveContainer width="100%" height="85%">
-            <BarChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
-              <Tooltip {...TOOLTIP_STYLE} />
-              <RechartsBar dataKey="value" name="件数" fill="#818cf8" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-          )}
-        </div>
-      </div>
-
-      {/* Conflicting Claims */}
-      {conflictingClaims.length > 0 && (
-        <div className="glass-card border-yellow-500/20">
-          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
-            <Zap size={16} className="text-yellow-400" /> 今週の論点（矛盾するクレーム）
-          </h3>
-          <div className="flex flex-col gap-3">
-            {conflictingClaims.map((conflict, i) => (
-              <div key={i} className="rounded-xl border border-yellow-500/10 bg-yellow-500/5 p-3 flex flex-col gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-[10px] font-bold text-yellow-400 uppercase tracking-wider">{conflict.subject}</span>
-                  <span className="font-mono text-[10px] text-slate-500">/</span>
-                  <span className="font-mono text-[10px] text-slate-400">{conflict.predicate}</span>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {conflict.claims.map((claim, j) => (
-                    <div key={j} className="flex items-start gap-2">
-                      <span className={`font-mono text-[9px] px-1.5 py-px rounded flex-shrink-0 mt-0.5 ${
-                        claim.confidence === 'high' ? 'bg-red-500/15 text-red-400 border border-red-500/20' :
-                        claim.confidence === 'medium' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20' :
-                        'bg-slate-500/15 text-slate-400 border border-slate-500/20'
-                      }`}>{claim.confidence?.toUpperCase()}</span>
-                      <span className="text-xs text-slate-300 leading-relaxed">{claim.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Row 2 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 glass-card h-[220px] md:h-[260px]">
-          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
-            <TrendingUp size={16} className="text-emerald-400" /> カテゴリ別トレンド（直近7日）
-          </h3>
-          {mounted && (
-          <ResponsiveContainer width="100%" height="85%">
-            <AreaChart data={categoryTrendData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
-              <YAxis stroke="#475569" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-              <Tooltip {...TOOLTIP_STYLE} />
-              {CATEGORY_LIST.map(cat => (
-                <Area key={cat} type="monotone" dataKey={cat} stackId="1" stroke={CATEGORY_COLORS[cat]} fill={CATEGORY_COLORS[cat]} fillOpacity={0.6} />
-              ))}
-            </AreaChart>
-          </ResponsiveContainer>
-          )}
-        </div>
-
-        <div className="glass-card h-[220px] md:h-[260px]">
-          <h3 className="text-sm font-bold font-outfit mb-3 flex items-center gap-2">
-            <Brain size={16} className="text-pink-400" /> モデル言及頻度（30日）
-          </h3>
-          {modelMentionData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="85%">
-              <BarChart data={modelMentionData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
-                <XAxis type="number" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
-                <YAxis type="category" dataKey="model" stroke="#475569" fontSize={11} tickLine={false} axisLine={false} width={65} />
-                <Tooltip {...TOOLTIP_STYLE} />
-                <RechartsBar dataKey="count" name="言及数" fill="#f472b6" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-[80%] text-slate-500 text-xs text-center gap-1">
-              <span>データなし</span>
-              <span>30日分蓄積後に表示</span>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

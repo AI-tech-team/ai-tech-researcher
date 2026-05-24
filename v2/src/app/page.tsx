@@ -22,11 +22,11 @@ import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
   getSourceROI, getCategoryTrendData, getModelMentionData,
-  getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs, getConflictingClaims,
+  getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
   getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations, getCrossInsight,
 } from './actions';
-import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, ConflictingClaim, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
+import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
 // トップレベルタブ（モバイルナビ過密解消のため分析系はinsightに集約）
 type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'insight' | 'settings';
@@ -77,7 +77,6 @@ export default function Home() {
     keywords: [], categories: [], matrix: [], maxCount: 1,
   });
   const [trendingKeywords, setTrendingKeywords] = useState<TrendingKeyword[]>([]);
-  const [conflictingClaims, setConflictingClaims] = useState<ConflictingClaim[]>([]);
   const [leaderboards, setLeaderboards] = useState<BenchmarkLeaderboard[]>([]);
   const [knowledgeRelations, setKnowledgeRelations] = useState<KnowledgeRelation[]>([]);
   const [benchmarkAlerts, setBenchmarkAlerts] = useState<BenchmarkAlert[]>([]);
@@ -109,7 +108,7 @@ export default function Home() {
   // コア（記事・ソース）＋概要タブ分のみ起動時に取得。分析系は開いた時に遅延ロード
   async function loadCore() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, conflicts, clusters] = await Promise.all([
+    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, clusters] = await Promise.all([
       getSourcesData(),
       getCollectedDataList(),
       getReportsData(),
@@ -117,7 +116,6 @@ export default function Home() {
       getCategoryTrendData(),
       getModelMentionData(),
       getTrendingKeywords(),
-      getConflictingClaims(),
       getTopicClusters(),
     ]);
     setSourcesList(srcs as Source[]);
@@ -127,7 +125,6 @@ export default function Home() {
     setCategoryTrendData(catTrend);
     setModelMentionData(modelMentions);
     setTrendingKeywords(trending);
-    setConflictingClaims(conflicts as ConflictingClaim[]);
     setTopicClusters(clusters as TopicCluster[]);
     setIsLoadingData(false);
   }
@@ -265,7 +262,7 @@ export default function Home() {
         <motion.div key="overview" {...SLIDE}>
           <OverviewTab sourcesList={sourcesList} collectedItems={collectedItems} reportsList={reportsList}
             activityData={activityData} categoryTrendData={categoryTrendData} modelMentionData={modelMentionData}
-            trendingKeywords={trendingKeywords} conflictingClaims={conflictingClaims}
+            trendingKeywords={trendingKeywords}
             topicClusters={topicClusters} isLoadingData={isLoadingData} />
         </motion.div>
       )}
@@ -342,7 +339,7 @@ export default function Home() {
           </div>
           <div className="min-w-0">
             <h2 className="font-bold text-sm font-outfit leading-tight truncate">AI Researcher</h2>
-            <span className="font-mono text-[9px] text-sky-500/70 tracking-widest">v3.1</span>
+            <span className="font-mono text-[9px] text-sky-500/70 tracking-widest">v4.5</span>
           </div>
         </div>
 
