@@ -8,7 +8,7 @@ import { config } from 'dotenv';
 import * as nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
-import { discoverFeedUrl } from './src/lib/feeds';
+import { discoverFeedUrl, fetchArticleText } from './src/lib/feeds';
 
 config({ path: '.env.local' });
 
@@ -574,24 +574,12 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
       }
 
       for (const url of deepFetchUrls) {
-        try {
-          const deepFetchRes = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
-            signal: AbortSignal.timeout(10000),
-          });
-          const html = await deepFetchRes.text();
-          const fullText = html
-            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-            .replace(/<[^>]*>/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 5000);
-          await db.update(schema.collectedData)
-            .set({ rawContent: fullText })
-            .where(eq(schema.collectedData.url, url));
-          console.log(`    [深掘り] ${url.slice(0, 60)}`);
-        } catch { /* ignore */ }
+        const fullText = await fetchArticleText(url);
+        if (!fullText) continue;
+        await db.update(schema.collectedData)
+          .set({ rawContent: fullText })
+          .where(eq(schema.collectedData.url, url));
+        console.log(`    [深掘り] ${url.slice(0, 60)}`);
       }
 
       await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
@@ -2426,6 +2414,31 @@ async function fixGroundingUrls(limit = 300): Promise<void> {
   console.log(`[FixURL] 解決${fixed}件, 除去${removed}件`);
 }
 
+// ── v4: 本文ディープ抽出（無料・LLM不使用）────────────────────────────
+// 高重要度かつrawContent未取得の直近記事の本文を取得・保存する（RAG/知識抽出の土台）。
+async function runDeepExtraction(maxArticles = 25): Promise<void> {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await db.select({ id: schema.collectedData.id, url: schema.collectedData.url })
+    .from(schema.collectedData)
+    .where(and(
+      gte(schema.collectedData.createdAt, sevenDaysAgo),
+      gte(schema.collectedData.importanceScore, 8),
+      isNull(schema.collectedData.rawContent),
+    ))
+    .orderBy(desc(schema.collectedData.importanceScore))
+    .limit(maxArticles);
+
+  let done = 0;
+  for (const r of rows) {
+    if (!r.url || /github\.com|vertexaisearch/.test(r.url)) continue; // GitHub等は本文抽出に不向き
+    const text = await fetchArticleText(r.url);
+    if (!text) continue;
+    await db.update(schema.collectedData).set({ rawContent: text }).where(eq(schema.collectedData.id, r.id));
+    done++;
+  }
+  console.log(`[DeepExtract] 本文抽出 ${done}/${rows.length}件`);
+}
+
 // ── v3.2: 既存データのクリーンアップ（断片関係削除・無効ベンチ削除・ベンチ名正規化）──
 async function runDataCleanup(): Promise<void> {
   console.log('[Cleanup] データクリーンアップ開始');
@@ -2553,6 +2566,13 @@ async function main() {
       process.exit(0);
     }
 
+    // v4: 本文ディープ抽出のみ実行（バックフィル・検証用）
+    if (pipelineMode === 'deep') {
+      await runDeepExtraction(60);
+      console.log('=== Deep extract mode 完了 ===');
+      process.exit(0);
+    }
+
     // v3.2: 既存データのクリーンアップ（断片関係・無効ベンチ削除＋ベンチ名正規化）
     if (pipelineMode === 'cleanup') {
       await runDataCleanup();
@@ -2594,6 +2614,13 @@ async function main() {
     const { collected, failed } = await collectData(keywordRounds);
 
     if (pipelineMode !== 'collect') {
+      // v4: 本文ディープ抽出（無料・高重要度記事のrawContentを充填）。非クリティカル
+      try {
+        await runDeepExtraction();
+      } catch (e: any) {
+        console.warn('[Pipeline] ディープ抽出失敗(非クリティカル):', e.message);
+      }
+
       // v3: ベクトル化 → 意味的重複排除（失敗しても主処理は継続）
       try {
         await runEmbeddings();

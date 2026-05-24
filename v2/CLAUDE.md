@@ -176,3 +176,38 @@ v3: event → queue → parallel workers → DB → downstream triggers
 ## v3 コンセプト
 
 > あなたの知的活動を観察し、先を読み、必要な知識を準備しておく — 頼む前に動くリサーチャー。
+
+---
+
+# v4 実装計画（自己完結型ナレッジエンジン）
+
+## コンセプト
+> 外部の有料Web検索(Geminiグラウンディング)をゼロにし、無料ソースの巡回＋本文ディープ抽出だけで収集。
+> チャットも夜間リサーチも「外に検索」でなく自前コーパスへのRAGで完結させる。**検索0%・抽出100%**。
+
+## 設計原則（フェーズ0の計測で確定）
+- **検索は即廃止せず「卒業」する**: 計測で検索由来記事が35%・うち大半が無料ソース未捕捉と判明。
+  先に無料カバレッジを太らせ、検索の不要を再計測で確認してから切る（劣化させない）。
+- **検索＝偵察役**: 検索が見つけた高品質記事のドメインを無料フィードへ自動変換し、以後は無料巡回で代替。
+- **トークン最小化**: eval前にDB既収集URLを除外／本文は上限切詰め／RAGは文脈固定／flash-lite主体。
+
+## フェーズ進捗
+- ✅ **フェーズ0 計測**: ソース構成(検索35%/無料65%)、eval重複の浪費(1日600件評価→新規27件)、
+  FTS5利用可、検索由来70ドメインを確認。スクリプト: `scripts/measure_v4.ts` / `measure_domains.ts`。
+- ✅ **フェーズ1-A eval前dedup**: 全コレクタでLLM評価前にDB既収集URLを除外。冗長runのトークンを実質ゼロ化。
+- ✅ **フェーズ1-C カバレッジ拡充**: Zenn/Qiita/Reddit/Lobsters/Simon Willison の5フィード追加。
+  停止中フィード(Anthropic/Meta/Mistral)は404で正しく停止済と確認。
+- ✅ **フェーズ1-B ドメイン→フィード自動発見**: `src/lib/feeds.ts` discoverFeedUrl()。
+  homepageの`<link rel=alternate>`＋定番パスでRSS/Atom発見＋AI濃度ゲート(単語境界マッチ)で
+  ファイアホース除外。evolveが発見ドメインをrss型(active)で登録。遡及収穫で21フィード登録済。
+- ✅ **フェーズ1-D ディープ本文抽出**: `src/lib/feeds.ts` fetchArticleText()。<article>/<main>優先で
+  本文抽出(無料・LLM不使用・6000字上限)。`runDeepExtraction()`が高重要度(>=8)記事のrawContentを充填。
+  `PIPELINE_MODE=deep`で単体実行可。フルパイプラインに組込済。チャンク化はフェーズ3で。
+- ⬜ **フェーズ2**: 重要度合成(LLM＋corroboration＋権威＋エンゲージ)／キーワードを検索でなく
+  関連度ブースト＋発見シグナルへ転用／フィード収量の自己監視アラート。
+- ⬜ **フェーズ3 ハイブリッドRAG**: vector_top_k＋FTS5＋知識グラフ＋ハルシネーションガード。
+  チャット＆夜間リサーチを自前コーパスRAGへ → Grounding全廃で**検索0%達成**。
+
+## 残課題メモ
+- 自動発見の品質ゲートにborderline(benzinga/trullion等)が数件混入 → evolveの収量監視で淘汰予定。
+- vertexaisearchの壊れURL(5件)は既存 `PIPELINE_MODE=fixurls` で掃除可（低優先）。
