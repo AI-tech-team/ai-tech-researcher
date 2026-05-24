@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db } from '@/db';
 import { collectedData, readingEvents } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { hybridSearch, type RetrievedDoc } from '@/lib/retrieval';
+import { hybridSearch, graphContext, type RetrievedDoc } from '@/lib/retrieval';
 
 export const maxDuration = 60;
 
@@ -53,8 +53,12 @@ ${docsToContext(docs)}`,
     return result.toUIMessageStreamResponse();
   }
 
-  // 通常チャット: ハイブリッドRAGで関連記事を文脈注入
-  const docs = await hybridSearch(retrievalQuery || lastText, 8);
+  // 通常チャット: ハイブリッドRAG(記事＋パッセージ)＋GraphRAG(知識グラフ)で文脈注入
+  const [docs, graph] = await Promise.all([
+    hybridSearch(retrievalQuery || lastText, 8),
+    graphContext(retrievalQuery || lastText),
+  ]);
+  const graphBlock = graph ? `\n\n## 関連知識（知識グラフ：ベンチマーク/関係/事実）\n${graph}` : '';
 
   const result = streamText({
     model: google('gemini-2.5-flash-lite'),
@@ -63,7 +67,7 @@ ${docsToContext(docs)}`,
     system: `あなたは"Research Copilot"、AI Tech Researcherダッシュボードのアシスタントです。
 以下はユーザーの質問に関連して収集データベースを検索した記事です（各記事に[ID:数字]）:
 
-${docsToContext(docs)}
+${docsToContext(docs)}${graphBlock}
 
 【回答ルール】
 - 回答は**上記の収集データに基づいて**ください。出典として[ID:数字]を示すと親切です。

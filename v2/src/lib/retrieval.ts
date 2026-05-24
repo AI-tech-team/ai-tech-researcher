@@ -120,3 +120,41 @@ export async function hybridSearch(query: string, topK = 8): Promise<RetrievedDo
     })
     .sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
 }
+
+// v4.5-B GraphRAG: クエリ中の固有名詞に該当する知識グラフ(ベンチ/関係/クレーム)を構造化して返す。
+// ハイブリッド検索の「第3の脚」。該当が無ければ空文字。
+export async function graphContext(query: string): Promise<string> {
+  const terms = [...new Set((query.toLowerCase().match(/[a-z0-9][a-z0-9.\-]{2,}|[぀-ヿ一-鿿]{2,}/gu) ?? []))].slice(0, 8);
+  if (terms.length === 0) return '';
+
+  let ents: any[] = [];
+  try {
+    const likeClauses = terms.map(() => `LOWER(canonical_name) LIKE ?`).join(' OR ');
+    ents = (await client.execute({
+      sql: `SELECT id, canonical_name AS name, type FROM entities WHERE ${likeClauses} ORDER BY mention_count DESC LIMIT 4`,
+      args: terms.map(t => `%${t}%`),
+    })).rows as any[];
+  } catch (e: any) {
+    console.warn('[graphContext] エンティティ照合失敗:', e.message?.slice(0, 80));
+    return '';
+  }
+  if (ents.length === 0) return '';
+
+  const blocks: string[] = [];
+  for (const e of ents) {
+    const eid = Number(e.id);
+    try {
+      const [bench, rels, claims] = await Promise.all([
+        client.execute({ sql: `SELECT benchmark_name AS b, score AS s, unit AS u, recorded_date AS d FROM benchmarks WHERE entity_id=? ORDER BY recorded_date DESC LIMIT 4`, args: [eid] }),
+        client.execute({ sql: `SELECT relation_type AS rt, object_name AS o FROM relations WHERE subject_entity_id=? AND status!='stale' LIMIT 4`, args: [eid] }),
+        client.execute({ sql: `SELECT predicate AS p, value AS v FROM claims WHERE entity_id=? AND status='active' ORDER BY valid_from DESC LIMIT 3`, args: [eid] }),
+      ]);
+      let block = `■ ${e.name}${e.type ? ` (${e.type})` : ''}`;
+      for (const b of bench.rows as any[]) block += `\n  - ベンチ ${b.b}: ${b.s}${b.u ?? ''}${b.d ? ` (${b.d})` : ''}`;
+      for (const r of rels.rows as any[]) block += `\n  - 関係 ${r.rt} → ${r.o}`;
+      for (const c of claims.rows as any[]) block += `\n  - ${c.p}: ${c.v}`;
+      if (block.includes('\n')) blocks.push(block); // 中身があるエンティティのみ
+    } catch { /* スキップ */ }
+  }
+  return blocks.join('\n');
+}
