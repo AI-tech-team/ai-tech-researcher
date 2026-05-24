@@ -2076,6 +2076,7 @@ ${contextText}`,
     const allScores = await db.select({
       id: schema.collectedData.id,
       score: schema.collectedData.importanceScore,
+      storyCount: schema.collectedData.storyCount,
     })
       .from(schema.collectedData)
       .where(gte(schema.collectedData.createdAt, thirtyDaysAgoISO));
@@ -2083,23 +2084,31 @@ ${contextText}`,
     if (allScores.length >= 10) {
       const sorted = allScores.map(r => r.score ?? 5).sort((a, b) => a - b);
       const n = sorted.length;
-      // 各スコア値（0-10）に対応する正規化スコアをマップ
-      const scoreToNorm = new Map<number, number>();
+      // 各スコア値（0-10）→ パーセンタイル正規化(1-10)
+      const pct = new Map<number, number>();
       for (let s = 0; s <= 10; s++) {
         const rank = sorted.filter(x => x <= s).length;
-        scoreToNorm.set(s, Math.max(1, Math.min(10, Math.round((rank / n) * 9) + 1)));
+        pct.set(s, Math.max(1, Math.min(10, Math.round((rank / n) * 9) + 1)));
       }
-      // スコア値ごとに一括UPDATE
-      for (const [raw, norm] of scoreToNorm) {
-        if (raw === norm) continue; // 変化なしはスキップ
-        await db.update(schema.collectedData)
-          .set({ normalizedImportanceScore: norm })
-          .where(and(
-            eq(schema.collectedData.importanceScore, raw),
-            gte(schema.collectedData.createdAt, thirtyDaysAgoISO),
-          ));
+      // corroboration合成: 何媒体が独立に報じたか(story_count)で加点。冪等(rawから毎回再計算)
+      const corrob = (c: number) => (c >= 5 ? 3 : c >= 3 ? 2 : c >= 2 ? 1 : 0);
+      // 最終正規化値ごとに記事IDをまとめて一括UPDATE
+      const byTarget = new Map<number, number[]>();
+      for (const r of allScores) {
+        const base = pct.get(r.score ?? 5) ?? 5;
+        const target = Math.max(1, Math.min(10, base + corrob(r.storyCount ?? 1)));
+        const arr = byTarget.get(target) ?? [];
+        arr.push(r.id);
+        byTarget.set(target, arr);
       }
-      console.log(`[Evolve] スコア正規化: ${n}件処理`);
+      for (const [target, ids] of byTarget) {
+        for (let i = 0; i < ids.length; i += 200) {
+          await db.update(schema.collectedData)
+            .set({ normalizedImportanceScore: target })
+            .where(inArray(schema.collectedData.id, ids.slice(i, i + 200)));
+        }
+      }
+      console.log(`[Evolve] スコア正規化(corroboration合成): ${n}件処理`);
     }
   } catch (e: any) {
     console.warn('[Evolve] スコア正規化失敗(非クリティカル):', e.message);
