@@ -25,14 +25,28 @@ function docsToContext(docs: RetrievedDoc[]): string {
   }).join('\n\n---\n\n');
 }
 
+// 記事IDを解決。articleId優先、無ければtitleOrQueryでハイブリッド検索の最上位を採用。
+async function resolveArticleId(articleId?: number, titleOrQuery?: string): Promise<number | null> {
+  if (typeof articleId === 'number' && Number.isFinite(articleId)) return articleId;
+  if (titleOrQuery && titleOrQuery.trim()) {
+    const found = await hybridSearch(titleOrQuery, 1);
+    return found[0]?.id ?? null;
+  }
+  return null;
+}
+
+const targetSchema = z.object({
+  articleId: z.number().optional().describe('対象の記事ID（分かっている場合）'),
+  titleOrQuery: z.string().optional().describe('記事のタイトルや内容（IDが分からない時。ここから自動で記事を特定する）'),
+});
+
 export async function POST(req: Request) {
   const { messages } = await req.json();
   const modelMessages = await convertToModelMessages(messages);
 
   const userTexts = modelMessages.filter((m: any) => m.role === 'user').map(msgText).filter(Boolean);
   const lastText = userTexts[userTexts.length - 1] ?? '';
-  // フォロー質問に強くするため直近2発話で検索
-  const retrievalQuery = userTexts.slice(-2).join(' ');
+  const retrievalQuery = userTexts.slice(-2).join(' '); // フォロー質問に強くするため直近2発話
 
   // #deep コマンド: 自前コーパスを根拠にした深掘りリサーチ（外部検索なし）
   if (lastText.startsWith('#deep ')) {
@@ -63,7 +77,7 @@ ${docsToContext(docs)}`,
   const result = streamText({
     model: google('gemini-2.5-flash-lite'),
     messages: modelMessages,
-    stopWhen: stepCountIs(3),
+    stopWhen: stepCountIs(4),
     system: `あなたは"Research Copilot"、AI Tech Researcherダッシュボードのアシスタントです。
 以下はユーザーの質問に関連して収集データベースを検索した記事です（各記事に[ID:数字]）:
 
@@ -72,8 +86,10 @@ ${docsToContext(docs)}${graphBlock}
 【回答ルール】
 - 回答は**上記の収集データに基づいて**ください。出典として[ID:数字]を示すと親切です。
 - 上記に該当が無い場合は推測で断定せず「収集データには見当たりません」と述べ、必要に応じて search_articles ツールで再検索してください。
-- 必ず日本語で回答してください。
-- 「#deep テーマ」でそのテーマの深掘りリサーチ（収集データ根拠）を実行できます。`,
+- **お気に入り/後で読むの追加・解除**は、ユーザーがIDを言わなくても実行できます。記事のタイトルや内容を
+  toggle_favorite / toggle_read_later の titleOrQuery に渡せば自動で対象記事を特定します。文脈中の記事を指していれば[ID]を使っても構いません。
+- 「○○をお気に入りに」「△△を後で読むに」と言われたら、確認を求めず即座にツールを実行してください。
+- 必ず日本語で回答してください。「#deep テーマ」で深掘りリサーチ（収集データ根拠）も可能です。`,
     tools: {
       search_articles: tool({
         description: '収集データベースを意味検索＋全文検索のハイブリッドで検索し、関連記事を返す',
@@ -88,42 +104,48 @@ ${docsToContext(docs)}${graphBlock}
         },
       }),
       fetch_article: tool({
-        description: '記事IDを指定して本文(あれば抽出済み全文)を取得し、詳しく読む。深掘り・根拠確認に使う',
-        inputSchema: z.object({ articleId: z.number().describe('対象の記事ID') }),
-        execute: async ({ articleId }) => {
+        description: '記事IDまたはタイトル/内容を指定して本文(あれば抽出済み全文)を取得し、詳しく読む',
+        inputSchema: targetSchema,
+        execute: async ({ articleId, titleOrQuery }) => {
+          const id = await resolveArticleId(articleId, titleOrQuery);
+          if (id == null) return '対象の記事を特定できませんでした';
           const [item] = await db.select({
             title: collectedData.title, titleJa: collectedData.titleJa,
             summary: collectedData.summary, raw: collectedData.rawContent, url: collectedData.url,
-          }).from(collectedData).where(eq(collectedData.id, articleId)).limit(1);
-          if (!item) return `ID:${articleId} の記事が見つかりません`;
+          }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
+          if (!item) return `ID:${id} の記事が見つかりません`;
           const body = (item.raw ?? item.summary ?? '(本文なし)').slice(0, 4000);
-          return `タイトル: ${item.titleJa || item.title}\nURL: ${item.url ?? ''}\n本文:\n${body}`;
+          return `ID:${id}\nタイトル: ${item.titleJa || item.title}\nURL: ${item.url ?? ''}\n本文:\n${body}`;
         },
       }),
       toggle_read_later: tool({
-        description: '記事IDを指定して「後で読む」リストへの追加・解除を行う',
-        inputSchema: z.object({ articleId: z.number().describe('対象の記事ID') }),
-        execute: async ({ articleId }) => {
-          const [item] = await db.select({ id: collectedData.id, isReadLater: collectedData.isReadLater, title: collectedData.title, category: collectedData.category })
-            .from(collectedData).where(eq(collectedData.id, articleId)).limit(1);
-          if (!item) return `ID:${articleId} の記事が見つかりません`;
+        description: '「後で読む」への追加・解除。記事IDが無くてもタイトル/内容(titleOrQuery)から特定できる',
+        inputSchema: targetSchema,
+        execute: async ({ articleId, titleOrQuery }) => {
+          const id = await resolveArticleId(articleId, titleOrQuery);
+          if (id == null) return '対象の記事を特定できませんでした。タイトルをもう少し具体的に教えてください';
+          const [item] = await db.select({ id: collectedData.id, isReadLater: collectedData.isReadLater, title: collectedData.title, titleJa: collectedData.titleJa, category: collectedData.category })
+            .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+          if (!item) return `ID:${id} の記事が見つかりません`;
           const newVal = item.isReadLater ? 0 : 1;
-          await db.update(collectedData).set({ isReadLater: newVal }).where(eq(collectedData.id, articleId));
-          if (newVal) await db.insert(readingEvents).values({ articleId, action: 'readlater', weight: 1, category: item.category });
-          return `「${item.title}」を${newVal ? '後で読むに追加' : '後で読むから解除'}しました`;
+          await db.update(collectedData).set({ isReadLater: newVal }).where(eq(collectedData.id, id));
+          if (newVal) await db.insert(readingEvents).values({ articleId: id, action: 'readlater', weight: 1, category: item.category });
+          return `「${item.titleJa || item.title}」(ID:${id})を${newVal ? '後で読むに追加' : '後で読むから解除'}しました`;
         },
       }),
       toggle_favorite: tool({
-        description: '記事IDを指定してお気に入りの追加・解除を行う',
-        inputSchema: z.object({ articleId: z.number().describe('対象の記事ID') }),
-        execute: async ({ articleId }) => {
-          const [item] = await db.select({ id: collectedData.id, isFavorited: collectedData.isFavorited, title: collectedData.title, category: collectedData.category })
-            .from(collectedData).where(eq(collectedData.id, articleId)).limit(1);
-          if (!item) return `ID:${articleId} の記事が見つかりません`;
+        description: 'お気に入りの追加・解除。記事IDが無くてもタイトル/内容(titleOrQuery)から特定できる',
+        inputSchema: targetSchema,
+        execute: async ({ articleId, titleOrQuery }) => {
+          const id = await resolveArticleId(articleId, titleOrQuery);
+          if (id == null) return '対象の記事を特定できませんでした。タイトルをもう少し具体的に教えてください';
+          const [item] = await db.select({ id: collectedData.id, isFavorited: collectedData.isFavorited, title: collectedData.title, titleJa: collectedData.titleJa, category: collectedData.category })
+            .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+          if (!item) return `ID:${id} の記事が見つかりません`;
           const newVal = item.isFavorited ? 0 : 1;
-          await db.update(collectedData).set({ isFavorited: newVal }).where(eq(collectedData.id, articleId));
-          if (newVal) await db.insert(readingEvents).values({ articleId, action: 'favorite', weight: 3, category: item.category });
-          return `「${item.title}」を${newVal ? 'お気に入りに追加' : 'お気に入りから解除'}しました`;
+          await db.update(collectedData).set({ isFavorited: newVal }).where(eq(collectedData.id, id));
+          if (newVal) await db.insert(readingEvents).values({ articleId: id, action: 'favorite', weight: 3, category: item.category });
+          return `「${item.titleJa || item.title}」(ID:${id})を${newVal ? 'お気に入りに追加' : 'お気に入りから解除'}しました`;
         },
       }),
     },
