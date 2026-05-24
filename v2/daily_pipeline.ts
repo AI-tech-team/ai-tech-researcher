@@ -8,6 +8,7 @@ import { config } from 'dotenv';
 import * as nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
+import { discoverFeedUrl } from './src/lib/feeds';
 
 config({ path: '.env.local' });
 
@@ -43,6 +44,9 @@ const KW_STOPWORDS = new Set([
 const DOMAIN_SKIP = new Set([
   'google.com', 'youtube.com', 'wikipedia.org', 't.co', 'twitter.com', 'x.com',
   'instagram.com', 'facebook.com', 'linkedin.com', 'techdrip.net', 'github.com',
+  // v4: ファイアホース/集約系（個別記事の質に対しフィードが広すぎ・既に別経路で巡回）
+  'medium.com', 'reddit.com', 'substack.com', 'arxiv.org', 'huggingface.co',
+  'vertexaisearch.cloud.google.com',
 ]);
 
 const HN_AI_KEYWORDS = [
@@ -2030,34 +2034,52 @@ ${contextText}`,
     console.warn('[Evolve] キーワード発見失敗(非クリティカル):', e.message);
   }
 
+  // v4: 高品質記事のドメインを「無料フィード」として収穫（検索の卒業エンジン）。
+  // 検索が拾った良質ドメインのRSS/Atomを自動発見し、以後は無料で巡回する。
   try {
-    const highQualityUrls = await db.select({ url: schema.collectedData.url })
+    const candRows = await db.select({ url: schema.collectedData.url })
       .from(schema.collectedData)
       .where(and(
         gte(schema.collectedData.createdAt, fourteenDaysAgo),
-        gte(schema.collectedData.importanceScore, 9),
+        gte(schema.collectedData.importanceScore, 8),
       ))
-      .limit(30);
+      .orderBy(desc(schema.collectedData.importanceScore))
+      .limit(60);
 
-    let newDomainsCount = 0;
-    for (const { url } of highQualityUrls) {
+    // 既に巡回中のドメイン（フィードURLからhostnameを抽出）
+    const feedHosts = new Set<string>();
+    for (const { value } of allSourceValues) {
+      try { if (value.startsWith('http')) feedHosts.add(new URL(value).hostname.replace(/^www\./, '')); } catch { }
+    }
+
+    const seen = new Set<string>();
+    const newDomains: string[] = [];
+    for (const { url } of candRows) {
       if (!url) continue;
       try {
-        const hostname = new URL(url).hostname.replace(/^www\./, '');
-        if (DOMAIN_SKIP.has(hostname)) continue;
-        if (existingLower.has(hostname)) continue;
-        const r = await db.insert(schema.sources)
-          .values({ type: 'keyword', value: hostname, status: 'candidate', score: 2 })
-          .onConflictDoNothing();
-        if (r.rowsAffected > 0) {
-          newDomainsCount++;
-          existingLower.add(hostname);
-        }
+        const h = new URL(url).hostname.replace(/^www\./, '');
+        if (DOMAIN_SKIP.has(h) || feedHosts.has(h) || seen.has(h)) continue;
+        seen.add(h);
+        newDomains.push(h);
       } catch { }
     }
-    if (newDomainsCount > 0) console.log(`[Evolve] 新規ドメイン候補${newDomainsCount}件追加`);
+
+    let feedsAdded = 0;
+    for (const domain of newDomains.slice(0, 8)) { // 1実行あたり最大8ドメインを探索（時間制御）
+      const feedUrl = await discoverFeedUrl(domain);
+      if (!feedUrl) continue;
+      const r = await db.insert(schema.sources)
+        .values({ type: 'rss', value: feedUrl, status: 'active', score: 3 })
+        .onConflictDoNothing();
+      if (r.rowsAffected > 0) {
+        feedsAdded++;
+        feedHosts.add(domain);
+        console.log(`[Evolve] フィード発見: ${domain} → ${feedUrl}`);
+      }
+    }
+    if (feedsAdded > 0) console.log(`[Evolve] 無料フィード自動登録: ${feedsAdded}件`);
   } catch (e: any) {
-    console.warn('[Evolve] ドメイン発見失敗(非クリティカル):', e.message);
+    console.warn('[Evolve] フィード自動発見失敗(非クリティカル):', e.message);
   }
 
   // ── 改善2: 重要度スコアの相対化（30日分のパーセンタイル正規化）────────

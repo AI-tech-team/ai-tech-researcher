@@ -8,11 +8,6 @@ import { withRetry } from '@/lib/llm';
 
 const KeywordsSchema = z.object({ keywords: z.array(z.string().min(2).max(60)).max(5) });
 
-const DOMAIN_SKIP = new Set([
-  'google.com', 'youtube.com', 'wikipedia.org', 't.co', 'twitter.com', 'x.com',
-  'instagram.com', 'facebook.com', 'linkedin.com', 'techdrip.net', 'github.com',
-]);
-
 export const maxDuration = 60;
 
 const KW_STOPWORDS = new Set([
@@ -191,34 +186,9 @@ ${contextText}`,
       console.warn('[Evolve] keyword discovery failed (non-critical):', e);
     }
 
-    // ── ドメイン自動発見（重要度8以上の記事から）──────────────────────
-    let newDomainsCount = 0;
-    try {
-      const highQualityUrls = await db.select({ url: collectedData.url })
-        .from(collectedData)
-        .where(and(
-          gte(collectedData.createdAt, fourteenDaysAgo),
-          gte(collectedData.importanceScore, 9),
-        ))
-        .limit(30);
-
-      for (const { url } of highQualityUrls) {
-        if (!url) continue;
-        try {
-          const hostname = new URL(url).hostname.replace(/^www\./, '');
-          if (DOMAIN_SKIP.has(hostname)) continue;
-          const allSrcCheck = await db.select({ value: sources.value })
-            .from(sources).where(eq(sources.value, hostname)).limit(1);
-          if (allSrcCheck.length > 0) continue;
-          const r = await db.insert(sources)
-            .values({ type: 'keyword', value: hostname, status: 'candidate', score: 2 })
-            .onConflictDoNothing();
-          if (r.rowsAffected > 0) newDomainsCount++;
-        } catch { }
-      }
-    } catch (e) {
-      console.warn('[Evolve] ドメイン発見失敗(非クリティカル):', e);
-    }
+    // v4: ドメイン→フィード自動発見はネットワーク探索が重く、Vercelのタイムアウトに
+    // 不向きなため daily pipeline(GitHub Actions)に集約。手動進化では実行しない。
+    const newDomainsCount = 0;
 
     return Response.json({
       success: true,
