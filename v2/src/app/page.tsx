@@ -296,7 +296,8 @@ export default function Home() {
           </div>
           {insightSub === 'knowledge' && (
             <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
-              alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={insightLoading} />
+              alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={insightLoading}
+              onNavigateToArticle={navigateToArticle} />
           )}
           {insightSub === 'research' && (
             <ResearchTab briefing={briefing} crossInsight={crossInsight} alerts={activeAlerts}

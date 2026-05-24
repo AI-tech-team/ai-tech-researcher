@@ -1,10 +1,12 @@
 "use client";
 
-import { Trophy, Network, AlertTriangle, Sparkles, TrendingUp, TrendingDown, Minus, ExternalLink, Crown, ArrowRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Trophy, Network, AlertTriangle, Sparkles, TrendingUp, TrendingDown, Minus, ExternalLink, Crown, ArrowRight, BookOpen, X } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { SkeletonStat } from '@/components/Skeleton';
+import { getKnowledgeEntities, getEntityKnowledgePage, type EntityListItem, type EntityPage } from '@/app/actions';
 import type { BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats } from '@/types';
 
 const ENTITY_COLORS = ['#38bdf8', '#f472b6', '#34d399', '#fb923c', '#a78bfa'];
@@ -28,6 +30,12 @@ const RANK_MEDAL = ['🥇', '🥈', '🥉'];
 // 出典URLが安全（実URL・404リダイレクトでない）かを判定
 const isValidSourceUrl = (u: string | null) => !!u && /^https?:\/\//.test(u) && !u.includes('vertexaisearch.cloud.google.com');
 
+// 関係タイプ→日本語ラベル
+const RELATION_LABEL: Record<string, string> = {
+  outperforms: '性能で上回る', supersedes: '置き換え', competes_with: '競合',
+  builds_on: '基づく', acquired_by: '買収', cites: '引用',
+};
+
 function TrendIcon({ trend }: { trend: 'up' | 'down' | 'flat' | 'new' }) {
   if (trend === 'up') return <TrendingUp size={12} className="text-emerald-400" />;
   if (trend === 'down') return <TrendingDown size={12} className="text-red-400" />;
@@ -41,9 +49,29 @@ interface KnowledgeTabProps {
   alerts: BenchmarkAlert[];
   stats: KnowledgeStats;
   isLoadingData: boolean;
+  onNavigateToArticle?: (id: number) => void;
 }
 
-export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoadingData }: KnowledgeTabProps) {
+export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoadingData, onNavigateToArticle }: KnowledgeTabProps) {
+  // v5: 生きた知識ページ（エンティティ単位の統合ビュー）
+  const [entityList, setEntityList] = useState<EntityListItem[]>([]);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
+  const [page, setPage] = useState<EntityPage | null>(null);
+  const [pageLoading, setPageLoading] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getKnowledgeEntities().then(list => { if (alive) setEntityList(list); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const openEntity = async (name: string) => {
+    setSelectedName(name);
+    setPageLoading(true);
+    setPage(null);
+    try { setPage(await getEntityKnowledgePage(name)); } catch { /* noop */ }
+    finally { setPageLoading(false); }
+  };
   const statCards = [
     { label: 'エンティティ', value: stats.entities, color: 'text-sky-400' },
     { label: 'ベンチマーク記録', value: stats.benchmarks, color: 'text-amber-400' },
@@ -72,6 +100,102 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
             </div>
           ))
         }
+      </div>
+
+      {/* v5: 生きた知識ページ（エンティティ統合ビュー） */}
+      <div>
+        <h3 className="text-sm font-bold font-outfit mb-1 flex items-center gap-2">
+          <BookOpen size={16} className="text-cyan-400" /> 知識ページ
+        </h3>
+        <p className="text-[11px] text-slate-500 mb-3">エンティティをクリックすると、ベンチ・関係・事実・関連記事をまとめて表示します</p>
+        {entityList.length === 0 ? (
+          <p className="text-xs text-slate-600">エンティティがまだありません</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {entityList.map(e => (
+              <button key={e.id} onClick={() => openEntity(e.name)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${selectedName === e.name ? 'bg-cyan-500 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>
+                {e.name}
+                <span className="font-mono text-[9px] opacity-60">{e.mentions}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedName && (
+          <div className="glass-card border-cyan-500/20 mt-3">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-base font-bold font-outfit text-white flex items-center gap-2">
+                {selectedName}
+                {page?.type && <span className="font-mono text-[10px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 rounded">{page.type}</span>}
+              </h4>
+              <button onClick={() => { setSelectedName(null); setPage(null); }} className="p-1 rounded hover:bg-white/10 text-slate-500"><X size={15} /></button>
+            </div>
+            {pageLoading ? (
+              <p className="text-xs text-slate-500">読み込み中...</p>
+            ) : !page ? (
+              <p className="text-xs text-slate-500">情報を取得できませんでした</p>
+            ) : (page.benchmarks.length === 0 && page.relations.length === 0 && page.claims.length === 0 && page.articles.length === 0) ? (
+              <p className="text-xs text-slate-500">このエンティティの詳細情報はまだありません</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {page.benchmarks.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-bold text-amber-300 mb-1.5 flex items-center gap-1"><Trophy size={12} />ベンチマーク</p>
+                    <div className="flex flex-col gap-1">
+                      {page.benchmarks.map((b, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs">
+                          <span className="text-slate-300 truncate flex-1">{b.benchmark}</span>
+                          <span className="font-mono text-amber-300">{b.score}{b.unit ?? ''}</span>
+                          {b.date && <span className="font-mono text-[10px] text-slate-600">{b.date}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {page.relations.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-bold text-indigo-300 mb-1.5 flex items-center gap-1"><Network size={12} />関係</p>
+                    <div className="flex flex-col gap-1">
+                      {page.relations.map((r, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-xs">
+                          <span className="font-mono text-[10px] text-slate-500 flex-shrink-0">{RELATION_LABEL[r.type] ?? r.type}</span>
+                          <ArrowRight size={11} className={`text-indigo-400 flex-shrink-0 ${r.dir === 'in' ? 'rotate-180' : ''}`} />
+                          <span className="text-slate-200 truncate">{r.other}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {page.claims.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-bold text-emerald-300 mb-1.5 flex items-center gap-1"><Sparkles size={12} />判明している事実</p>
+                    <div className="flex flex-col gap-1">
+                      {page.claims.map((c, i) => (
+                        <div key={i} className="text-xs text-slate-300"><span className="text-slate-500">{c.predicate}:</span> {c.value}</div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {page.articles.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-bold text-sky-300 mb-1.5 flex items-center gap-1"><ExternalLink size={12} />関連記事</p>
+                    <div className="flex flex-col gap-1">
+                      {page.articles.map(a => (
+                        <button key={a.id} onClick={() => onNavigateToArticle?.(a.id)}
+                          className="flex items-center gap-2 text-left text-xs text-slate-300 hover:text-white rounded px-1.5 py-1 hover:bg-white/5 transition-colors group">
+                          <span className="truncate flex-1">{a.title}</span>
+                          <span className="font-mono text-[10px] text-slate-600 flex-shrink-0">★{a.importance}</span>
+                          <ArrowRight size={11} className="text-slate-600 group-hover:text-sky-400 flex-shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Lead-change alerts */}

@@ -803,6 +803,77 @@ export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   }
 }
 
+// ─── v5: 生きた知識ページ（エンティティ単位の統合ビュー）────────────────
+export interface EntityListItem { id: number; name: string; type: string | null; mentions: number; }
+
+export async function getKnowledgeEntities(): Promise<EntityListItem[]> {
+  try {
+    const rows = await db.select({
+      id: entities.id, name: entities.canonicalName, type: entities.type, mentions: entities.mentionCount,
+    }).from(entities).orderBy(desc(entities.mentionCount)).limit(48);
+    return rows.map(r => ({ id: r.id, name: r.name, type: r.type, mentions: Number(r.mentions ?? 0) }));
+  } catch (error) {
+    console.error('Failed to fetch entities:', error);
+    return [];
+  }
+}
+
+export interface EntityPage {
+  name: string;
+  type: string | null;
+  benchmarks: { benchmark: string; score: number; unit: string | null; date: string | null }[];
+  relations: { dir: 'out' | 'in'; type: string; other: string }[];
+  claims: { predicate: string; value: string }[];
+  articles: { id: number; title: string; category: string | null; importance: number }[];
+}
+
+export async function getEntityKnowledgePage(name: string): Promise<EntityPage | null> {
+  try {
+    const ent = await db.select({ name: entities.canonicalName, type: entities.type })
+      .from(entities).where(sql`LOWER(${entities.canonicalName}) = ${name.toLowerCase()}`).limit(1);
+    const canonical = ent[0]?.name ?? name;
+    const type = ent[0]?.type ?? null;
+
+    const [bench, relsOut, relsIn, clm, claimArts, benchArts] = await Promise.all([
+      db.select({ benchmark: benchmarks.benchmarkName, score: benchmarks.score, unit: benchmarks.unit, date: benchmarks.recordedDate })
+        .from(benchmarks).where(eq(benchmarks.entityName, canonical)).orderBy(desc(benchmarks.recordedDate)).limit(12),
+      db.select({ type: relations.relationType, other: relations.objectName })
+        .from(relations).where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`)).limit(20),
+      db.select({ type: relations.relationType, other: relations.subjectName })
+        .from(relations).where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`)).limit(20),
+      db.select({ predicate: claims.predicate, value: claims.value })
+        .from(claims).where(and(eq(claims.subject, canonical), eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(8),
+      db.select({ aid: claims.articleId }).from(claims).where(eq(claims.subject, canonical)).limit(40),
+      db.select({ aid: benchmarks.articleId }).from(benchmarks).where(eq(benchmarks.entityName, canonical)).limit(40),
+    ]);
+
+    const ids = [...new Set([...claimArts, ...benchArts].map(r => r.aid).filter((x): x is number => x != null))];
+    let articles: EntityPage['articles'] = [];
+    if (ids.length > 0) {
+      const arts = await db.select({
+        id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa,
+        category: collectedData.category, imp: collectedData.importanceScore,
+      }).from(collectedData).where(inArray(collectedData.id, ids)).orderBy(desc(collectedData.importanceScore)).limit(12);
+      articles = arts.map(a => ({ id: a.id, title: a.titleJa || a.title || '無題', category: a.category, importance: a.imp ?? 5 }));
+    }
+
+    return {
+      name: canonical,
+      type,
+      benchmarks: bench.map(b => ({ benchmark: b.benchmark, score: b.score, unit: b.unit, date: b.date })),
+      relations: [
+        ...relsOut.map(r => ({ dir: 'out' as const, type: r.type, other: r.other })),
+        ...relsIn.map(r => ({ dir: 'in' as const, type: r.type, other: r.other })),
+      ],
+      claims: clm.map(c => ({ predicate: c.predicate, value: c.value })),
+      articles,
+    };
+  } catch (error) {
+    console.error('getEntityKnowledgePage failed:', error);
+    return null;
+  }
+}
+
 // ─── v3自律リサーチ ─────────────────────────────────────────────────
 
 export async function getBriefing(): Promise<BriefingReport | null> {
