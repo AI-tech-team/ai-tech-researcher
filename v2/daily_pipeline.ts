@@ -1424,16 +1424,6 @@ async function runRelationInference() {
   }
 }
 
-// ── v3: Groundingレスポンスから代表URLを抽出 ─────────────────────────
-function extractGroundingUrl(result: any): string | null {
-  const meta = (result.providerMetadata?.google ?? result.experimental_providerMetadata?.google) as any;
-  const chunks: any[] = meta?.groundingMetadata?.groundingChunks ?? [];
-  return chunks
-    .map((c: any) => c.web?.uri as string | undefined)
-    .filter((uri): uri is string => !!uri)
-    .find(uri => !GROUNDING_SKIP_DOMAINS.some(d => uri.includes(d))) ?? null;
-}
-
 // ── v3: 先読みアラート検知（理由付き。知識グラフを根拠に使う）──────────
 async function detectAlerts() {
   console.log('[Alerts] アラート検知開始');
@@ -1636,7 +1626,7 @@ ${context}`,
 
 // ── v3: 夜間Grounding調査（保留中の問いを調べる。件数を上限化）────────
 async function runNightlyResearch(limit = 4) {
-  console.log('[Research] 夜間調査開始');
+  console.log('[Research] 夜間調査開始（自前コーパスRAG・外部検索なし）');
   const pending = await db.select({ id: schema.researchQuestions.id, question: schema.researchQuestions.question })
     .from(schema.researchQuestions)
     .where(eq(schema.researchQuestions.status, 'pending'))
@@ -1645,21 +1635,30 @@ async function runNightlyResearch(limit = 4) {
 
   if (pending.length === 0) { console.log('[Research] 調査対象なし'); return; }
 
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  // env ロード後に動的import（retrieval.ts内の@/dbクライアントが環境変数を参照するため）
+  const { hybridSearch } = await import('./src/lib/retrieval');
   let investigated = 0;
 
   for (const q of pending) {
     try {
+      const docs = await hybridSearch(q.question, 8);
+      if (docs.length === 0) {
+        await db.update(schema.researchQuestions)
+          .set({ status: 'investigated', findings: '収集データには該当する情報が見つかりませんでした。', findingsUrl: null, investigatedAt: new Date().toISOString() })
+          .where(eq(schema.researchQuestions.id, q.id));
+        investigated++;
+        continue;
+      }
+      const ctx = docs.map(d => `[ID:${d.id}] ${d.titleJa || d.title || ''}: ${d.summary ?? ''}${d.snippet ? `\n抜粋: ${d.snippet}` : ''}`).join('\n\n');
       const result = await withRetry(() => generateText({
         model: google('gemini-2.5-flash-lite'),
-        tools: { google_search: google.tools.googleSearch({}) },
-        system: `あなたはAI技術リサーチャーです。与えられた問いをGoogle検索で調べ、判明した事実を日本語250文字程度で簡潔にまとめてください。推測は避け、検索で裏付けの取れた内容のみ。`,
-        prompt: `問い: ${q.question}\n調査基準日: ${today}`,
+        system: `あなたはAI技術リサーチャーです。**以下の収集コーパスのみ**を根拠に、問いへ日本語250文字程度で簡潔に答えてください。
+コーパスに無い事実は推測で補わず「収集データには見当たらない」と述べること。`,
+        prompt: `問い: ${q.question}\n\n【収集コーパス】\n${ctx}`,
       }));
       const findings = result.text.trim().slice(0, 800);
-      const url = await resolveGroundingUrl(extractGroundingUrl(result));
       await db.update(schema.researchQuestions)
-        .set({ status: 'investigated', findings, findingsUrl: url, investigatedAt: new Date().toISOString() })
+        .set({ status: 'investigated', findings, findingsUrl: docs[0].url ?? null, investigatedAt: new Date().toISOString() })
         .where(eq(schema.researchQuestions.id, q.id));
       investigated++;
       console.log(`  調査完了: ${q.question.slice(0, 50)}`);
@@ -1670,7 +1669,7 @@ async function runNightlyResearch(limit = 4) {
       console.warn(`  調査失敗: ${q.question.slice(0, 40)} - ${e.message?.slice(0, 40)}`);
     }
   }
-  console.log(`[Research] ${investigated}件調査完了`);
+  console.log(`[Research] ${investigated}件調査完了（コーパス根拠）`);
 }
 
 // ── v3: 朝のブリーフィング合成（昨夜調べたこと + アラート）──────────────
