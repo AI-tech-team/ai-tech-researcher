@@ -2,9 +2,10 @@ import { google } from '@ai-sdk/google';
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { db } from '@/db';
-import { collectedData, readingEvents } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { collectedData, readingEvents, userArticleState } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
 import { hybridSearch, graphContext, type RetrievedDoc } from '@/lib/retrieval';
+import { auth } from '@/auth';
 
 export const maxDuration = 60;
 
@@ -43,6 +44,7 @@ const targetSchema = z.object({
 export async function POST(req: Request) {
   const { messages } = await req.json();
   const modelMessages = await convertToModelMessages(messages);
+  const userId = ((await auth())?.user as { id?: number } | undefined)?.id;
 
   const userTexts = modelMessages.filter((m: any) => m.role === 'user').map(msgText).filter(Boolean);
   const lastText = userTexts[userTexts.length - 1] ?? '';
@@ -122,14 +124,18 @@ ${docsToContext(docs)}${graphBlock}
         description: '「後で読む」への追加・解除。記事IDが無くてもタイトル/内容(titleOrQuery)から特定できる',
         inputSchema: targetSchema,
         execute: async ({ articleId, titleOrQuery }) => {
+          if (!userId) return 'この操作にはログインが必要です';
           const id = await resolveArticleId(articleId, titleOrQuery);
           if (id == null) return '対象の記事を特定できませんでした。タイトルをもう少し具体的に教えてください';
-          const [item] = await db.select({ id: collectedData.id, isReadLater: collectedData.isReadLater, title: collectedData.title, titleJa: collectedData.titleJa, category: collectedData.category })
+          const [item] = await db.select({ id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa, category: collectedData.category })
             .from(collectedData).where(eq(collectedData.id, id)).limit(1);
           if (!item) return `ID:${id} の記事が見つかりません`;
-          const newVal = item.isReadLater ? 0 : 1;
-          await db.update(collectedData).set({ isReadLater: newVal }).where(eq(collectedData.id, id));
-          if (newVal) await db.insert(readingEvents).values({ articleId: id, action: 'readlater', weight: 1, category: item.category });
+          const [cur] = await db.select({ v: userArticleState.isReadLater }).from(userArticleState)
+            .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
+          const newVal = cur?.v ? 0 : 1;
+          await db.insert(userArticleState).values({ userId, articleId: id, isReadLater: newVal })
+            .onConflictDoUpdate({ target: [userArticleState.userId, userArticleState.articleId], set: { isReadLater: newVal, updatedAt: new Date().toISOString() } });
+          if (newVal) await db.insert(readingEvents).values({ articleId: id, action: 'readlater', weight: 1, category: item.category, userId });
           return `「${item.titleJa || item.title}」(ID:${id})を${newVal ? '後で読むに追加' : '後で読むから解除'}しました`;
         },
       }),
@@ -137,14 +143,18 @@ ${docsToContext(docs)}${graphBlock}
         description: 'お気に入りの追加・解除。記事IDが無くてもタイトル/内容(titleOrQuery)から特定できる',
         inputSchema: targetSchema,
         execute: async ({ articleId, titleOrQuery }) => {
+          if (!userId) return 'この操作にはログインが必要です';
           const id = await resolveArticleId(articleId, titleOrQuery);
           if (id == null) return '対象の記事を特定できませんでした。タイトルをもう少し具体的に教えてください';
-          const [item] = await db.select({ id: collectedData.id, isFavorited: collectedData.isFavorited, title: collectedData.title, titleJa: collectedData.titleJa, category: collectedData.category })
+          const [item] = await db.select({ id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa, category: collectedData.category })
             .from(collectedData).where(eq(collectedData.id, id)).limit(1);
           if (!item) return `ID:${id} の記事が見つかりません`;
-          const newVal = item.isFavorited ? 0 : 1;
-          await db.update(collectedData).set({ isFavorited: newVal }).where(eq(collectedData.id, id));
-          if (newVal) await db.insert(readingEvents).values({ articleId: id, action: 'favorite', weight: 3, category: item.category });
+          const [cur] = await db.select({ v: userArticleState.isFavorited }).from(userArticleState)
+            .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
+          const newVal = cur?.v ? 0 : 1;
+          await db.insert(userArticleState).values({ userId, articleId: id, isFavorited: newVal })
+            .onConflictDoUpdate({ target: [userArticleState.userId, userArticleState.articleId], set: { isFavorited: newVal, updatedAt: new Date().toISOString() } });
+          if (newVal) await db.insert(readingEvents).values({ articleId: id, action: 'favorite', weight: 3, category: item.category, userId });
           return `「${item.titleJa || item.title}」(ID:${id})を${newVal ? 'お気に入りに追加' : 'お気に入りから解除'}しました`;
         },
       }),
