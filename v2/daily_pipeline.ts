@@ -1117,6 +1117,85 @@ async function sendEmail(reportContent: string, type: string = 'デイリー') {
   }
 }
 
+// v6: メール購読ユーザーへ「今日のあなた向け」パーソナライズbriefを配信（LLM不使用・低コスト）
+async function sendPersonalizedBriefs() {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) { console.log('[Brief] メール未設定、スキップ'); return; }
+
+  const recipients = await db.select({
+    uid: schema.users.id, email: schema.users.email, name: schema.users.name,
+    displayName: schema.userProfiles.displayName, interests: schema.userProfiles.interests,
+  })
+    .from(schema.userProfiles)
+    .innerJoin(schema.users, eq(schema.userProfiles.userId, schema.users.id))
+    .where(eq(schema.userProfiles.emailOptIn, 1));
+  if (recipients.length === 0) { console.log('[Brief] 購読者なし'); return; }
+
+  const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
+  let sent = 0;
+
+  for (const r of recipients) {
+    if (!r.email) continue;
+    try {
+      // 関心カテゴリ（行動ログの重み合計上位）
+      const cats = await db.select({ category: schema.readingEvents.category, w: sql<number>`SUM(${schema.readingEvents.weight})` })
+        .from(schema.readingEvents)
+        .where(eq(schema.readingEvents.userId, r.uid))
+        .groupBy(schema.readingEvents.category)
+        .orderBy(desc(sql`SUM(${schema.readingEvents.weight})`))
+        .limit(4);
+      const topCats = new Set(cats.map(c => c.category).filter(Boolean) as string[]);
+      const interestKws = (r.interests ?? '').toLowerCase().split(/[,、\s]+/).filter(s => s.length >= 2);
+
+      // 直近2日・未読・重要度6以上の候補（最大25件）
+      const cand = await client.execute({
+        sql: `SELECT cd.id AS id, cd.title AS title, cd.title_ja AS titleJa, cd.category AS category,
+                     cd.url AS url, cd.summary AS summary, cd.importance_score AS imp
+              FROM collected_data cd
+              LEFT JOIN user_article_state uas ON uas.article_id = cd.id AND uas.user_id = ?
+              WHERE cd.created_at >= ? AND cd.importance_score >= 6 AND COALESCE(uas.is_read, 0) = 0
+              ORDER BY cd.importance_score DESC LIMIT 25`,
+        args: [r.uid, twoDaysAgo],
+      });
+      // 興味で加点して上位6件
+      const ranked = (cand.rows as any[]).map(a => {
+        const text = `${a.title ?? ''} ${a.titleJa ?? ''} ${a.category ?? ''}`.toLowerCase();
+        let score = Number(a.imp ?? 5);
+        if (a.category && topCats.has(a.category)) score += 5;
+        if (interestKws.some(k => text.includes(k))) score += 4;
+        return { a, score };
+      }).sort((x, y) => y.score - x.score).slice(0, 6).map(x => x.a);
+      if (ranked.length === 0) continue;
+
+      const items = ranked.map(a => `
+        <div style="margin:0 0 12px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;">
+          <div style="font-size:11px;color:#64748b;">${a.category ?? ''} ・ ★${a.imp}</div>
+          <a href="${a.url ?? '#'}" style="font-size:15px;font-weight:600;color:#0f172a;text-decoration:none;">${a.titleJa || a.title || '無題'}</a>
+          <div style="font-size:12px;color:#475569;margin-top:4px;">${(a.summary ?? '').slice(0, 120)}</div>
+        </div>`).join('');
+      const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;color:#0f172a;">
+        <h2 style="color:#0ea5e9;">☀️ ${r.displayName || r.name || 'あなた'}さんへ — 今日のおすすめ</h2>
+        <p style="font-size:13px;color:#64748b;">あなたの興味に近い新着 ${ranked.length}件です。</p>
+        ${items}
+        <p style="font-size:11px;color:#94a3b8;margin-top:16px;">配信停止は設定タブのプロフィールから。</p>
+      </div>`;
+
+      await transporter.sendMail({
+        from: user, to: r.email,
+        subject: `☀️ 今日のあなた向け AI記事 ${today}`,
+        html,
+      });
+      sent++;
+    } catch (e: any) {
+      console.warn(`[Brief] ${r.email} 送信失敗: ${(e.message ?? '').slice(0, 60)}`);
+    }
+  }
+  console.log(`[Brief] パーソナライズbrief配信: ${sent}/${recipients.length}件`);
+}
+
 async function sendFailureEmail(error: Error) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
@@ -2681,6 +2760,13 @@ async function main() {
       process.exit(0);
     }
 
+    // v6: パーソナライズbrief配信のみ（購読者向け・テスト/手動用）
+    if (pipelineMode === 'briefs') {
+      await sendPersonalizedBriefs();
+      console.log('=== Briefs mode 完了 ===');
+      process.exit(0);
+    }
+
     // v3.2: 既存データのクリーンアップ（断片関係・無効ベンチ削除＋ベンチ名正規化）
     if (pipelineMode === 'cleanup') {
       await runDataCleanup();
@@ -2759,6 +2845,9 @@ async function main() {
         const emailBody = briefingContent ? `${briefingContent}\n\n---\n\n${reportContent}` : reportContent;
         await sendEmail(emailBody);
       }
+
+      // v6: メール購読ユーザーへパーソナライズbriefを配信（非クリティカル）
+      try { await sendPersonalizedBriefs(); } catch (e: any) { console.warn('[Brief] 配信失敗(非クリティカル):', e.message); }
 
       // JST の曜日・日付を確実に取得（toLocaleStringの文字列分割は環境依存なので使わない）
       const jstDateStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });

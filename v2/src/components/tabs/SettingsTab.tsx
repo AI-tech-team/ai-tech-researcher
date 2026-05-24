@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from 'react';
-import { Plus, Trash2, Hash, Globe, Zap, Tag, Cpu } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Trash2, Hash, Globe, Zap, Tag, Cpu, UserCircle, Mail } from 'lucide-react';
 import { SkeletonRow } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
+import { getMyProfile, updateMyProfile } from '@/app/actions';
 import type { Source } from '@/types';
 
 const STATUS_STYLE: Record<string, string> = {
@@ -44,6 +45,25 @@ export function SettingsTab({
   const [evolveState, setEvolveState] = useState<RunState>('idle');
   const [recatState, setRecatState] = useState<RunState>('idle');
   const [isAdding, setIsAdding] = useState(false);
+
+  /* ── Profile (v6) ────────────────────────────────── */
+  const [profile, setProfile] = useState<{ email: string | null; displayName: string; interests: string; goals: string; emailOptIn: boolean } | null | undefined>(undefined);
+  const [savingProfile, setSavingProfile] = useState(false);
+  useEffect(() => {
+    getMyProfile().then(p => setProfile(p ? { email: p.email, displayName: p.displayName, interests: p.interests, goals: p.goals, emailOptIn: p.emailOptIn } : null)).catch(() => setProfile(null));
+  }, []);
+  const saveProfile = async () => {
+    if (!profile) return;
+    setSavingProfile(true);
+    try {
+      const r = await updateMyProfile({ displayName: profile.displayName, interests: profile.interests, goals: profile.goals, emailOptIn: profile.emailOptIn });
+      toast(r.success ? 'プロフィールを保存しました' : '保存に失敗しました', r.success ? 'success' : 'error');
+    } catch {
+      toast('保存に失敗しました', 'error');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   /* ── Manual triggers ─────────────────────────────── */
   const runCollect = async () => {
@@ -138,6 +158,51 @@ export function SettingsTab({
 
   return (
     <div className="space-y-6">
+
+      {/* ── Profile (v6) ────────────────────────────── */}
+      <section className="glass-card space-y-3">
+        <h3 className="font-mono text-xs font-bold text-slate-400 tracking-widest uppercase flex items-center gap-2">
+          <UserCircle size={13} className="text-sky-400" /> プロフィール
+        </h3>
+        {profile === undefined ? (
+          <p className="font-mono text-[11px] text-slate-600">読み込み中...</p>
+        ) : profile === null ? (
+          <p className="font-mono text-[11px] text-slate-600">ログインするとプロフィールを設定できます（左下「Googleでログイン」）。</p>
+        ) : (
+          <div className="space-y-3">
+            {profile.email && (
+              <p className="font-mono text-[10px] text-slate-500 flex items-center gap-1.5"><Mail size={11} />{profile.email}</p>
+            )}
+            <div>
+              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">表示名</label>
+              <input value={profile.displayName} maxLength={80}
+                onChange={e => setProfile(p => p && { ...p, displayName: e.target.value })}
+                className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-200 focus:outline-none focus:border-sky-500/40 transition-colors" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">興味（カンマ区切り）</label>
+              <input value={profile.interests} maxLength={500} placeholder="例: エージェント, RAG, 推論最適化"
+                onChange={e => setProfile(p => p && { ...p, interests: e.target.value })}
+                className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-200 focus:outline-none focus:border-sky-500/40 transition-colors" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">いま調べていること・目標</label>
+              <textarea value={profile.goals} maxLength={500} rows={2} placeholder="例: 業務でエージェント型RAGの導入を検討中"
+                onChange={e => setProfile(p => p && { ...p, goals: e.target.value })}
+                className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-200 focus:outline-none focus:border-sky-500/40 transition-colors resize-none" />
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={profile.emailOptIn}
+                onChange={e => setProfile(p => p && { ...p, emailOptIn: e.target.checked })}
+                className="accent-sky-500" />
+              <span className="text-xs text-slate-300">朝のパーソナライズbrief（今日読むべき記事）をこのメールで受け取る</span>
+            </label>
+            <button onClick={saveProfile} disabled={savingProfile} className="btn-primary disabled:opacity-40">
+              {savingProfile ? '保存中...' : 'プロフィールを保存'}
+            </button>
+          </div>
+        )}
+      </section>
 
       {/* ── Manual triggers ─────────────────────────── */}
       <section className="glass-card space-y-4">

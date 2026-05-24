@@ -1,7 +1,7 @@
 'use server';
 
 import { db, client } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState, userProfiles, users } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
@@ -857,6 +857,59 @@ export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   } catch (error) {
     console.error('Failed to fetch knowledge stats:', error);
     return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
+  }
+}
+
+// ─── v6: ユーザープロフィール ─────────────────────────────────────────
+export interface MyProfile {
+  email: string | null;
+  name: string | null;
+  displayName: string;
+  interests: string;
+  goals: string;
+  emailOptIn: boolean;
+}
+
+export async function getMyProfile(): Promise<MyProfile | null> {
+  try {
+    const userId = await currentUserId();
+    if (!userId) return null;
+    const [u] = await db.select({ email: users.email, name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
+    const [p] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
+    return {
+      email: u?.email ?? null,
+      name: u?.name ?? null,
+      displayName: p?.displayName ?? '',
+      interests: p?.interests ?? '',
+      goals: p?.goals ?? '',
+      emailOptIn: !!p?.emailOptIn,
+    };
+  } catch (error) {
+    console.error('getMyProfile failed:', error);
+    return null;
+  }
+}
+
+export async function updateMyProfile(data: { displayName: string; interests: string; goals: string; emailOptIn: boolean }) {
+  try {
+    const userId = await currentUserId();
+    if (!userId) return { success: false };
+    const now = new Date().toISOString();
+    const vals = {
+      displayName: (data.displayName ?? '').slice(0, 80),
+      interests: (data.interests ?? '').slice(0, 500),
+      goals: (data.goals ?? '').slice(0, 500),
+      emailOptIn: data.emailOptIn ? 1 : 0,
+      updatedAt: now,
+    };
+    await db.insert(userProfiles)
+      .values({ userId, ...vals })
+      .onConflictDoUpdate({ target: userProfiles.userId, set: vals });
+    revalidatePath('/');
+    return { success: true };
+  } catch (error) {
+    console.error('updateMyProfile failed:', error);
+    return { success: false };
   }
 }
 
