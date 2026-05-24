@@ -210,9 +210,13 @@ v3: event → queue → parallel workers → DB → downstream triggers
 - 🔄 **フェーズ3 ハイブリッドRAG**: ✅FTS5(trigram・CJK対応)構築＋同期トリガ。
   ✅`src/lib/retrieval.ts` hybridSearch(vector_top_k＋FTS5をRRF統合)。
   ✅チャット刷新(直近20件固定→全コーパスRAG＋[ID]出典＋ハルシネーションガード)。#deepも自前コーパス化。
-  残: 夜間リサーチを自前コーパスRAGへ／キーワードGrounding収集の停止 → **検索0%の最終スイッチ**。
+  ✅夜間リサーチを自前コーパスRAGへ移行(Grounding廃止)。残るGroundingはキーワード収集のみ。
+  残: キーワードGrounding収集の停止 → **検索0%の最終スイッチ**（下記の再計測後に実施）。
   ※スキーマ追加: `scripts/migrate_v4_fts.ts`（collected_fts・本番適用済）。
 
 ## 残課題メモ
-- 自動発見の品質ゲートにborderline(benzinga/trullion等)が数件混入 → evolveの収量監視で淘汰予定。
+- **検索0%の最終スイッチ手順**: 新フィード(26本＋自動発見)をCI数サイクル熟成 → `scripts/measure_v4.ts`で
+  再計測し「検索のユニーク貢献が無料に吸収されたか」を確認 → 吸収済なら collectData の
+  keywordRounds を 0 に（またはキーワード収集を停止）して検索0%達成。劣化させないための順序。
+- 自動発見の品質ゲートにborderline(benzinga/trullion等)が数件混入 → monitorFeedHealthで21日後に淘汰。
 - vertexaisearchの壊れURL(5件)は既存 `PIPELINE_MODE=fixurls` で掃除可（低優先）。
