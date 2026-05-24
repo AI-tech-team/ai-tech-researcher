@@ -203,8 +203,10 @@ v3: event → queue → parallel workers → DB → downstream triggers
 - ✅ **フェーズ1-D ディープ本文抽出**: `src/lib/feeds.ts` fetchArticleText()。<article>/<main>優先で
   本文抽出(無料・LLM不使用・6000字上限)。`runDeepExtraction()`が高重要度(>=8)記事のrawContentを充填。
   `PIPELINE_MODE=deep`で単体実行可。フルパイプラインに組込済。チャンク化はフェーズ3で。
-- ⬜ **フェーズ2**: 重要度合成(LLM＋corroboration＋権威＋エンゲージ)／キーワードを検索でなく
-  関連度ブースト＋発見シグナルへ転用／フィード収量の自己監視アラート。
+- 🔄 **フェーズ2**: ✅フィード自己監視(`monitorFeedHealth()`: 自動発見フィードが21日収量0なら
+  low-priorityへ降格＝無駄な巡回/評価を防ぐ安全網。必須/高価値score>3は対象外)。
+  残: 重要度合成(LLM＋corroboration＋権威。※エンゲージは計測でほぼ0のため当面除外)／
+  キーワードを検索トリガーでなく関連度ブースト＋発見シグナルへ転用。
 - ⬜ **フェーズ3 ハイブリッドRAG**: vector_top_k＋FTS5＋知識グラフ＋ハルシネーションガード。
   チャット＆夜間リサーチを自前コーパスRAGへ → Grounding全廃で**検索0%達成**。
 
