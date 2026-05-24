@@ -3,9 +3,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutGrid, Globe, FileText, Settings,
-  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers,
+  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useSession, signIn, signOut } from 'next-auth/react';
 import { useToast } from '@/components/Toast';
 import { ChatPanel } from '@/components/ChatPanel';
 import { MobileChatModal } from '@/components/MobileChatModal';
@@ -62,6 +63,7 @@ const SLIDE = {
 
 export default function Home() {
   const { toast } = useToast();
+  const { data: session } = useSession();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [insightSub, setInsightSub] = useState<InsightSub>('knowledge');
   const [sourcesList, setSourcesList] = useState<Source[]>([]);
@@ -352,15 +354,35 @@ export default function Home() {
           ))}
         </nav>
 
-        {/* Status */}
-        <div className="mt-auto px-2 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
-          <div className="flex items-center gap-2">
-            <div className="live-dot" />
-            <span className="font-mono text-[10px] text-emerald-500 tracking-widest">ONLINE</span>
+        {/* Auth + Status */}
+        <div className="mt-auto flex flex-col gap-2">
+          {/* Googleログイン */}
+          {session?.user ? (
+            <div className="flex items-center gap-2 px-2 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
+              {session.user.image
+                ? <img src={session.user.image} alt="" className="w-6 h-6 rounded-full flex-shrink-0" />
+                : <div className="w-6 h-6 rounded-full bg-sky-500/20 flex items-center justify-center text-sky-400 text-[10px] font-bold flex-shrink-0">{(session.user.name ?? session.user.email ?? '?').slice(0, 1)}</div>}
+              <span className="text-[11px] text-slate-300 truncate flex-1" title={session.user.email ?? ''}>{session.user.name ?? session.user.email}</span>
+              <button onClick={() => signOut()} title="ログアウト" className="p-1 rounded hover:bg-white/10 text-slate-500 hover:text-red-400 transition-colors flex-shrink-0">
+                <LogOut size={13} />
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => signIn('google')}
+              className="flex items-center justify-center gap-2 px-2 py-2 rounded-lg border border-sky-500/20 bg-sky-500/5 hover:bg-sky-500/10 text-sky-400 text-xs font-bold transition-colors">
+              <LogIn size={13} /> Googleでログイン
+            </button>
+          )}
+          {/* Status */}
+          <div className="px-2 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
+            <div className="flex items-center gap-2">
+              <div className="live-dot" />
+              <span className="font-mono text-[10px] text-emerald-500 tracking-widest">ONLINE</span>
+            </div>
+            <p className="font-mono text-[10px] text-slate-700 mt-1 tracking-wide">
+              {collectedItems.length} ARTICLES
+            </p>
           </div>
-          <p className="font-mono text-[10px] text-slate-700 mt-1 tracking-wide">
-            {collectedItems.length} ARTICLES
-          </p>
         </div>
       </aside>
 

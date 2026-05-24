@@ -160,3 +160,12 @@ export const alerts = sqliteTable("alerts", {
   status: text("status").default('active'), // 'active' | 'dismissed'
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+// v6: マルチユーザー（Googleログイン）。記事/知識グラフは共有、ユーザー別データはuserIdで分離
+export const users = sqliteTable("users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  image: text("image"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
