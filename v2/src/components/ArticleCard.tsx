@@ -21,6 +21,7 @@ interface ArticleCardProps {
   onToggleReadLater: (id: number, current: boolean) => void;
   onMarkAsRead?: (id: number, current: boolean) => void;
   showReadLater?: boolean;
+  highlighted?: boolean;
 }
 
 function timeAgo(dateStr: string): string {
@@ -34,7 +35,7 @@ function timeAgo(dateStr: string): string {
 }
 
 export function ArticleCard({
-  item, interestTags, onToggleFavorite, onToggleReadLater, onMarkAsRead, showReadLater = true,
+  item, interestTags, onToggleFavorite, onToggleReadLater, onMarkAsRead, showReadLater = true, highlighted = false,
 }: ArticleCardProps) {
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const summaryRef = useRef<HTMLParagraphElement>(null);
@@ -65,7 +66,8 @@ export function ArticleCard({
   const showToggle = isClamped || summaryExpanded;
 
   return (
-    <div className="article-row group">
+    <div id={`article-${item.id}`}
+      className={`article-row group transition-shadow duration-500 ${highlighted ? 'ring-2 ring-sky-400/70 shadow-[0_0_24px_rgba(56,189,248,0.25)]' : ''}`}>
 
       {/* Left accent bar — 既読時に薄くなる */}
       <div
@@ -123,8 +125,8 @@ export function ArticleCard({
             </span>
           )}
 
-          {/* Actions */}
-          <div className="ml-auto flex items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-150">
+          {/* Actions（星などは常時表示） */}
+          <div className="ml-auto flex items-center gap-0.5 transition-opacity duration-150">
             {onMarkAsRead && (
               <button
                 onClick={() => onMarkAsRead(item.id, isRead)}

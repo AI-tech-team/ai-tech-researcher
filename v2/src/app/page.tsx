@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  LayoutGrid, Globe, Bookmark, FileText, Settings,
-  BarChart3, BrainCircuit, Sparkles, RefreshCw, Zap, Network, Telescope, Fingerprint, Layers,
+  LayoutGrid, Globe, FileText, Settings,
+  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/Toast';
@@ -11,7 +11,6 @@ import { ChatPanel } from '@/components/ChatPanel';
 import { MobileChatModal } from '@/components/MobileChatModal';
 import { OverviewTab } from '@/components/tabs/OverviewTab';
 import { DataTab } from '@/components/tabs/DataTab';
-import { ReadLaterTab } from '@/components/tabs/ReadLaterTab';
 import { ReportsTab } from '@/components/tabs/ReportsTab';
 import { SettingsTab } from '@/components/tabs/SettingsTab';
 import { PerformanceTab } from '@/components/tabs/PerformanceTab';
@@ -28,21 +27,20 @@ import {
 } from './actions';
 import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
-// トップレベルタブ（モバイルナビ過密解消のため分析系はinsightに集約）
-type Tab = 'overview' | 'data' | 'readlater' | 'reports' | 'insight' | 'settings';
-// インサイト配下のサブタブ
+// トップレベルタブ（日次コア=概要/記事、分析系はinsightに集約。後で読むは記事タブ内へ）
+type Tab = 'overview' | 'data' | 'reports' | 'insight' | 'settings';
+// 分析(insight)配下のサブタブ
 type InsightSub = 'knowledge' | 'research' | 'dna' | 'performance';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: '全体概要',
-  data: '収集データ',
-  readlater: '後で読む',
+  data: '記事',
   reports: '調査レポート',
-  insight: 'インサイト',
+  insight: '分析',
   settings: '設定',
 };
 const TAB_SHORT: Record<Tab, string> = {
-  overview: '概要', data: 'データ', readlater: '後読み', reports: 'レポート', insight: 'インサイト', settings: '設定',
+  overview: '概要', data: '記事', reports: 'レポート', insight: '分析', settings: '設定',
 };
 
 const INSIGHT_SUBS: { id: InsightSub; label: string; icon: React.ReactNode }[] = [
@@ -94,6 +92,7 @@ export default function Home() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  const [focusArticleId, setFocusArticleId] = useState<number | null>(null);
 
   useEffect(() => {
     loadCore();
@@ -201,8 +200,15 @@ export default function Home() {
 
   const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
+    setRecommendations(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
     toast(currentlyFavorited ? 'お気に入りを解除しました' : '⭐ お気に入りに追加しました', 'success');
     await toggleFavorite(id, currentlyFavorited);
+  };
+
+  // 他タブのおすすめ等から記事タブの該当記事へジャンプ
+  const navigateToArticle = (id: number) => {
+    setActiveTab('data');
+    setFocusArticleId(id);
   };
 
   const handleToggleReadLater = async (id: number, current: boolean) => {
@@ -233,22 +239,19 @@ export default function Home() {
     await refresh();
   };
 
-  const readLaterCount = collectedItems.filter(i => i.isReadLater).length;
   const unreadCount = collectedItems.filter(i => !i.isRead).length;
   const currentLabel = activeTab === 'insight' ? INSIGHT_LABELS[insightSub] : TAB_LABELS[activeTab];
 
   const navItems: [Tab, React.ReactNode, string][] = [
     ['overview', <LayoutGrid key="overview" size={19} />, '全体概要'],
-    ['data', <Globe key="data" size={19} />, `収集データ${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
-    ['readlater', <Bookmark key="readlater" size={19} />, `後で読む${readLaterCount > 0 ? ` (${readLaterCount})` : ''}`],
+    ['data', <Globe key="data" size={19} />, `記事${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
     ['reports', <FileText key="reports" size={19} />, '調査レポート'],
-    ['insight', <Layers key="insight" size={19} />, 'インサイト'],
+    ['insight', <Layers key="insight" size={19} />, '分析'],
     ['settings', <Settings key="settings" size={19} />, '設定'],
   ];
   const mobileNavItems: [Tab, React.ReactNode][] = [
     ['overview', <LayoutGrid key="overview" size={22} />],
     ['data', <Globe key="data" size={22} />],
-    ['readlater', <Bookmark key="readlater" size={22} />],
     ['reports', <FileText key="reports" size={22} />],
     ['insight', <Layers key="insight" size={22} />],
     ['settings', <Settings key="settings" size={22} />],
@@ -271,14 +274,8 @@ export default function Home() {
           <DataTab collectedItems={collectedItems} isLoadingData={isLoadingData}
             interestTags={interestTags}
             onToggleFavorite={handleToggleFavorite} onToggleReadLater={handleToggleReadLater}
-            onMarkAsRead={handleMarkAsRead} />
-        </motion.div>
-      )}
-      {activeTab === 'readlater' && (
-        <motion.div key="readlater" {...SLIDE}>
-          <ReadLaterTab collectedItems={collectedItems} isLoadingData={isLoadingData}
-            interestTags={interestTags} onToggleFavorite={handleToggleFavorite}
-            onToggleReadLater={handleToggleReadLater} />
+            onMarkAsRead={handleMarkAsRead}
+            focusArticleId={focusArticleId} onClearFocus={() => setFocusArticleId(null)} />
         </motion.div>
       )}
       {activeTab === 'reports' && (
@@ -307,7 +304,8 @@ export default function Home() {
               isLoadingData={insightLoading} onReload={refresh} />
           )}
           {insightSub === 'dna' && (
-            <ReadingDnaTab profile={readingProfile} recommendations={recommendations} isLoadingData={insightLoading} />
+            <ReadingDnaTab profile={readingProfile} recommendations={recommendations} isLoadingData={insightLoading}
+              onNavigateToArticle={navigateToArticle} onToggleFavorite={handleToggleFavorite} />
           )}
           {insightSub === 'performance' && (
             <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}
@@ -379,25 +377,15 @@ export default function Home() {
               {isSyncing ? '同期中' : '同期'}
             </button>
           </div>
-          {/* Stat chips row */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="stat-chip" style={{ color: '#10b981', borderColor: 'rgba(16,185,129,0.2)', background: 'rgba(16,185,129,0.07)' }}>
-              <div className="live-dot" style={{ width: 4, height: 4 }} />
-              LIVE
+          {/* Slim status line */}
+          <div className="flex items-center gap-3.5 font-mono text-[11px] text-slate-500">
+            <span className="flex items-center gap-1.5 text-emerald-500">
+              <div className="live-dot" style={{ width: 4, height: 4 }} />LIVE
             </span>
-            <span className="stat-chip" style={{ color: '#38bdf8', borderColor: 'rgba(56,189,248,0.2)', background: 'rgba(56,189,248,0.07)' }}>
-              <Zap size={9} />{collectedItems.length} COLLECTED
-            </span>
-            {unreadCount > 0 && (
-              <span className="stat-chip" style={{ color: '#818cf8', borderColor: 'rgba(129,140,248,0.2)', background: 'rgba(129,140,248,0.07)' }}>
-                {unreadCount} UNREAD
-              </span>
-            )}
-            {trendingKeywords.length > 0 && (
-              <span className="stat-chip" style={{ color: '#f472b6', borderColor: 'rgba(244,114,182,0.2)', background: 'rgba(244,114,182,0.07)' }}>
-                {trendingKeywords.length} TRENDING
-              </span>
-            )}
+            <span className="text-slate-600">|</span>
+            <span>{collectedItems.length} 記事</span>
+            {unreadCount > 0 && <span className="text-sky-400">未読 {unreadCount}</span>}
+            {trendingKeywords.length > 0 && <span className="text-orange-400">急上昇 {trendingKeywords.length}</span>}
           </div>
         </div>
 
@@ -429,11 +417,7 @@ export default function Home() {
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-white/10 flex safe-area-inset-bottom">
         {mobileNavItems.map(([tab, icon]) => {
           const isActive = activeTab === tab;
-          const count = tab === 'readlater' && readLaterCount > 0
-            ? readLaterCount
-            : tab === 'data' && unreadCount > 0
-              ? unreadCount
-              : null;
+          const count = tab === 'data' && unreadCount > 0 ? unreadCount : null;
           return (
             <button
               key={tab}
