@@ -148,6 +148,16 @@ export const readingEvents = sqliteTable("reading_events", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+// v6: ユーザープロフィール（1ユーザー1行）。表示名・興味・目標・メール購読
+export const userProfiles = sqliteTable("user_profiles", {
+  userId: integer("user_id").primaryKey(),
+  displayName: text("display_name"),
+  interests: text("interests"),   // 興味（自由記述/カンマ区切り）
+  goals: text("goals"),           // 今調べていること・目標
+  emailOptIn: integer("email_opt_in").default(0), // 1=パーソナライズ朝briefをメール受信
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
 // v6: ユーザー別の記事状態（お気に入り/後で読む/既読）。記事は共有・状態はユーザー別
 export const userArticleState = sqliteTable("user_article_state", {
   id: integer("id").primaryKey({ autoIncrement: true }),
