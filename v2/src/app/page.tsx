@@ -373,7 +373,7 @@ export default function Home() {
               onOpenEntity={openEntity} />
           )}
           {insightSub === 'signals' && (
-            <SignalsTab signals={signals} isLoadingData={insightLoading} onOpenEntity={openEntity} />
+            <SignalsTab signals={signals} isLoadingData={insightLoading} onOpenEntity={openEntity} interestTags={interestTags} />
           )}
           {insightSub === 'research' && (
             <ResearchTab briefing={briefing} crossInsight={crossInsight} alerts={activeAlerts}

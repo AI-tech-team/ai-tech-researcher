@@ -1,12 +1,12 @@
 "use client";
 
-import { Radar, TrendingUp, ArrowUpRight, Star, FlaskConical } from 'lucide-react';
+import { Radar, TrendingUp, ArrowUpRight, Star, FlaskConical, Target } from 'lucide-react';
 import { SkeletonStat } from '@/components/Skeleton';
 import type { SignalIntel } from '@/app/actions';
 
 const isValidUrl = (u: string | null) => !!u && /^https?:\/\//.test(u) && !u.includes('vertexaisearch.cloud.google.com');
 
-export function SignalsTab({ signals, isLoadingData, onOpenEntity }: { signals: SignalIntel | null; isLoadingData: boolean; onOpenEntity?: (name: string) => void }) {
+export function SignalsTab({ signals, isLoadingData, onOpenEntity, interestTags }: { signals: SignalIntel | null; isLoadingData: boolean; onOpenEntity?: (name: string) => void; interestTags?: string[] }) {
   if (isLoadingData) {
     return <div className="space-y-4"><SkeletonStat /><SkeletonStat /></div>;
   }
@@ -24,9 +24,37 @@ export function SignalsTab({ signals, isLoadingData, onOpenEntity }: { signals: 
 
   const accelCats = sig.categoryVelocity.filter(c => c.delta > 0).slice(0, 6);
 
+  // あなた事化: 興味タグに一致する加速分野・伸びるエンティティを先頭で強調（追加コスト0・クライアント側）
+  const tokens = (interestTags ?? []).map(t => t.toLowerCase()).filter(t => t.length >= 2);
+  const myCats = tokens.length ? sig.categoryVelocity.filter(c => c.delta > 0 && tokens.some(t => c.category.toLowerCase().includes(t) || t.includes(c.category.toLowerCase()))) : [];
+  const myEntities = tokens.length ? sig.risingEntities.filter(e => tokens.some(t => e.name.toLowerCase().includes(t))) : [];
+  const hasPersonal = myCats.length > 0 || myEntities.length > 0;
+
   return (
     <div className="space-y-6">
       <p className="text-[11px] text-slate-500">直近7日の動きを、その前3週の平均と比較した「加速シグナル」です（先読みの手がかり）。</p>
+
+      {hasPersonal && (
+        <div className="glass-card border-indigo-500/30 bg-indigo-500/5">
+          <h3 className="text-sm font-bold font-outfit mb-2 flex items-center gap-2">
+            <Target size={16} className="text-indigo-400" /> あなたに関係する動き
+          </h3>
+          <p className="text-[11px] text-slate-500 mb-3">あなたの興味に一致する、いま加速しているシグナルです</p>
+          <div className="flex flex-wrap gap-2">
+            {myCats.map(c => (
+              <span key={`c-${c.category}`} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs">
+                {c.category} <span className="font-mono text-[10px] flex items-center gap-0.5"><ArrowUpRight size={11} />+{c.delta}/週</span>
+              </span>
+            ))}
+            {myEntities.map(e => (
+              <button key={`e-${e.name}`} onClick={() => onOpenEntity?.(e.name)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/10 border border-sky-500/20 text-sky-300 text-xs ${onOpenEntity ? 'hover:bg-sky-500/20 transition-colors' : ''}`}>
+                {e.name} <span className="font-mono text-[10px] flex items-center gap-0.5"><ArrowUpRight size={11} />+{e.delta}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 研究/分野の加速 */}
       {accelCats.length > 0 && (
