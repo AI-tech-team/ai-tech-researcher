@@ -20,6 +20,7 @@ import { ResearchTab } from '@/components/tabs/ResearchTab';
 import { ReadingDnaTab } from '@/components/tabs/ReadingDnaTab';
 import { SignalsTab } from '@/components/tabs/SignalsTab';
 import { ProfileTab } from '@/components/tabs/ProfileTab';
+import { ArticleDetailModal } from '@/components/ArticleDetailModal';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
@@ -28,7 +29,7 @@ import {
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
   getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations, getCrossInsight,
   getSignalIntelligence, type SignalIntel,
-  getOwnerStatus, getMyProfile, updateMyProfile,
+  getOwnerStatus, getMyProfile, updateMyProfile, getArticleCounts,
 } from './actions';
 import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
@@ -102,6 +103,12 @@ export default function Home() {
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [focusArticleId, setFocusArticleId] = useState<number | null>(null);
+  const [detailArticleId, setDetailArticleId] = useState<number | null>(null);
+  const [articleCounts, setArticleCounts] = useState<{ total: number; unread: number; favorite: number; readLater: number } | null>(null);
+  const [articlesOffset, setArticlesOffset] = useState(0);
+  const [hasMoreArticles, setHasMoreArticles] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const ARTICLE_PAGE = 60;
   const [owner, setOwner] = useState<{ isOwner: boolean; passwordConfigured: boolean } | null>(null);
   const isOwner = owner?.isOwner === true;
   const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
@@ -134,18 +141,23 @@ export default function Home() {
   // コア（記事・ソース）＋概要タブ分のみ起動時に取得。分析系は開いた時に遅延ロード
   async function loadCore() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, clusters] = await Promise.all([
+    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, clusters, counts] = await Promise.all([
       getSourcesData(),
-      getCollectedDataList(),
+      getCollectedDataList(ARTICLE_PAGE, 0),
       getReportsData(),
       getActivityData(),
       getCategoryTrendData(),
       getModelMentionData(),
       getTrendingKeywords(),
       getTopicClusters(),
+      getArticleCounts(),
     ]);
     setSourcesList(srcs as Source[]);
-    setCollectedItems(data as CollectedItem[]);
+    const first = data as CollectedItem[];
+    setCollectedItems(first);
+    setArticlesOffset(first.length);
+    setHasMoreArticles(first.length === ARTICLE_PAGE);
+    setArticleCounts(counts);
     setReportsList(reportsData as Report[]);
     setActivityData(activity);
     setCategoryTrendData(catTrend);
@@ -154,6 +166,26 @@ export default function Home() {
     setTopicClusters(clusters as TopicCluster[]);
     setIsLoadingData(false);
   }
+
+  // 記事の段階ロード（100件上限を撤廃。DBオフセットで全アーカイブを順に取得）
+  async function loadMoreArticles() {
+    if (isLoadingMore || !hasMoreArticles) return;
+    setIsLoadingMore(true);
+    try {
+      const next = (await getCollectedDataList(ARTICLE_PAGE, articlesOffset)) as CollectedItem[];
+      setCollectedItems(prev => {
+        const seen = new Set(prev.map(i => i.id));
+        return [...prev, ...next.filter(i => !seen.has(i.id))];
+      });
+      setArticlesOffset(o => o + next.length);
+      setHasMoreArticles(next.length === ARTICLE_PAGE);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
+
+  // どこからでも記事を開ける共通導線（おすすめ/知識グラフ/チャット[ID]等）
+  const openArticle = (id: number) => setDetailArticleId(id);
 
   // インサイト各グループのデータ取得（実体）
   async function fetchGroup(g: InsightSub) {
@@ -229,6 +261,7 @@ export default function Home() {
 
   const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
+    setArticleCounts(c => c && { ...c, favorite: Math.max(0, c.favorite + (currentlyFavorited ? -1 : 1)) });
     toast(currentlyFavorited ? 'お気に入りを解除しました' : '⭐ お気に入りに追加しました', 'success');
     await toggleFavorite(id, currentlyFavorited);
   };
@@ -241,12 +274,14 @@ export default function Home() {
 
   const handleToggleReadLater = async (id: number, current: boolean) => {
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isReadLater: current ? 0 : 1 } : item));
+    setArticleCounts(c => c && { ...c, readLater: Math.max(0, c.readLater + (current ? -1 : 1)) });
     toast(current ? '「後で読む」を解除しました' : '🔖 「後で読む」に追加しました', 'success');
     await toggleReadLater(id, current);
   };
 
   const handleMarkAsRead = async (id: number, currentIsRead: boolean) => {
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isRead: currentIsRead ? 0 : 1 } : item));
+    setArticleCounts(c => c && { ...c, unread: Math.max(0, c.unread + (currentIsRead ? 1 : -1)) });
     await markAsRead(id, currentIsRead);
   };
 
@@ -303,6 +338,9 @@ export default function Home() {
         <motion.div key="data" {...SLIDE}>
           <DataTab collectedItems={collectedItems} isLoadingData={isLoadingData}
             interestTags={interestTags}
+            counts={articleCounts}
+            hasMore={hasMoreArticles} onLoadMore={loadMoreArticles} isLoadingMore={isLoadingMore}
+            onOpenArticle={openArticle}
             onToggleFavorite={handleToggleFavorite} onToggleReadLater={handleToggleReadLater}
             onMarkAsRead={handleMarkAsRead}
             focusArticleId={focusArticleId} onClearFocus={() => setFocusArticleId(null)} />
@@ -328,7 +366,7 @@ export default function Home() {
           {insightSub === 'knowledge' && (
             <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
               alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={insightLoading}
-              onNavigateToArticle={navigateToArticle} />
+              onNavigateToArticle={openArticle} />
           )}
           {insightSub === 'signals' && (
             <SignalsTab signals={signals} isLoadingData={insightLoading} />
@@ -339,7 +377,7 @@ export default function Home() {
           )}
           {insightSub === 'dna' && (
             <ReadingDnaTab profile={readingProfile} recommendations={recommendations} isLoadingData={insightLoading}
-              onNavigateToArticle={navigateToArticle} />
+              onNavigateToArticle={openArticle} />
           )}
           {insightSub === 'performance' && (
             <PerformanceTab sourcesList={sourcesList} collectedItems={collectedItems}
@@ -479,7 +517,7 @@ export default function Home() {
       {/* ── Desktop Chat Panel（オーナー限定）── */}
       {isOwner && (
         <div className="hidden md:flex">
-          <ChatPanel />
+          <ChatPanel onArticleRef={openArticle} />
         </div>
       )}
 
@@ -519,7 +557,17 @@ export default function Home() {
       )}
 
       {/* ── Mobile chat modal ── */}
-      {isOwner && <MobileChatModal isOpen={mobileChatOpen} onClose={() => setMobileChatOpen(false)} />}
+      {isOwner && <MobileChatModal isOpen={mobileChatOpen} onClose={() => setMobileChatOpen(false)} onArticleRef={openArticle} />}
+
+      {/* ── 記事詳細モーダル（おすすめ/知識グラフ/チャット[ID]等の共通ジャンプ先）── */}
+      <ArticleDetailModal
+        articleId={detailArticleId}
+        onClose={() => setDetailArticleId(null)}
+        onToggleFavorite={handleToggleFavorite}
+        onToggleReadLater={handleToggleReadLater}
+        onMarkAsRead={handleMarkAsRead}
+        onShowInList={(id) => { setDetailArticleId(null); navigateToArticle(id); }}
+      />
     </div>
   );
 }

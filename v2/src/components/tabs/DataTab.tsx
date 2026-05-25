@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Search, Brain, Award, Database, Eye, Tag, ChevronLeft, ChevronRight, Sparkles, Star, Bookmark } from 'lucide-react';
 import { ArticleCard } from '@/components/ArticleCard';
 import { SkeletonCard } from '@/components/Skeleton';
-import { semanticSearch } from '@/app/actions';
+import { semanticSearch, getPersonalizedFeed } from '@/app/actions';
 import { useToast } from '@/components/Toast';
 import type { CollectedItem } from '@/types';
 
@@ -12,6 +12,11 @@ interface DataTabProps {
   collectedItems: CollectedItem[];
   isLoadingData: boolean;
   interestTags: string[];
+  counts?: { total: number; unread: number; favorite: number; readLater: number } | null;
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  isLoadingMore?: boolean;
+  onOpenArticle?: (id: number) => void;
   onToggleFavorite: (id: number, current: boolean) => void;
   onToggleReadLater: (id: number, current: boolean) => void;
   onMarkAsRead: (id: number, current: boolean) => void;
@@ -21,6 +26,7 @@ interface DataTabProps {
 
 export function DataTab({
   collectedItems, isLoadingData, interestTags,
+  counts, hasMore, onLoadMore, isLoadingMore, onOpenArticle,
   onToggleFavorite, onToggleReadLater, onMarkAsRead, focusArticleId, onClearFocus,
 }: DataTabProps) {
   const { toast } = useToast();
@@ -29,6 +35,8 @@ export function DataTab({
   const [tagFilter, setTagFilter] = useState('all');
   const [isSemanticSearching, setIsSemanticSearching] = useState(false);
   const [semanticResults, setSemanticResults] = useState<CollectedItem[] | null>(null);
+  const [personalizedResults, setPersonalizedResults] = useState<CollectedItem[] | null>(null);
+  const [isPersonalizing, setIsPersonalizing] = useState(false);
   const [sortByImportance, setSortByImportance] = useState(false);
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [segment, setSegment] = useState<'new' | 'favorite' | 'readlater'>('new');
@@ -38,7 +46,7 @@ export function DataTab({
 
   // フィルタ変更時にページを先頭へ戻す（意図的なリセット）
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setPage(0); }, [searchQuery, categoryFilter, tagFilter, sortByImportance, unreadOnly, segment, semanticResults]);
+  useEffect(() => { setPage(0); }, [searchQuery, categoryFilter, tagFilter, sortByImportance, unreadOnly, segment, semanticResults, personalizedResults]);
 
   const categories = ['all', ...Array.from(new Set(collectedItems.map(i => i.category).filter(Boolean))) as string[]];
 
@@ -47,9 +55,9 @@ export function DataTab({
     collectedItems.flatMap(i => i.tags ?? []).filter(Boolean)
   )).sort();
 
-  const baseItems = semanticResults ?? collectedItems;
+  const baseItems = personalizedResults ?? semanticResults ?? collectedItems;
   const filteredItems = baseItems.filter(item => {
-    const matchSearch = !searchQuery || semanticResults != null ||
+    const matchSearch = !searchQuery || semanticResults != null || personalizedResults != null ||
       item.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.summary?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchCategory = categoryFilter === 'all' || item.category === categoryFilter;
@@ -61,7 +69,8 @@ export function DataTab({
 
   const sortedItems = [...filteredItems].sort((a, b) => {
     if (sortByImportance) return (b.importanceScore ?? 5) - (a.importanceScore ?? 5);
-    if (interestTags.length > 0) {
+    // あなた向け表示中はサーバーの関連度順を維持
+    if (!personalizedResults && interestTags.length > 0) {
       const aMatch = interestTags.some(tag => [a.title, a.summary, a.category].some(f => f?.toLowerCase().includes(tag.toLowerCase())));
       const bMatch = interestTags.some(tag => [b.title, b.summary, b.category].some(f => f?.toLowerCase().includes(tag.toLowerCase())));
       if (aMatch && !bMatch) return -1;
@@ -70,9 +79,10 @@ export function DataTab({
     return 0;
   });
 
-  const unreadCount = collectedItems.filter(i => !i.isRead).length;
-  const favCount = collectedItems.filter(i => i.isFavorited).length;
-  const readLaterCount = collectedItems.filter(i => i.isReadLater).length;
+  // バッジは全体件数（サーバーCOUNT）を優先。未取得時はロード済みから算出
+  const unreadCount = counts ? counts.unread : collectedItems.filter(i => !i.isRead).length;
+  const favCount = counts ? counts.favorite : collectedItems.filter(i => i.isFavorited).length;
+  const readLaterCount = counts ? counts.readLater : collectedItems.filter(i => i.isReadLater).length;
   const totalPages = Math.ceil(sortedItems.length / PAGE_SIZE);
   const pagedItems = sortedItems.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
@@ -105,11 +115,29 @@ export function DataTab({
     setIsSemanticSearching(true);
     try {
       const results = await semanticSearch(searchQuery);
+      setPersonalizedResults(null);
       setSemanticResults(results as CollectedItem[]);
     } catch {
       toast('AI検索に失敗しました', 'error');
     } finally {
       setIsSemanticSearching(false);
+    }
+  };
+
+  // あなた向け: 興味/目標ベクトルに近い記事をサーバーから取得して表示（トグル）
+  const handlePersonalized = async () => {
+    if (personalizedResults) { setPersonalizedResults(null); return; }
+    if (isPersonalizing) return;
+    setIsPersonalizing(true);
+    try {
+      const res = await getPersonalizedFeed(40) as CollectedItem[];
+      if (res.length === 0) { toast('プロフィールの興味・目標を設定すると使えます', 'info'); return; }
+      setSemanticResults(null);
+      setPersonalizedResults(res);
+    } catch {
+      toast('あなた向けの取得に失敗しました', 'error');
+    } finally {
+      setIsPersonalizing(false);
     }
   };
 
@@ -192,6 +220,14 @@ export function DataTab({
         ))}
         <div className="ml-auto flex items-center gap-2">
           <button
+            onClick={handlePersonalized}
+            disabled={isPersonalizing}
+            title="あなたの興味・目標に意味的に近い記事"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 ${personalizedResults ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+          >
+            <Sparkles size={12} className={isPersonalizing ? 'animate-pulse' : ''} /> あなた向け
+          </button>
+          <button
             onClick={() => setUnreadOnly(!unreadOnly)}
             className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${unreadOnly ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
           >
@@ -228,6 +264,7 @@ export function DataTab({
                 onToggleFavorite={onToggleFavorite}
                 onToggleReadLater={handleToggleReadLaterLocal}
                 onMarkAsRead={onMarkAsRead}
+                onOpenArticle={onOpenArticle}
                 highlighted={item.id === highlightId}
               />
             ))}
@@ -250,6 +287,15 @@ export function DataTab({
                 className="p-1.5 rounded-lg bg-white/5 text-slate-400 hover:bg-white/10 disabled:opacity-30 transition-colors"
               >
                 <ChevronRight size={15} />
+              </button>
+            </div>
+          )}
+          {/* 100件上限撤廃: 全アーカイブを段階ロード */}
+          {onLoadMore && hasMore && !semanticResults && !personalizedResults && page >= totalPages - 1 && (
+            <div className="flex justify-center pt-2">
+              <button onClick={onLoadMore} disabled={isLoadingMore}
+                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 text-xs font-bold transition-colors disabled:opacity-40">
+                {isLoadingMore ? '読み込み中...' : 'もっと読む'}
               </button>
             </div>
           )}

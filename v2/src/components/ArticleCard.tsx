@@ -20,6 +20,7 @@ interface ArticleCardProps {
   onToggleFavorite: (id: number, current: boolean) => void;
   onToggleReadLater: (id: number, current: boolean) => void;
   onMarkAsRead?: (id: number, current: boolean) => void;
+  onOpenArticle?: (id: number) => void;
   showReadLater?: boolean;
   highlighted?: boolean;
 }
@@ -35,7 +36,7 @@ function timeAgo(dateStr: string): string {
 }
 
 export function ArticleCard({
-  item, interestTags, onToggleFavorite, onToggleReadLater, onMarkAsRead, showReadLater = true, highlighted = false,
+  item, interestTags, onToggleFavorite, onToggleReadLater, onMarkAsRead, onOpenArticle, showReadLater = true, highlighted = false,
 }: ArticleCardProps) {
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const summaryRef = useRef<HTMLParagraphElement>(null);
@@ -158,7 +159,8 @@ export function ArticleCard({
 
         {/* Row 2: title（英語タイトルは日本語訳を主表示し、原題を小さく併記） */}
         <div>
-          <h4 className={`text-sm font-semibold leading-snug ${isRead ? 'text-slate-500' : 'text-slate-100 group-hover:text-white'} transition-colors`}>
+          <h4 onClick={() => onOpenArticle?.(item.id)}
+            className={`text-sm font-semibold leading-snug transition-colors ${isRead ? 'text-slate-500' : 'text-slate-100 group-hover:text-white'} ${onOpenArticle ? 'cursor-pointer hover:text-sky-300' : ''}`}>
             {item.titleJa || item.title || '無題'}
           </h4>
           {item.titleJa && item.title && item.titleJa !== item.title && (
