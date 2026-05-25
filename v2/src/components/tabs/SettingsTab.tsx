@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { Plus, Trash2, Hash, Globe, Zap, Tag, Cpu, UserCircle, Mail } from 'lucide-react';
+import { useState } from 'react';
+import { Plus, Trash2, Hash, Globe, Zap, Cpu, Lock } from 'lucide-react';
 import { SkeletonRow } from '@/components/Skeleton';
 import { useToast } from '@/components/Toast';
-import { getMyProfile, updateMyProfile } from '@/app/actions';
 import type { Source } from '@/types';
 
 const STATUS_STYLE: Record<string, string> = {
@@ -17,8 +16,7 @@ const STATUS_STYLE: Record<string, string> = {
 interface SettingsTabProps {
   sourcesList: Source[];
   isLoadingData: boolean;
-  interestTags: string[];
-  onInterestTagsChange: (tags: string[]) => void;
+  isOwner: boolean;
   onAddSource: (keyword: string) => Promise<void>;
   onDeleteSource: (id: number) => Promise<void>;
   onEvolve: () => Promise<void>;
@@ -35,35 +33,15 @@ const COLOR_CLS: Record<string, string> = {
 };
 
 export function SettingsTab({
-  sourcesList, isLoadingData, interestTags, onInterestTagsChange,
+  sourcesList, isLoadingData, isOwner,
   onAddSource, onDeleteSource, onEvolve, onReload,
 }: SettingsTabProps) {
   const { toast } = useToast();
   const [newKeyword, setNewKeyword] = useState('');
-  const [newTag, setNewTag] = useState('');
   const [collectState, setCollectState] = useState<RunState>('idle');
   const [evolveState, setEvolveState] = useState<RunState>('idle');
   const [recatState, setRecatState] = useState<RunState>('idle');
   const [isAdding, setIsAdding] = useState(false);
-
-  /* ── Profile (v6) ────────────────────────────────── */
-  const [profile, setProfile] = useState<{ email: string | null; displayName: string; interests: string; goals: string; emailOptIn: boolean } | null | undefined>(undefined);
-  const [savingProfile, setSavingProfile] = useState(false);
-  useEffect(() => {
-    getMyProfile().then(p => setProfile(p ? { email: p.email, displayName: p.displayName, interests: p.interests, goals: p.goals, emailOptIn: p.emailOptIn } : null)).catch(() => setProfile(null));
-  }, []);
-  const saveProfile = async () => {
-    if (!profile) return;
-    setSavingProfile(true);
-    try {
-      const r = await updateMyProfile({ displayName: profile.displayName, interests: profile.interests, goals: profile.goals, emailOptIn: profile.emailOptIn });
-      toast(r.success ? 'プロフィールを保存しました' : '保存に失敗しました', r.success ? 'success' : 'error');
-    } catch {
-      toast('保存に失敗しました', 'error');
-    } finally {
-      setSavingProfile(false);
-    }
-  };
 
   /* ── Manual triggers ─────────────────────────────── */
   const runCollect = async () => {
@@ -133,76 +111,27 @@ export function SettingsTab({
     }
   };
 
-  /* ── Interest tags ───────────────────────────────── */
-  const addTag = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const t = newTag.trim();
-    if (!t || interestTags.includes(t)) return;
-    const next = [...interestTags, t];
-    onInterestTagsChange(next);
-    localStorage.setItem('interestTags', JSON.stringify(next));
-    setNewTag('');
-  };
-
-  const removeTag = (tag: string) => {
-    const next = interestTags.filter(t => t !== tag);
-    onInterestTagsChange(next);
-    localStorage.setItem('interestTags', JSON.stringify(next));
-  };
-
   const btnLabel = (s: RunState, idle: string) =>
     s === 'running' ? '実行中...' : s === 'done' ? '完了' : s === 'error' ? 'エラー' : idle;
 
   const activeCount    = sourcesList.filter(s => s.status === 'active').length;
   const candidateCount = sourcesList.filter(s => s.status === 'candidate').length;
 
+  /* ── 非オーナー: 設定はオーナー専用 ── */
+  if (!isOwner) {
+    return (
+      <div className="glass-card flex flex-col items-center justify-center py-16 text-slate-400 gap-3">
+        <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center">
+          <Lock className="text-slate-500" size={22} />
+        </div>
+        <p className="text-sm">収集・ソース管理はオーナー専用です</p>
+        <p className="text-xs text-slate-600">プロフィール・興味の設定は「プロフィール」タブから行えます</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-
-      {/* ── Profile (v6) ────────────────────────────── */}
-      <section className="glass-card space-y-3">
-        <h3 className="font-mono text-xs font-bold text-slate-400 tracking-widest uppercase flex items-center gap-2">
-          <UserCircle size={13} className="text-sky-400" /> プロフィール
-        </h3>
-        {profile === undefined ? (
-          <p className="font-mono text-[11px] text-slate-600">読み込み中...</p>
-        ) : profile === null ? (
-          <p className="font-mono text-[11px] text-slate-600">ログインするとプロフィールを設定できます（左下「Googleでログイン」）。</p>
-        ) : (
-          <div className="space-y-3">
-            {profile.email && (
-              <p className="font-mono text-[10px] text-slate-500 flex items-center gap-1.5"><Mail size={11} />{profile.email}</p>
-            )}
-            <div>
-              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">表示名</label>
-              <input value={profile.displayName} maxLength={80}
-                onChange={e => setProfile(p => p && { ...p, displayName: e.target.value })}
-                className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-200 focus:outline-none focus:border-sky-500/40 transition-colors" />
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">興味（カンマ区切り）</label>
-              <input value={profile.interests} maxLength={500} placeholder="例: エージェント, RAG, 推論最適化"
-                onChange={e => setProfile(p => p && { ...p, interests: e.target.value })}
-                className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-200 focus:outline-none focus:border-sky-500/40 transition-colors" />
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">いま調べていること・目標</label>
-              <textarea value={profile.goals} maxLength={500} rows={2} placeholder="例: 業務でエージェント型RAGの導入を検討中"
-                onChange={e => setProfile(p => p && { ...p, goals: e.target.value })}
-                className="mt-1 w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-200 focus:outline-none focus:border-sky-500/40 transition-colors resize-none" />
-            </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={profile.emailOptIn}
-                onChange={e => setProfile(p => p && { ...p, emailOptIn: e.target.checked })}
-                className="accent-sky-500" />
-              <span className="text-xs text-slate-300">朝のパーソナライズbrief（今日読むべき記事）をこのメールで受け取る</span>
-            </label>
-            <button onClick={saveProfile} disabled={savingProfile} className="btn-primary disabled:opacity-40">
-              {savingProfile ? '保存中...' : 'プロフィールを保存'}
-            </button>
-          </div>
-        )}
-      </section>
 
       {/* ── Manual triggers ─────────────────────────── */}
       <section className="glass-card space-y-4">
@@ -226,30 +155,6 @@ export function SettingsTab({
             </button>
           ))}
         </div>
-      </section>
-
-      {/* ── Interest tags ────────────────────────────── */}
-      <section className="glass-card space-y-3">
-        <h3 className="font-mono text-xs font-bold text-slate-400 tracking-widest uppercase flex items-center gap-2">
-          <Tag size={13} className="text-amber-400" /> 興味タグ
-          <span className="text-slate-700 font-normal">— マッチした記事を優先表示</span>
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          {interestTags.map(tag => (
-            <span key={tag} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono text-xs">
-              {tag}
-              <button onClick={() => removeTag(tag)} className="hover:text-red-400 transition-colors leading-none">×</button>
-            </span>
-          ))}
-          <form onSubmit={addTag} className="flex gap-1">
-            <input value={newTag} onChange={e => setNewTag(e.target.value)}
-              placeholder="+ タグ追加" maxLength={30}
-              className="bg-white/5 border border-white/10 rounded-md font-mono text-xs text-slate-300 px-2.5 py-1 focus:outline-none focus:border-amber-500/40 w-28 transition-colors" />
-          </form>
-        </div>
-        {interestTags.length === 0 && (
-          <p className="font-mono text-[11px] text-slate-700">タグを追加すると、データタブで関連記事が優先表示されます</p>
-        )}
       </section>
 
       {/* ── Sources ─────────────────────────────────── */}

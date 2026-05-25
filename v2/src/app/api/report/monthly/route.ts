@@ -3,10 +3,12 @@ import { generateText } from 'ai';
 import { db } from '@/db';
 import { collectedData, reports } from '@/db/schema';
 import { desc, gte } from 'drizzle-orm';
+import { isOwner } from '@/lib/owner';
 
 export const maxDuration = 60;
 
 export async function POST() {
+  if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
   try {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
