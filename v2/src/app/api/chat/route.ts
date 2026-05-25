@@ -1,7 +1,7 @@
 import { google } from '@ai-sdk/google';
-import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai';
+import { streamText, convertToModelMessages, tool, stepCountIs, embedMany } from 'ai';
 import { z } from 'zod';
-import { db } from '@/db';
+import { db, client } from '@/db';
 import { collectedData, readingEvents, userArticleState, userProfiles } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { hybridSearch, graphContext, type RetrievedDoc } from '@/lib/retrieval';
@@ -25,6 +25,54 @@ function docsToContext(docs: RetrievedDoc[]): string {
     const body = d.snippet ? `${d.summary ?? ''}\n抜粋: ${d.snippet}` : (d.summary ?? '');
     return `[ID:${d.id}][${d.category ?? '未分類'}|重要度${d.importance}]${corrob} ${title}\n${body}${d.url ? `\nURL: ${d.url}` : ''}`;
   }).join('\n\n---\n\n');
+}
+
+// C 長期記憶: 過去の会話から関連する発話を意味検索して文脈に呼び出す
+async function recallMemory(userId: number, query: string): Promise<string> {
+  try {
+    if (!query.trim()) return '';
+    const { embeddings } = await embedMany({
+      model: google.embedding('gemini-embedding-001'),
+      values: [query.slice(0, 800)],
+      providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
+    });
+    const res = await client.execute({
+      sql: `SELECT cm.role AS role, cm.content AS content
+            FROM vector_top_k('chat_memory_embedding_idx', vector32(?), 12) AS v
+            JOIN chat_memory cm ON cm.rowid = v.id
+            WHERE cm.user_id = ? LIMIT 5`,
+      args: [JSON.stringify(embeddings[0]), userId],
+    });
+    if (res.rows.length === 0) return '';
+    return (res.rows as any[])
+      .map(r => `- [${r.role === 'user' ? 'あなた' : 'AI'}] ${String(r.content).replace(/\s+/g, ' ').slice(0, 280)}`)
+      .join('\n');
+  } catch {
+    return '';
+  }
+}
+
+// C 長期記憶: 1往復をユーザー別に保存（埋め込みはバッチ1回・非クリティカル）
+async function rememberExchange(userId: number, userText: string, assistantText: string) {
+  try {
+    const items: { role: string; text: string }[] = [];
+    if (userText.trim()) items.push({ role: 'user', text: userText.slice(0, 2000) });
+    if (assistantText.trim()) items.push({ role: 'assistant', text: assistantText.slice(0, 2000) });
+    if (items.length === 0) return;
+    const { embeddings } = await embedMany({
+      model: google.embedding('gemini-embedding-001'),
+      values: items.map(i => i.text),
+      providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_DOCUMENT' } },
+    });
+    for (let i = 0; i < items.length; i++) {
+      await client.execute({
+        sql: `INSERT INTO chat_memory (user_id, role, content, embedding) VALUES (?, ?, ?, vector32(?))`,
+        args: [userId, items[i].role, items[i].text, JSON.stringify(embeddings[i])],
+      });
+    }
+  } catch (e) {
+    console.warn('rememberExchange failed:', e);
+  }
 }
 
 // 記事IDを解決。articleId優先、無ければtitleOrQueryでハイブリッド検索の最上位を採用。
@@ -71,8 +119,8 @@ ${docsToContext(docs)}`,
     return result.toUIMessageStreamResponse();
   }
 
-  // 通常チャット: ハイブリッドRAG(記事＋パッセージ)＋GraphRAG(知識グラフ)で文脈注入
-  const [docs, graph, prof] = await Promise.all([
+  // 通常チャット: ハイブリッドRAG(記事＋パッセージ)＋GraphRAG(知識グラフ)＋長期記憶で文脈注入
+  const [docs, graph, prof, memory] = await Promise.all([
     hybridSearch(retrievalQuery || lastText, 8),
     graphContext(retrievalQuery || lastText),
     userId
@@ -80,8 +128,10 @@ ${docsToContext(docs)}`,
           .from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1)
           .then(r => r[0] ?? null).catch(() => null)
       : Promise.resolve(null),
+    userId ? recallMemory(userId, retrievalQuery || lastText) : Promise.resolve(''),
   ]);
   const graphBlock = graph ? `\n\n## 関連知識（知識グラフ：ベンチマーク/関係/事実）\n${graph}` : '';
+  const memoryBlock = memory ? `\n\n## 過去の会話の記憶（このユーザーとの以前のやり取り。文脈の継続に使う）\n${memory}` : '';
   // ユーザーの興味・目標を回答の方向性に反映（追加API呼び出しなし・トークン微増のみ）
   const personaBits: string[] = [];
   if (prof?.interests?.trim()) personaBits.push(`興味: ${prof.interests.trim()}`);
@@ -94,10 +144,11 @@ ${docsToContext(docs)}`,
     model: google('gemini-2.5-flash-lite'),
     messages: modelMessages,
     stopWhen: stepCountIs(4),
+    onFinish: async ({ text }) => { if (userId) await rememberExchange(userId, lastText, text); },
     system: `あなたは"Research Copilot"、AI Tech Researcherダッシュボードのアシスタントです。
 以下はユーザーの質問に関連して収集データベースを検索した記事です（各記事に[ID:数字]）:
 
-${docsToContext(docs)}${graphBlock}${personaBlock}
+${docsToContext(docs)}${graphBlock}${personaBlock}${memoryBlock}
 
 【回答ルール】
 - 回答は**上記の収集データに基づいて**ください。出典として[ID:数字]を示すと親切です。
