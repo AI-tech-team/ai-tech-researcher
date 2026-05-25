@@ -21,6 +21,7 @@ import { ReadingDnaTab } from '@/components/tabs/ReadingDnaTab';
 import { SignalsTab } from '@/components/tabs/SignalsTab';
 import { ProfileTab } from '@/components/tabs/ProfileTab';
 import { ArticleDetailModal } from '@/components/ArticleDetailModal';
+import { EntityPageModal } from '@/components/EntityPageModal';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
@@ -104,6 +105,7 @@ export default function Home() {
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [focusArticleId, setFocusArticleId] = useState<number | null>(null);
   const [detailArticleId, setDetailArticleId] = useState<number | null>(null);
+  const [detailEntityName, setDetailEntityName] = useState<string | null>(null);
   const [articleCounts, setArticleCounts] = useState<{ total: number; unread: number; favorite: number; readLater: number } | null>(null);
   const [articlesOffset, setArticlesOffset] = useState(0);
   const [hasMoreArticles, setHasMoreArticles] = useState(true);
@@ -186,6 +188,8 @@ export default function Home() {
 
   // どこからでも記事を開ける共通導線（おすすめ/知識グラフ/チャット[ID]等）
   const openArticle = (id: number) => setDetailArticleId(id);
+  // どこからでもエンティティ知識ページを開ける共通導線（リーダーボード/関係/シグナル等）
+  const openEntity = (name: string) => setDetailEntityName(name);
 
   // インサイト各グループのデータ取得（実体）
   async function fetchGroup(g: InsightSub) {
@@ -366,10 +370,10 @@ export default function Home() {
           {insightSub === 'knowledge' && (
             <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
               alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={insightLoading}
-              onNavigateToArticle={openArticle} />
+              onOpenEntity={openEntity} />
           )}
           {insightSub === 'signals' && (
-            <SignalsTab signals={signals} isLoadingData={insightLoading} />
+            <SignalsTab signals={signals} isLoadingData={insightLoading} onOpenEntity={openEntity} />
           )}
           {insightSub === 'research' && (
             <ResearchTab briefing={briefing} crossInsight={crossInsight} alerts={activeAlerts}
@@ -567,6 +571,14 @@ export default function Home() {
         onToggleReadLater={handleToggleReadLater}
         onMarkAsRead={handleMarkAsRead}
         onShowInList={(id) => { setDetailArticleId(null); navigateToArticle(id); }}
+      />
+
+      {/* ── エンティティ知識ページ（知識グラフ/シグナル等の共通ジャンプ先）── */}
+      <EntityPageModal
+        entityName={detailEntityName}
+        onClose={() => setDetailEntityName(null)}
+        onOpenArticle={(id) => { setDetailEntityName(null); openArticle(id); }}
+        onOpenEntity={openEntity}
       />
     </div>
   );
