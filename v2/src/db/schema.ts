@@ -183,6 +183,16 @@ export const alerts = sqliteTable("alerts", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+// C: 長期記憶。チャットの発話をユーザー別にベクトル保存し、セッションを跨いで文脈を継続。
+// embedding (F32_BLOB) はDrizzle非対応のため生SQLで管理（スキーマ外）。
+export const chatMemory = sqliteTable("chat_memory", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  role: text("role").notNull(), // 'user' | 'assistant'
+  content: text("content").notNull(),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
 // v6: マルチユーザー（Googleログイン）。記事/知識グラフは共有、ユーザー別データはuserIdで分離
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
