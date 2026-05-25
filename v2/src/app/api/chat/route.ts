@@ -2,10 +2,11 @@ import { google } from '@ai-sdk/google';
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { db } from '@/db';
-import { collectedData, readingEvents, userArticleState } from '@/db/schema';
+import { collectedData, readingEvents, userArticleState, userProfiles } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { hybridSearch, graphContext, type RetrievedDoc } from '@/lib/retrieval';
 import { auth } from '@/auth';
+import { isOwner } from '@/lib/owner';
 
 export const maxDuration = 60;
 
@@ -42,6 +43,7 @@ const targetSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  if (!(await isOwner())) return Response.json({ error: 'オーナー権限が必要です' }, { status: 403 });
   const { messages } = await req.json();
   const modelMessages = await convertToModelMessages(messages);
   const userId = ((await auth())?.user as { id?: number } | undefined)?.id;
@@ -70,11 +72,23 @@ ${docsToContext(docs)}`,
   }
 
   // 通常チャット: ハイブリッドRAG(記事＋パッセージ)＋GraphRAG(知識グラフ)で文脈注入
-  const [docs, graph] = await Promise.all([
+  const [docs, graph, prof] = await Promise.all([
     hybridSearch(retrievalQuery || lastText, 8),
     graphContext(retrievalQuery || lastText),
+    userId
+      ? db.select({ interests: userProfiles.interests, goals: userProfiles.goals })
+          .from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1)
+          .then(r => r[0] ?? null).catch(() => null)
+      : Promise.resolve(null),
   ]);
   const graphBlock = graph ? `\n\n## 関連知識（知識グラフ：ベンチマーク/関係/事実）\n${graph}` : '';
+  // ユーザーの興味・目標を回答の方向性に反映（追加API呼び出しなし・トークン微増のみ）
+  const personaBits: string[] = [];
+  if (prof?.interests?.trim()) personaBits.push(`興味: ${prof.interests.trim()}`);
+  if (prof?.goals?.trim()) personaBits.push(`いま調べていること/目標: ${prof.goals.trim()}`);
+  const personaBlock = personaBits.length
+    ? `\n\n## ユーザーのプロフィール（回答の方向性・具体例の選択に反映する）\n${personaBits.join('\n')}`
+    : '';
 
   const result = streamText({
     model: google('gemini-2.5-flash-lite'),
@@ -83,7 +97,7 @@ ${docsToContext(docs)}`,
     system: `あなたは"Research Copilot"、AI Tech Researcherダッシュボードのアシスタントです。
 以下はユーザーの質問に関連して収集データベースを検索した記事です（各記事に[ID:数字]）:
 
-${docsToContext(docs)}${graphBlock}
+${docsToContext(docs)}${graphBlock}${personaBlock}
 
 【回答ルール】
 - 回答は**上記の収集データに基づいて**ください。出典として[ID:数字]を示すと親切です。

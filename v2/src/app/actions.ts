@@ -4,7 +4,9 @@ import { db, client } from '@/db';
 import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState, userProfiles, users } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, lt, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
 import { auth } from '@/auth';
+import { isOwner, verifyOwnerPassword, ownerToken, ownerPasswordConfigured, OWNER_COOKIE } from '@/lib/owner';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
 import { cached } from '@/lib/cache';
@@ -65,6 +67,30 @@ async function currentUserId(): Promise<number | undefined> {
     const session = await auth();
     return (session?.user as { id?: number } | undefined)?.id;
   } catch { return undefined; }
+}
+
+// ─── v6: オーナー解錠（パスワード）──────────────────────────────────
+export async function unlockOwner(password: string) {
+  if (!verifyOwnerPassword(password)) return { success: false };
+  const c = await cookies();
+  c.set(OWNER_COOKIE, ownerToken(), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 60 * 60 * 24 * 30, // 30日
+  });
+  return { success: true };
+}
+
+export async function lockOwner() {
+  const c = await cookies();
+  c.delete(OWNER_COOKIE);
+  return { success: true };
+}
+
+export async function getOwnerStatus(): Promise<{ isOwner: boolean; passwordConfigured: boolean }> {
+  return { isOwner: await isOwner(), passwordConfigured: ownerPasswordConfigured() };
 }
 
 // v6: 取得済み記事リストに、ログインユーザーのお気に入り/後で読む/既読を上書き
@@ -499,6 +525,7 @@ export async function getKeywordCategoryMatrix() {
 // ─── データ操作 ───────────────────────────────────────────────────
 
 export async function addSource(value: string, type: string = 'keyword') {
+  if (!(await isOwner())) return { success: false, needOwner: true, message: 'オーナー権限が必要です' };
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > 100) {
     return { success: false, message: 'キーワードは1〜100文字にしてください' };
@@ -514,6 +541,7 @@ export async function addSource(value: string, type: string = 'keyword') {
 }
 
 export async function deleteSource(id: number) {
+  if (!(await isOwner())) return { success: false, needOwner: true };
   try {
     await db.delete(sources).where(eq(sources.id, id));
     revalidatePath('/');
@@ -931,6 +959,8 @@ export async function getSignalIntelligence(): Promise<SignalIntel> {
 export interface MyProfile {
   email: string | null;
   name: string | null;
+  image: string | null;
+  memberSince: string | null;
   displayName: string;
   interests: string;
   goals: string;
@@ -941,11 +971,14 @@ export async function getMyProfile(): Promise<MyProfile | null> {
   try {
     const userId = await currentUserId();
     if (!userId) return null;
-    const [u] = await db.select({ email: users.email, name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
+    const [u] = await db.select({ email: users.email, name: users.name, image: users.image, createdAt: users.createdAt })
+      .from(users).where(eq(users.id, userId)).limit(1);
     const [p] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
     return {
       email: u?.email ?? null,
       name: u?.name ?? null,
+      image: u?.image ?? null,
+      memberSince: u?.createdAt ?? null,
       displayName: p?.displayName ?? '',
       interests: p?.interests ?? '',
       goals: p?.goals ?? '',
@@ -954,6 +987,32 @@ export async function getMyProfile(): Promise<MyProfile | null> {
   } catch (error) {
     console.error('getMyProfile failed:', error);
     return null;
+  }
+}
+
+export interface ProfileStats { favorited: number; readLater: number; read: number; events: number; }
+
+// プロフィール統計（ユーザー別の記事状態件数・行動ログ総数）。軽いCOUNT/SUMのみ
+export async function getProfileStats(): Promise<ProfileStats> {
+  const empty: ProfileStats = { favorited: 0, readLater: 0, read: 0, events: 0 };
+  try {
+    const userId = await currentUserId();
+    if (!userId) return empty;
+    const [agg] = await db.select({
+      favorited: sql<number>`COALESCE(SUM(${userArticleState.isFavorited}), 0)`,
+      readLater: sql<number>`COALESCE(SUM(${userArticleState.isReadLater}), 0)`,
+      read: sql<number>`COALESCE(SUM(${userArticleState.isRead}), 0)`,
+    }).from(userArticleState).where(eq(userArticleState.userId, userId));
+    const [ev] = await db.select({ c: count() }).from(readingEvents).where(eq(readingEvents.userId, userId));
+    return {
+      favorited: Number(agg?.favorited ?? 0),
+      readLater: Number(agg?.readLater ?? 0),
+      read: Number(agg?.read ?? 0),
+      events: Number(ev?.c ?? 0),
+    };
+  } catch (error) {
+    console.error('getProfileStats failed:', error);
+    return empty;
   }
 }
 
@@ -1106,6 +1165,7 @@ export async function getActiveAlerts(): Promise<AlertItem[]> {
 }
 
 export async function dismissAlert(id: number) {
+  if (!(await isOwner())) return { success: false, needOwner: true };
   try {
     await db.update(alerts).set({ status: 'dismissed' }).where(eq(alerts.id, id));
     revalidatePath('/');

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutGrid, Globe, FileText, Settings,
-  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut, Radar,
+  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut, Radar, UserCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession, signIn, signOut } from 'next-auth/react';
@@ -19,6 +19,7 @@ import { KnowledgeTab } from '@/components/tabs/KnowledgeTab';
 import { ResearchTab } from '@/components/tabs/ResearchTab';
 import { ReadingDnaTab } from '@/components/tabs/ReadingDnaTab';
 import { SignalsTab } from '@/components/tabs/SignalsTab';
+import { ProfileTab } from '@/components/tabs/ProfileTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
@@ -27,11 +28,12 @@ import {
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
   getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations, getCrossInsight,
   getSignalIntelligence, type SignalIntel,
+  getOwnerStatus, getMyProfile, updateMyProfile,
 } from './actions';
 import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
 // トップレベルタブ（日次コア=概要/記事、分析系はinsightに集約。後で読むは記事タブ内へ）
-type Tab = 'overview' | 'data' | 'reports' | 'insight' | 'settings';
+type Tab = 'overview' | 'data' | 'reports' | 'insight' | 'settings' | 'profile';
 // 分析(insight)配下のサブタブ
 type InsightSub = 'knowledge' | 'research' | 'dna' | 'performance' | 'signals';
 
@@ -41,9 +43,10 @@ const TAB_LABELS: Record<Tab, string> = {
   reports: '調査レポート',
   insight: '分析',
   settings: '設定',
+  profile: 'プロフィール',
 };
 const TAB_SHORT: Record<Tab, string> = {
-  overview: '概要', data: '記事', reports: 'レポート', insight: '分析', settings: '設定',
+  overview: '概要', data: '記事', reports: 'レポート', insight: '分析', settings: '設定', profile: 'プロフ',
 };
 
 const INSIGHT_SUBS: { id: InsightSub; label: string; icon: React.ReactNode }[] = [
@@ -99,16 +102,34 @@ export default function Home() {
   const [interestTags, setInterestTags] = useState<string[]>([]);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [focusArticleId, setFocusArticleId] = useState<number | null>(null);
+  const [owner, setOwner] = useState<{ isOwner: boolean; passwordConfigured: boolean } | null>(null);
+  const isOwner = owner?.isOwner === true;
+  const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
 
-  useEffect(() => {
-    loadCore();
-    try {
-      const saved = localStorage.getItem('interestTags');
-      // localStorageからの初期化（マウント時のみ・意図的）
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (saved) setInterestTags(JSON.parse(saved));
-    } catch {}
-  }, []);
+  const refreshOwner = () => { getOwnerStatus().then(setOwner).catch(() => setOwner(null)); };
+  // オーナー状態はCookie（解錠）＋セッション（id===1フォールバック）に依存するため、ログイン変化で再取得
+  useEffect(() => { refreshOwner(); }, [sessionUserId]);
+
+  useEffect(() => { loadCore(); }, []);
+
+  // 興味はDB(プロフィール)を正とする。未ログインはlocalStorageで従来動作。
+  // 初回ログイン時にDBが空でlocalStorageに旧タグがあれば移行→クリア（オーナーの既存タグを失わない）。
+  useEffect(() => { loadInterests(); }, [sessionUserId]);
+
+  async function loadInterests() {
+    let local: string[] = [];
+    try { const s = localStorage.getItem('interestTags'); if (s) local = JSON.parse(s); } catch {}
+    const profile = await getMyProfile().catch(() => null);
+    if (!profile) { setInterestTags(Array.isArray(local) ? local : []); return; }
+    const dbTags = [...new Set((profile.interests ?? '').split(/[,、\s]+/).map(t => t.trim()).filter(Boolean))];
+    if (dbTags.length === 0 && local.length > 0) {
+      const r = await updateMyProfile({ displayName: profile.displayName, interests: local.join(', '), goals: profile.goals, emailOptIn: profile.emailOptIn }).catch(() => ({ success: false }));
+      setInterestTags(local);
+      if (r.success) { try { localStorage.removeItem('interestTags'); } catch {} }
+    } else {
+      setInterestTags(dbTags);
+    }
+  }
 
   // コア（記事・ソース）＋概要タブ分のみ起動時に取得。分析系は開いた時に遅延ロード
   async function loadCore() {
@@ -255,13 +276,15 @@ export default function Home() {
     ['reports', <FileText key="reports" size={19} />, '調査レポート'],
     ['insight', <Layers key="insight" size={19} />, '分析'],
     ['settings', <Settings key="settings" size={19} />, '設定'],
+    ['profile', <UserCircle key="profile" size={19} />, 'プロフィール'],
   ];
   const mobileNavItems: [Tab, React.ReactNode][] = [
-    ['overview', <LayoutGrid key="overview" size={22} />],
-    ['data', <Globe key="data" size={22} />],
-    ['reports', <FileText key="reports" size={22} />],
-    ['insight', <Layers key="insight" size={22} />],
-    ['settings', <Settings key="settings" size={22} />],
+    ['overview', <LayoutGrid key="overview" size={21} />],
+    ['data', <Globe key="data" size={21} />],
+    ['reports', <FileText key="reports" size={21} />],
+    ['insight', <Layers key="insight" size={21} />],
+    ['settings', <Settings key="settings" size={21} />],
+    ['profile', <UserCircle key="profile" size={21} />],
   ];
 
   const insightLoading = !loadedGroups[insightSub];
@@ -328,9 +351,18 @@ export default function Home() {
       {activeTab === 'settings' && (
         <motion.div key="settings" {...SLIDE}>
           <SettingsTab sourcesList={sourcesList} isLoadingData={isLoadingData}
-            interestTags={interestTags} onInterestTagsChange={setInterestTags}
+            isOwner={isOwner}
             onAddSource={handleAddSource} onDeleteSource={handleDeleteSource}
             onEvolve={handleEvolve} onReload={refresh} />
+        </motion.div>
+      )}
+      {activeTab === 'profile' && (
+        <motion.div key="profile" {...SLIDE}>
+          <ProfileTab
+            onInterestsChange={setInterestTags}
+            onOwnerChange={() => { refreshOwner(); refresh(); }}
+            onNavigateToDna={() => { setActiveTab('insight'); selectInsight('dna'); }}
+          />
         </motion.div>
       )}
     </AnimatePresence>
@@ -367,12 +399,13 @@ export default function Home() {
         <div className="mt-auto flex flex-col gap-2">
           {/* Googleログイン */}
           {session?.user ? (
-            <div className="flex items-center gap-2 px-2 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
+            <div onClick={() => selectTab('profile')} title="プロフィールを開く"
+              className={`flex items-center gap-2 px-2 py-2 rounded-lg border bg-white/[0.02] cursor-pointer transition-colors ${activeTab === 'profile' ? 'border-sky-500/40 bg-sky-500/5' : 'border-white/5 hover:bg-white/5'}`}>
               {session.user.image
                 ? <img src={session.user.image} alt="" className="w-6 h-6 rounded-full flex-shrink-0" />
                 : <div className="w-6 h-6 rounded-full bg-sky-500/20 flex items-center justify-center text-sky-400 text-[10px] font-bold flex-shrink-0">{(session.user.name ?? session.user.email ?? '?').slice(0, 1)}</div>}
               <span className="text-[11px] text-slate-300 truncate flex-1" title={session.user.email ?? ''}>{session.user.name ?? session.user.email}</span>
-              <button onClick={() => signOut()} title="ログアウト" className="p-1 rounded hover:bg-white/10 text-slate-500 hover:text-red-400 transition-colors flex-shrink-0">
+              <button onClick={(e) => { e.stopPropagation(); signOut(); }} title="ログアウト" className="p-1 rounded hover:bg-white/10 text-slate-500 hover:text-red-400 transition-colors flex-shrink-0">
                 <LogOut size={13} />
               </button>
             </div>
@@ -402,11 +435,13 @@ export default function Home() {
         <div className="hidden md:flex flex-col gap-3 px-6 pt-5 pb-4 border-b border-white/5">
           <div className="flex items-center justify-between">
             <h1 className="text-lg font-bold font-outfit">{currentLabel}</h1>
-            <button onClick={handleSyncData} disabled={isSyncing}
-              className={`btn-primary flex items-center gap-1.5 ${isSyncing ? 'opacity-40 cursor-not-allowed' : ''}`}>
-              <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
-              {isSyncing ? '同期中' : '同期'}
-            </button>
+            {isOwner && (
+              <button onClick={handleSyncData} disabled={isSyncing}
+                className={`btn-primary flex items-center gap-1.5 ${isSyncing ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
+                {isSyncing ? '同期中' : '同期'}
+              </button>
+            )}
           </div>
           {/* Slim status line */}
           <div className="flex items-center gap-3.5 font-mono text-[11px] text-slate-500">
@@ -426,11 +461,13 @@ export default function Home() {
             <div className="live-dot" />
             <span className="font-mono text-[11px] text-slate-400 tracking-wide">{currentLabel}</span>
           </div>
-          <button onClick={handleSyncData} disabled={isSyncing}
-            className="btn-primary flex items-center gap-1.5 disabled:opacity-40">
-            <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
-            {isSyncing ? '同期中...' : '同期'}
-          </button>
+          {isOwner && (
+            <button onClick={handleSyncData} disabled={isSyncing}
+              className="btn-primary flex items-center gap-1.5 disabled:opacity-40">
+              <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+              {isSyncing ? '同期中...' : '同期'}
+            </button>
+          )}
         </div>
 
         {/* Tab content */}
@@ -439,10 +476,12 @@ export default function Home() {
         </div>
       </main>
 
-      {/* ── Desktop Chat Panel ── */}
-      <div className="hidden md:flex">
-        <ChatPanel />
-      </div>
+      {/* ── Desktop Chat Panel（オーナー限定）── */}
+      {isOwner && (
+        <div className="hidden md:flex">
+          <ChatPanel />
+        </div>
+      )}
 
       {/* ── Mobile bottom navigation ── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-white/10 flex safe-area-inset-bottom">
@@ -468,17 +507,19 @@ export default function Home() {
         })}
       </nav>
 
-      {/* ── Mobile floating chat button ── */}
-      <button
-        onClick={() => setMobileChatOpen(true)}
-        className="md:hidden fixed bottom-20 right-4 z-40 w-12 h-12 rounded-full bg-gradient-to-br from-sky-500 to-purple-500 flex items-center justify-center shadow-lg shadow-purple-500/30 active:scale-95 transition-transform"
-        aria-label="Geminiチャットを開く"
-      >
-        <Sparkles size={20} className="text-white" />
-      </button>
+      {/* ── Mobile floating chat button（オーナー限定）── */}
+      {isOwner && (
+        <button
+          onClick={() => setMobileChatOpen(true)}
+          className="md:hidden fixed bottom-20 right-4 z-40 w-12 h-12 rounded-full bg-gradient-to-br from-sky-500 to-purple-500 flex items-center justify-center shadow-lg shadow-purple-500/30 active:scale-95 transition-transform"
+          aria-label="Geminiチャットを開く"
+        >
+          <Sparkles size={20} className="text-white" />
+        </button>
+      )}
 
       {/* ── Mobile chat modal ── */}
-      <MobileChatModal isOpen={mobileChatOpen} onClose={() => setMobileChatOpen(false)} />
+      {isOwner && <MobileChatModal isOpen={mobileChatOpen} onClose={() => setMobileChatOpen(false)} />}
     </div>
   );
 }

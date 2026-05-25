@@ -4,6 +4,7 @@ import { db } from '@/db';
 import { sources, collectedData } from '@/db/schema';
 import { eq, sql, and } from 'drizzle-orm';
 import { withRetry, extractJson, resolveGroundingUrl } from '@/lib/llm';
+import { isOwner } from '@/lib/owner';
 
 export const maxDuration = 60;
 
@@ -181,6 +182,7 @@ importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価。tags
 }
 
 export async function POST() {
+  if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
   try {
     // 1件のソース失敗でSYNC全体を失敗にしないため、複数候補を順に試行
     const candidates = await db.select().from(sources)

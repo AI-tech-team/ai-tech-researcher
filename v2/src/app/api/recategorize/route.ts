@@ -5,6 +5,7 @@ import { db } from '@/db';
 import { collectedData } from '@/db/schema';
 import { eq, isNull, or, inArray } from 'drizzle-orm';
 import { withRetry } from '@/lib/llm';
+import { isOwner } from '@/lib/owner';
 
 export const maxDuration = 60;
 
@@ -18,6 +19,7 @@ const RecatSchema = z.object({
 });
 
 export async function POST() {
+  if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
   try {
     // カテゴリが未設定またはその他の記事を対象（最大40件）
     const items = await db.select({ id: collectedData.id, title: collectedData.title, summary: collectedData.summary })
