@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { Trophy, Network, AlertTriangle, Sparkles, TrendingUp, TrendingDown, Minus, ExternalLink, Crown, ArrowRight, BookOpen, X } from 'lucide-react';
+import { Trophy, Network, AlertTriangle, Sparkles, TrendingUp, TrendingDown, Minus, ExternalLink, Crown, ArrowRight, BookOpen } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { SkeletonStat } from '@/components/Skeleton';
-import { getKnowledgeEntities, getEntityKnowledgePage, type EntityListItem, type EntityPage } from '@/app/actions';
+import { getKnowledgeEntities, type EntityListItem } from '@/app/actions';
 import type { BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats } from '@/types';
 
 const ENTITY_COLORS = ['#38bdf8', '#f472b6', '#34d399', '#fb923c', '#a78bfa'];
@@ -30,12 +30,6 @@ const RANK_MEDAL = ['🥇', '🥈', '🥉'];
 // 出典URLが安全（実URL・404リダイレクトでない）かを判定
 const isValidSourceUrl = (u: string | null) => !!u && /^https?:\/\//.test(u) && !u.includes('vertexaisearch.cloud.google.com');
 
-// 関係タイプ→日本語ラベル
-const RELATION_LABEL: Record<string, string> = {
-  outperforms: '性能で上回る', supersedes: '置き換え', competes_with: '競合',
-  builds_on: '基づく', acquired_by: '買収', cites: '引用',
-};
-
 function TrendIcon({ trend }: { trend: 'up' | 'down' | 'flat' | 'new' }) {
   if (trend === 'up') return <TrendingUp size={12} className="text-emerald-400" />;
   if (trend === 'down') return <TrendingDown size={12} className="text-red-400" />;
@@ -49,15 +43,12 @@ interface KnowledgeTabProps {
   alerts: BenchmarkAlert[];
   stats: KnowledgeStats;
   isLoadingData: boolean;
-  onNavigateToArticle?: (id: number) => void;
+  onOpenEntity?: (name: string) => void;
 }
 
-export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoadingData, onNavigateToArticle }: KnowledgeTabProps) {
-  // v5: 生きた知識ページ（エンティティ単位の統合ビュー）
+export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoadingData, onOpenEntity }: KnowledgeTabProps) {
+  // v5: 生きた知識ページ（エンティティ単位の統合ビュー。詳細はページ共通モーダルで開く）
   const [entityList, setEntityList] = useState<EntityListItem[]>([]);
-  const [selectedName, setSelectedName] = useState<string | null>(null);
-  const [page, setPage] = useState<EntityPage | null>(null);
-  const [pageLoading, setPageLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -65,13 +56,6 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
     return () => { alive = false; };
   }, []);
 
-  const openEntity = async (name: string) => {
-    setSelectedName(name);
-    setPageLoading(true);
-    setPage(null);
-    try { setPage(await getEntityKnowledgePage(name)); } catch { /* noop */ }
-    finally { setPageLoading(false); }
-  };
   const statCards = [
     { label: 'エンティティ', value: stats.entities, color: 'text-sky-400' },
     { label: 'ベンチマーク記録', value: stats.benchmarks, color: 'text-amber-400' },
@@ -113,87 +97,12 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {entityList.map(e => (
-              <button key={e.id} onClick={() => openEntity(e.name)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${selectedName === e.name ? 'bg-cyan-500 text-white' : 'bg-white/5 text-slate-300 hover:bg-white/10'}`}>
+              <button key={e.id} onClick={() => onOpenEntity?.(e.name)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors bg-white/5 text-slate-300 hover:bg-cyan-500/15 hover:text-cyan-200">
                 {e.name}
                 <span className="font-mono text-[9px] opacity-60">{e.mentions}</span>
               </button>
             ))}
-          </div>
-        )}
-
-        {selectedName && (
-          <div className="glass-card border-cyan-500/20 mt-3">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-base font-bold font-outfit text-white flex items-center gap-2">
-                {selectedName}
-                {page?.type && <span className="font-mono text-[10px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 rounded">{page.type}</span>}
-              </h4>
-              <button onClick={() => { setSelectedName(null); setPage(null); }} className="p-1 rounded hover:bg-white/10 text-slate-500"><X size={15} /></button>
-            </div>
-            {pageLoading ? (
-              <p className="text-xs text-slate-500">読み込み中...</p>
-            ) : !page ? (
-              <p className="text-xs text-slate-500">情報を取得できませんでした</p>
-            ) : (page.benchmarks.length === 0 && page.relations.length === 0 && page.claims.length === 0 && page.articles.length === 0) ? (
-              <p className="text-xs text-slate-500">このエンティティの詳細情報はまだありません</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {page.benchmarks.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-amber-300 mb-1.5 flex items-center gap-1"><Trophy size={12} />ベンチマーク</p>
-                    <div className="flex flex-col gap-1">
-                      {page.benchmarks.map((b, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          <span className="text-slate-300 truncate flex-1">{b.benchmark}</span>
-                          <span className="font-mono text-amber-300">{b.score}{b.unit ?? ''}</span>
-                          {b.date && <span className="font-mono text-[10px] text-slate-600">{b.date}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {page.relations.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-indigo-300 mb-1.5 flex items-center gap-1"><Network size={12} />関係</p>
-                    <div className="flex flex-col gap-1">
-                      {page.relations.map((r, i) => (
-                        <div key={i} className="flex items-center gap-1.5 text-xs">
-                          <span className="font-mono text-[10px] text-slate-500 flex-shrink-0">{RELATION_LABEL[r.type] ?? r.type}</span>
-                          <ArrowRight size={11} className={`text-indigo-400 flex-shrink-0 ${r.dir === 'in' ? 'rotate-180' : ''}`} />
-                          <span className="text-slate-200 truncate">{r.other}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {page.claims.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-emerald-300 mb-1.5 flex items-center gap-1"><Sparkles size={12} />判明している事実</p>
-                    <div className="flex flex-col gap-1">
-                      {page.claims.map((c, i) => (
-                        <div key={i} className="text-xs text-slate-300"><span className="text-slate-500">{c.predicate}:</span> {c.value}</div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {page.articles.length > 0 && (
-                  <div>
-                    <p className="text-[11px] font-bold text-sky-300 mb-1.5 flex items-center gap-1"><ExternalLink size={12} />関連記事</p>
-                    <div className="flex flex-col gap-1">
-                      {page.articles.map(a => (
-                        <button key={a.id} onClick={() => onNavigateToArticle?.(a.id)}
-                          className="flex items-center gap-2 text-left text-xs text-slate-300 hover:text-white rounded px-1.5 py-1 hover:bg-white/5 transition-colors group">
-                          <span className="truncate flex-1">{a.title}</span>
-                          <span className="font-mono text-[10px] text-slate-600 flex-shrink-0">★{a.importance}</span>
-                          <ArrowRight size={11} className="text-slate-600 group-hover:text-sky-400 flex-shrink-0" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -208,9 +117,11 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
             {alerts.map((a, i) => (
               <div key={i} className="rounded-xl border border-red-500/10 bg-red-500/5 p-3 flex items-center gap-2 flex-wrap text-xs">
                 <span className="font-mono text-[10px] text-red-400 font-bold uppercase tracking-wider">{a.benchmarkName}</span>
-                <span className="text-white font-semibold">{a.newLeader}</span>
+                <button onClick={() => onOpenEntity?.(a.newLeader)}
+                  className={`text-white font-semibold ${onOpenEntity ? 'hover:text-cyan-300 transition-colors' : ''}`}>{a.newLeader}</button>
                 <span className="text-slate-400">が</span>
-                <span className="text-slate-400 line-through">{a.prevLeader}</span>
+                <button onClick={() => onOpenEntity?.(a.prevLeader)}
+                  className={`text-slate-400 line-through ${onOpenEntity ? 'hover:text-cyan-300 transition-colors' : ''}`}>{a.prevLeader}</button>
                 <span className="text-slate-400">を上回った</span>
                 <span className="ml-auto font-mono text-[11px] text-red-300">{a.prevScore} → {a.newScore}</span>
                 {a.date && <span className="font-mono text-[10px] text-slate-600">{a.date}</span>}
@@ -254,9 +165,10 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
                         {RANK_MEDAL[i] ?? <span className="text-slate-600 font-mono text-[10px]">{i + 1}</span>}
                       </span>
                       {i === 0 && <Crown size={12} className="text-amber-400 flex-shrink-0" />}
-                      <span className={`text-xs truncate flex-1 ${i === 0 ? 'text-white font-bold' : 'text-slate-200'}`} title={e.entityName}>
+                      <button onClick={() => onOpenEntity?.(e.entityName)} title={e.entityName}
+                        className={`text-xs truncate flex-1 text-left ${i === 0 ? 'text-white font-bold' : 'text-slate-200'} ${onOpenEntity ? 'hover:text-cyan-300 transition-colors' : ''}`}>
                         {e.entityName}
-                      </span>
+                      </button>
                       <TrendIcon trend={e.trend} />
                       <span className={`font-mono text-xs flex-shrink-0 ${i === 0 ? 'text-amber-300 font-bold' : 'text-slate-300'}`}>{e.score}</span>
                       {isValidSourceUrl(e.sourceUrl) && (
@@ -314,9 +226,11 @@ export function KnowledgeTab({ leaderboards, relations, alerts, stats, isLoading
                 <div className="flex flex-col gap-1.5">
                   {g.items.slice(0, 12).map(r => (
                     <div key={r.id} className="flex items-center gap-1.5 text-xs">
-                      <span className="text-slate-200 font-medium truncate max-w-[42%]" title={r.subjectName}>{r.subjectName}</span>
+                      <button onClick={() => onOpenEntity?.(r.subjectName)} title={r.subjectName}
+                        className={`text-slate-200 font-medium truncate max-w-[42%] text-left ${onOpenEntity ? 'hover:text-cyan-300 transition-colors' : ''}`}>{r.subjectName}</button>
                       <ArrowRight size={12} style={{ color: g.color }} className="flex-shrink-0" />
-                      <span className="text-slate-300 truncate max-w-[42%]" title={r.objectName}>{r.objectName}</span>
+                      <button onClick={() => onOpenEntity?.(r.objectName)} title={r.objectName}
+                        className={`text-slate-300 truncate max-w-[42%] text-left ${onOpenEntity ? 'hover:text-cyan-300 transition-colors' : ''}`}>{r.objectName}</button>
                       {r.status === 'inferred' && (
                         <span className="flex items-center gap-0.5 font-mono text-[9px] text-purple-300 border border-purple-500/20 bg-purple-500/10 px-1 rounded flex-shrink-0">
                           <Sparkles size={8} />推論

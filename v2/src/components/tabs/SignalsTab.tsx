@@ -6,7 +6,7 @@ import type { SignalIntel } from '@/app/actions';
 
 const isValidUrl = (u: string | null) => !!u && /^https?:\/\//.test(u) && !u.includes('vertexaisearch.cloud.google.com');
 
-export function SignalsTab({ signals, isLoadingData }: { signals: SignalIntel | null; isLoadingData: boolean }) {
+export function SignalsTab({ signals, isLoadingData, onOpenEntity }: { signals: SignalIntel | null; isLoadingData: boolean; onOpenEntity?: (name: string) => void }) {
   if (isLoadingData) {
     return <div className="space-y-4"><SkeletonStat /><SkeletonStat /></div>;
   }
@@ -58,7 +58,8 @@ export function SignalsTab({ signals, isLoadingData }: { signals: SignalIntel | 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {sig.risingEntities.map(e => (
               <div key={e.name} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/5 bg-white/[0.02]">
-                <span className="text-xs text-slate-200 truncate flex-1" title={e.name}>{e.name}</span>
+                <button onClick={() => onOpenEntity?.(e.name)} title={e.name}
+                  className={`text-xs text-slate-200 truncate flex-1 text-left ${onOpenEntity ? 'hover:text-cyan-300 transition-colors' : ''}`}>{e.name}</button>
                 <span className="font-mono text-[10px] text-slate-500">{e.prevAvg}→{e.thisWeek}</span>
                 <span className="font-mono text-[11px] text-sky-400 flex items-center gap-0.5"><ArrowUpRight size={11} />+{e.delta}</span>
               </div>
