@@ -10,9 +10,10 @@ import { Markdown } from '@/components/Markdown';
 interface MobileChatModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onArticleRef?: (id: number) => void;
 }
 
-export function MobileChatModal({ isOpen, onClose }: MobileChatModalProps) {
+export function MobileChatModal({ isOpen, onClose, onArticleRef }: MobileChatModalProps) {
   const [chatInput, setChatInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -89,7 +90,7 @@ export function MobileChatModal({ isOpen, onClose }: MobileChatModalProps) {
                       ? 'bg-white/10 text-slate-200 rounded-tr-sm'
                       : 'bg-gradient-to-br from-sky-500/10 to-purple-500/10 border border-white/5 text-slate-200 rounded-tl-sm'
                   }`}>
-                    {m.role === 'user' ? textContent : <Markdown content={textContent} />}
+                    {m.role === 'user' ? textContent : <Markdown content={textContent} onArticleRef={onArticleRef} />}
                   </div>
                 </div>
               );

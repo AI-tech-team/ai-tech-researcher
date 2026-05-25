@@ -162,14 +162,15 @@ function urlDomain(url: string | null): string | null {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return null; }
 }
 
-export async function getCollectedDataList(): Promise<CollectedItem[]> {
+export async function getCollectedDataList(limit = 60, offset = 0): Promise<CollectedItem[]> {
   try {
     const userId = await currentUserId();
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
       .orderBy(desc(collectedData.createdAt))
-      .limit(100);
+      .limit(Math.min(Math.max(limit, 1), 200))
+      .offset(Math.max(offset, 0));
     const items = parseCollectedRows(rows);
     await overlayUserState(items, userId);
 
@@ -206,6 +207,49 @@ export async function getCollectedDataList(): Promise<CollectedItem[]> {
   } catch (error) {
     console.error("Failed to fetch collected data:", error);
     return [];
+  }
+}
+
+// 単一記事をID指定で取得（本文rawContent込み）。リスト読み込み範囲に依存しないジャンプ用
+export type ArticleDetail = CollectedItem & { rawContent?: string | null };
+export async function getArticleById(id: number): Promise<ArticleDetail | null> {
+  try {
+    if (!Number.isFinite(id)) return null;
+    const userId = await currentUserId();
+    const rows = await db.select({ ...COLLECTED_SELECT, rawContent: collectedData.rawContent })
+      .from(collectedData)
+      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+      .where(eq(collectedData.id, id))
+      .limit(1);
+    if (rows.length === 0) return null;
+    const items = parseCollectedRows(rows) as ArticleDetail[];
+    await overlayUserState(items, userId);
+    return items[0] ?? null;
+  } catch (error) {
+    console.error('getArticleById failed:', error);
+    return null;
+  }
+}
+
+export interface ArticleCounts { total: number; unread: number; favorite: number; readLater: number; }
+
+// セグメントバッジ用の全体件数（ページングで未ロードでも正確）。ユーザー別状態はuser_article_state集計
+export async function getArticleCounts(): Promise<ArticleCounts> {
+  try {
+    const userId = await currentUserId();
+    const [tot] = await db.select({ c: count() }).from(collectedData);
+    const total = Number(tot?.c ?? 0);
+    if (!userId) return { total, unread: total, favorite: 0, readLater: 0 };
+    const [fav, rl, rd] = await Promise.all([
+      db.select({ c: count() }).from(userArticleState).where(and(eq(userArticleState.userId, userId), eq(userArticleState.isFavorited, 1))),
+      db.select({ c: count() }).from(userArticleState).where(and(eq(userArticleState.userId, userId), eq(userArticleState.isReadLater, 1))),
+      db.select({ c: count() }).from(userArticleState).where(and(eq(userArticleState.userId, userId), eq(userArticleState.isRead, 1))),
+    ]);
+    const read = Number(rd[0]?.c ?? 0);
+    return { total, unread: Math.max(0, total - read), favorite: Number(fav[0]?.c ?? 0), readLater: Number(rl[0]?.c ?? 0) };
+  } catch (error) {
+    console.error('getArticleCounts failed:', error);
+    return { total: 0, unread: 0, favorite: 0, readLater: 0 };
   }
 }
 
@@ -1361,6 +1405,55 @@ export async function semanticSearch(query: string): Promise<CollectedItem[]> {
   }
 }
 
+// 興味/目標テキストの埋め込みベクトル（プロフィール変更時しか変わらないのでキャッシュ＝コスト最小）
+async function profileInterestVector(userId: number): Promise<number[] | null> {
+  try {
+    const [p] = await db.select({ interests: userProfiles.interests, goals: userProfiles.goals })
+      .from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
+    const text = `${p?.interests ?? ''}. ${p?.goals ?? ''}`.trim();
+    if (text.replace(/\./g, '').trim().length < 3) return null;
+    return await cached(`pvec:${userId}:${text}`, 30 * 60_000, async () => {
+      const { embeddings } = await embedMany({
+        model: google.embedding('gemini-embedding-001'),
+        values: [text.slice(0, 800)],
+        providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
+      });
+      return embeddings[0] as number[];
+    });
+  } catch (e) {
+    console.warn('profileInterestVector failed:', e);
+    return null;
+  }
+}
+
+// あなた向けフィード: 興味/目標ベクトルにベクトル近傍な記事を返す（意味マッチ。LLM不使用＝埋め込みのみ）
+export async function getPersonalizedFeed(limit = 40): Promise<CollectedItem[]> {
+  try {
+    const userId = await currentUserId();
+    if (!userId) return [];
+    const vec = await profileInterestVector(userId);
+    if (!vec) return [];
+    const nn = await client.execute({
+      sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), ?) AS v
+            JOIN collected_data cd ON cd.rowid = v.id`,
+      args: [JSON.stringify(vec), Math.min(Math.max(limit, 1), 60)],
+    });
+    const ids = nn.rows.map(r => Number(r.id));
+    if (ids.length === 0) return [];
+    const rows = await db.select(COLLECTED_SELECT)
+      .from(collectedData)
+      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+      .where(inArray(collectedData.id, ids));
+    const order = new Map(ids.map((id, i) => [id, i]));
+    const items = parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
+    await overlayUserState(items, userId);
+    return items;
+  } catch (error) {
+    console.error('getPersonalizedFeed failed:', error);
+    return [];
+  }
+}
+
 // 今週の話題の塊（複数記事が報じたトピック = story_idで束ねたもの）
 export async function getTopicClusters(): Promise<TopicCluster[]> {
   try {
@@ -1426,21 +1519,37 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
     const ev = await db.select({ articleId: readingEvents.articleId })
       .from(readingEvents).where(eq(readingEvents.userId, userId)).orderBy(desc(readingEvents.createdAt)).limit(40);
     const engagedIds = [...new Set(ev.map(e => e.articleId).filter((v): v is number => v != null))];
-    if (engagedIds.length < 2) return [];
+    const interestVec = await profileInterestVector(userId);
 
-    const embRes = await client.execute({
-      sql: `SELECT vector_extract(embedding) AS emb FROM collected_data
-            WHERE embedding IS NOT NULL AND id IN (${engagedIds.map(() => '?').join(',')})`,
-      args: engagedIds,
-    });
-    const vecs = embRes.rows.map(r => { try { return JSON.parse(r.emb as string) as number[]; } catch { return null; } })
-      .filter((v): v is number[] => Array.isArray(v) && v.length > 0);
-    if (vecs.length === 0) return [];
+    // 行動ベースの重心（エンゲージ2件以上で算出）
+    let behaviorCentroid: number[] | null = null;
+    if (engagedIds.length >= 2) {
+      const embRes = await client.execute({
+        sql: `SELECT vector_extract(embedding) AS emb FROM collected_data
+              WHERE embedding IS NOT NULL AND id IN (${engagedIds.map(() => '?').join(',')})`,
+        args: engagedIds,
+      });
+      const vecs = embRes.rows.map(r => { try { return JSON.parse(r.emb as string) as number[]; } catch { return null; } })
+        .filter((v): v is number[] => Array.isArray(v) && v.length > 0);
+      if (vecs.length > 0) {
+        const dim = vecs[0].length;
+        const c = new Array(dim).fill(0);
+        for (const v of vecs) for (let i = 0; i < dim; i++) c[i] += v[i];
+        for (let i = 0; i < dim; i++) c[i] /= vecs.length;
+        behaviorCentroid = c;
+      }
+    }
 
-    const dim = vecs[0].length;
-    const centroid = new Array(dim).fill(0);
-    for (const v of vecs) for (let i = 0; i < dim; i++) centroid[i] += v[i];
-    for (let i = 0; i < dim; i++) centroid[i] /= vecs.length;
+    // 行動重心＋興味/目標ベクトルをブレンド（読書DNA × プロフィールのハイブリッド推薦）
+    const norm = (v: number[]) => { const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1; return v.map(x => x / n); };
+    let centroid: number[] | null;
+    if (behaviorCentroid && interestVec && behaviorCentroid.length === interestVec.length) {
+      const b = norm(behaviorCentroid), q = norm(interestVec);
+      centroid = b.map((x, i) => 0.6 * x + 0.4 * q[i]);
+    } else {
+      centroid = behaviorCentroid ?? interestVec ?? null;
+    }
+    if (!centroid) return [];
 
     const nn = await client.execute({
       sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), 40) AS v
