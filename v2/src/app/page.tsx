@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutGrid, Globe, FileText, Settings,
-  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut,
+  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut, Radar,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession, signIn, signOut } from 'next-auth/react';
@@ -18,6 +18,7 @@ import { PerformanceTab } from '@/components/tabs/PerformanceTab';
 import { KnowledgeTab } from '@/components/tabs/KnowledgeTab';
 import { ResearchTab } from '@/components/tabs/ResearchTab';
 import { ReadingDnaTab } from '@/components/tabs/ReadingDnaTab';
+import { SignalsTab } from '@/components/tabs/SignalsTab';
 import {
   getSourcesData, getCollectedDataList, getReportsData,
   addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
@@ -25,13 +26,14 @@ import {
   getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
   getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations, getCrossInsight,
+  getSignalIntelligence, type SignalIntel,
 } from './actions';
 import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
 // トップレベルタブ（日次コア=概要/記事、分析系はinsightに集約。後で読むは記事タブ内へ）
 type Tab = 'overview' | 'data' | 'reports' | 'insight' | 'settings';
 // 分析(insight)配下のサブタブ
-type InsightSub = 'knowledge' | 'research' | 'dna' | 'performance';
+type InsightSub = 'knowledge' | 'research' | 'dna' | 'performance' | 'signals';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: '全体概要',
@@ -46,12 +48,13 @@ const TAB_SHORT: Record<Tab, string> = {
 
 const INSIGHT_SUBS: { id: InsightSub; label: string; icon: React.ReactNode }[] = [
   { id: 'knowledge',   label: '知識グラフ',   icon: <Network size={14} /> },
+  { id: 'signals',     label: 'シグナル',     icon: <Radar size={14} /> },
   { id: 'research',    label: '自律リサーチ', icon: <Telescope size={14} /> },
   { id: 'dna',         label: '読書DNA',      icon: <Fingerprint size={14} /> },
   { id: 'performance', label: 'ソース分析',   icon: <BarChart3 size={14} /> },
 ];
 const INSIGHT_LABELS: Record<InsightSub, string> = {
-  knowledge: '知識グラフ', research: '自律リサーチ', dna: '読書DNA', performance: 'ソース分析',
+  knowledge: '知識グラフ', signals: 'シグナル', research: '自律リサーチ', dna: '読書DNA', performance: 'ソース分析',
 };
 
 const SLIDE = {
@@ -88,8 +91,9 @@ export default function Home() {
   const [topicClusters, setTopicClusters] = useState<TopicCluster[]>([]);
   const [recommendations, setRecommendations] = useState<CollectedItem[]>([]);
   const [pipelineLogs, setPipelineLogs] = useState<PipelineLog[]>([]);
+  const [signals, setSignals] = useState<SignalIntel | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
-  const [loadedGroups, setLoadedGroups] = useState<Record<InsightSub, boolean>>({ knowledge: false, research: false, dna: false, performance: false });
+  const [loadedGroups, setLoadedGroups] = useState<Record<InsightSub, boolean>>({ knowledge: false, signals: false, research: false, dna: false, performance: false });
   const loadingRef = useRef<Record<string, boolean>>({});
   const [isSyncing, setIsSyncing] = useState(false);
   const [interestTags, setInterestTags] = useState<string[]>([]);
@@ -154,6 +158,8 @@ export default function Home() {
       setSourcePerformance(perf as any[]);
       setKwMatrix(matrix as any);
       setPipelineLogs(logs);
+    } else if (g === 'signals') {
+      setSignals(await getSignalIntelligence());
     }
     setLoadedGroups(prev => ({ ...prev, [g]: true }));
   }
@@ -300,6 +306,9 @@ export default function Home() {
             <KnowledgeTab leaderboards={leaderboards} relations={knowledgeRelations}
               alerts={benchmarkAlerts} stats={knowledgeStats} isLoadingData={insightLoading}
               onNavigateToArticle={navigateToArticle} />
+          )}
+          {insightSub === 'signals' && (
+            <SignalsTab signals={signals} isLoadingData={insightLoading} />
           )}
           {insightSub === 'research' && (
             <ResearchTab briefing={briefing} crossInsight={crossInsight} alerts={activeAlerts}
