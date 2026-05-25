@@ -2,7 +2,7 @@
 
 import { db, client } from '@/db';
 import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState, userProfiles, users } from '@/db/schema';
-import { desc, asc, eq, count, gte, lte, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
+import { desc, asc, eq, count, gte, lte, lt, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
 import { google } from '@ai-sdk/google';
@@ -857,6 +857,73 @@ export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   } catch (error) {
     console.error('Failed to fetch knowledge stats:', error);
     return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
+  }
+}
+
+// ─── v6: シグナル先読み（既存の時系列から加速トレンドを検知）──────────────
+export interface SignalIntel {
+  categoryVelocity: { category: string; thisWeek: number; prevAvg: number; delta: number }[];
+  risingEntities: { name: string; thisWeek: number; prevAvg: number; delta: number }[];
+  hotRepos: { title: string; url: string | null; stars: number; importance: number }[];
+}
+
+export async function getSignalIntelligence(): Promise<SignalIntel> {
+  const empty: SignalIntel = { categoryVelocity: [], risingEntities: [], hotRepos: [] };
+  try {
+    const wk = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+    const prevStart = sqlTs(new Date(Date.now() - 28 * 24 * 60 * 60 * 1000));
+
+    // カテゴリ加速（直近7日 vs その前3週の週平均）
+    const [thisCat, prevCat] = await Promise.all([
+      db.select({ category: collectedData.category, cnt: count() }).from(collectedData)
+        .where(gte(collectedData.createdAt, wk)).groupBy(collectedData.category),
+      db.select({ category: collectedData.category, cnt: count() }).from(collectedData)
+        .where(and(gte(collectedData.createdAt, prevStart), lt(collectedData.createdAt, wk))).groupBy(collectedData.category),
+    ]);
+    const prevCatMap = new Map(prevCat.map(r => [r.category, Number(r.cnt) / 3]));
+    const categoryVelocity = thisCat
+      .filter(r => r.category)
+      .map(r => {
+        const prevAvg = prevCatMap.get(r.category) ?? 0;
+        return { category: r.category as string, thisWeek: Number(r.cnt), prevAvg: Math.round(prevAvg * 10) / 10, delta: Math.round((Number(r.cnt) - prevAvg) * 10) / 10 };
+      })
+      .sort((a, b) => b.delta - a.delta);
+
+    // 伸びるエンティティ（クレームのsubject出現の加速）
+    const [thisEnt, prevEnt] = await Promise.all([
+      db.select({ subject: claims.subject, cnt: count() }).from(claims)
+        .where(gte(claims.createdAt, wk)).groupBy(claims.subject),
+      db.select({ subject: claims.subject, cnt: count() }).from(claims)
+        .where(and(gte(claims.createdAt, prevStart), lt(claims.createdAt, wk))).groupBy(claims.subject),
+    ]);
+    const prevEntMap = new Map(prevEnt.map(r => [r.subject, Number(r.cnt) / 3]));
+    const risingEntities = thisEnt
+      .map(r => {
+        const prevAvg = prevEntMap.get(r.subject) ?? 0;
+        return { name: r.subject, thisWeek: Number(r.cnt), prevAvg: Math.round(prevAvg * 10) / 10, delta: Math.round((Number(r.cnt) - prevAvg) * 10) / 10 };
+      })
+      .filter(r => r.thisWeek >= 2 && r.delta > 0)
+      .sort((a, b) => b.delta - a.delta)
+      .slice(0, 8);
+
+    // 注目OSS（直近7日のgithub-trending、スター数順）
+    const repoRows = await db.select({ title: collectedData.title, url: collectedData.url, tags: collectedData.tags, imp: collectedData.importanceScore })
+      .from(collectedData)
+      .where(and(gte(collectedData.createdAt, wk), like(collectedData.tags, '%github-trending%')))
+      .limit(30);
+    const hotRepos = repoRows
+      .map(r => {
+        const m = (r.tags ?? '').match(/⭐\s*([\d,]+)/);
+        const stars = m ? parseInt(m[1].replace(/,/g, ''), 10) : 0;
+        return { title: (r.title ?? '').replace(/^\[GitHub\]\s*/, ''), url: r.url, stars, importance: r.imp ?? 5 };
+      })
+      .sort((a, b) => b.stars - a.stars)
+      .slice(0, 6);
+
+    return { categoryVelocity, risingEntities, hotRepos };
+  } catch (error) {
+    console.error('getSignalIntelligence failed:', error);
+    return empty;
   }
 }
 
