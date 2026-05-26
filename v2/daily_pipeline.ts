@@ -1362,6 +1362,14 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
             ));
           staleCount += res.rowsAffected;
         }
+        // 裏付けブースト: 同一エンティティ+predicateの既存activeクレームの確信度を引き上げる
+        if (entity?.id) {
+          await client.execute({
+            sql: `UPDATE claims SET confidence_score = MIN(0.95, COALESCE(confidence_score, 0.7) + 0.08)
+                  WHERE entity_id = ? AND predicate = ? AND status = 'active'`,
+            args: [entity.id, claim.predicate],
+          });
+        }
         await db.insert(schema.claims).values({
           articleId: article.id,
           subject: claim.subject,
@@ -2307,6 +2315,7 @@ async function runChunkEmbeddings(limit = 40): Promise<number> {
   const res = await client.execute({
     sql: `SELECT id, raw_content FROM collected_data
           WHERE raw_content IS NOT NULL
+            AND importance_score >= 7
             AND id NOT IN (SELECT DISTINCT article_id FROM content_chunks)
           ORDER BY importance_score DESC, created_at DESC LIMIT ?`,
     args: [limit],
@@ -2646,6 +2655,153 @@ async function runDataCleanup(): Promise<void> {
   console.log(`[Cleanup] 関係削除${relDel}, ベンチ削除${benchDel}, ベンチ名正規化${benchNorm}`);
 }
 
+// ── 確信度スペクトル: 日次 decay + stale 移行 + カスケード研究問い生成 ──────────
+async function runDecayTick(): Promise<void> {
+  console.log('[Decay] 確信度日次更新開始');
+
+  // ベンチマーク・比較系(速い腐敗): ×0.97/day
+  await client.execute({
+    sql: `UPDATE claims SET confidence_score = MAX(0.0, COALESCE(confidence_score, 0.7) * 0.97)
+          WHERE status = 'active'
+          AND (predicate LIKE '%score%' OR predicate LIKE '%bench%' OR predicate LIKE '%outperform%'
+            OR predicate LIKE '%accuracy%' OR predicate LIKE '%ranking%' OR predicate LIKE '%performance%'
+            OR predicate LIKE '%スコア%' OR predicate LIKE '%精度%' OR predicate LIKE '%順位%')`,
+    args: [],
+  });
+  // リリース・発表系(中): ×0.98/day
+  await client.execute({
+    sql: `UPDATE claims SET confidence_score = MAX(0.0, COALESCE(confidence_score, 0.7) * 0.98)
+          WHERE status = 'active'
+          AND (predicate LIKE '%releas%' OR predicate LIKE '%launch%' OR predicate LIKE '%announc%'
+            OR predicate LIKE '%発表%' OR predicate LIKE '%リリース%' OR predicate LIKE '%公開%')`,
+    args: [],
+  });
+  // その他(遅い腐敗): ×0.995/day
+  await client.execute({
+    sql: `UPDATE claims SET confidence_score = MAX(0.0, COALESCE(confidence_score, 0.7) * 0.995)
+          WHERE status = 'active'
+          AND predicate NOT LIKE '%score%' AND predicate NOT LIKE '%bench%'
+          AND predicate NOT LIKE '%outperform%' AND predicate NOT LIKE '%accuracy%'
+          AND predicate NOT LIKE '%ranking%' AND predicate NOT LIKE '%performance%'
+          AND predicate NOT LIKE '%releas%' AND predicate NOT LIKE '%launch%'
+          AND predicate NOT LIKE '%announc%' AND predicate NOT LIKE '%発表%'
+          AND predicate NOT LIKE '%リリース%' AND predicate NOT LIKE '%公開%'
+          AND predicate NOT LIKE '%スコア%' AND predicate NOT LIKE '%精度%'`,
+    args: [],
+  });
+
+  // 0.25未満 → stale に移行
+  const staleRes = await client.execute({
+    sql: `UPDATE claims SET status = 'stale' WHERE confidence_score < 0.25 AND status = 'active'`,
+    args: [],
+  });
+
+  // カスケード: active claimが消えたエンティティ(3件以上mention)を研究キューに登録
+  const today = new Date().toISOString().split('T')[0];
+  const orphans = await client.execute({
+    sql: `SELECT e.id, e.canonical_name FROM entities e
+          WHERE e.mention_count >= 3
+          AND NOT EXISTS (SELECT 1 FROM claims c WHERE c.entity_id = e.id AND c.status = 'active')
+          AND NOT EXISTS (
+            SELECT 1 FROM research_questions rq
+            WHERE rq.origin = 'confidence_decay' AND rq.origin_ref = CAST(e.id AS TEXT)
+            AND rq.status = 'pending' AND rq.created_at >= DATE('now', '-7 days')
+          )
+          LIMIT 5`,
+    args: [],
+  });
+  let cascadeCount = 0;
+  for (const e of orphans.rows as any[]) {
+    await db.insert(schema.researchQuestions).values({
+      question: `${e.canonical_name}に関する最新情報は何か？確信度が低下したため再確認が必要。`,
+      origin: 'confidence_decay',
+      originRef: String(e.id),
+      status: 'pending',
+    }).onConflictDoNothing();
+    cascadeCount++;
+  }
+  console.log(`[Decay] stale=${staleRes.rowsAffected}件 / カスケード問い生成=${cascadeCount}件`);
+}
+
+// ── コーパス健全度レポート ─────────────────────────────────────────────
+async function runCorpusHealth(): Promise<void> {
+  console.log('[Health] コーパス健全度チェック開始');
+  const today = new Date().toISOString().split('T')[0];
+
+  const [confStats, entityStats, embedGap, stalestEnts] = await Promise.all([
+    client.execute({
+      sql: `SELECT COUNT(*) as total,
+                   AVG(COALESCE(confidence_score, 0.7)) as avg_conf,
+                   SUM(CASE WHEN COALESCE(confidence_score, 0.7) >= 0.7 THEN 1 ELSE 0 END) as healthy,
+                   SUM(CASE WHEN COALESCE(confidence_score, 0.7) < 0.3 THEN 1 ELSE 0 END) as at_risk,
+                   SUM(CASE WHEN status = 'stale' THEN 1 ELSE 0 END) as stale_count
+            FROM claims`,
+      args: [],
+    }),
+    client.execute({
+      sql: `SELECT COUNT(*) as total,
+                   SUM(CASE WHEN NOT EXISTS (
+                     SELECT 1 FROM claims c WHERE c.entity_id = e.id AND c.status = 'active'
+                   ) THEN 1 ELSE 0 END) as orphaned
+            FROM entities e WHERE e.mention_count >= 3`,
+      args: [],
+    }),
+    client.execute({
+      sql: `SELECT COUNT(*) as total,
+                   SUM(CASE WHEN embedding IS NULL THEN 1 ELSE 0 END) as missing_embed
+            FROM collected_data
+            WHERE created_at >= DATE('now', '-7 days')`,
+      args: [],
+    }),
+    client.execute({
+      sql: `SELECT e.canonical_name, AVG(COALESCE(c.confidence_score, 0.7)) as avg_conf
+            FROM entities e
+            JOIN claims c ON c.entity_id = e.id AND c.status = 'active'
+            GROUP BY e.id, e.canonical_name
+            HAVING COUNT(c.id) >= 2
+            ORDER BY avg_conf ASC LIMIT 5`,
+      args: [],
+    }),
+  ]);
+
+  const cs = confStats.rows[0] as any;
+  const es = entityStats.rows[0] as any;
+  const eg = embedGap.rows[0] as any;
+  const healthScore = Math.round((Number(cs.healthy ?? 0) / Math.max(1, Number(cs.total ?? 1))) * 100);
+
+  const staleEntsText = (stalestEnts.rows as any[]).length > 0
+    ? (stalestEnts.rows as any[]).map((r: any) => `- ${r.canonical_name}: 平均確信度 ${Number(r.avg_conf).toFixed(2)}`).join('\n')
+    : '- なし';
+
+  const content = `# コーパス健全度レポート ${today}
+
+**総合スコア: ${healthScore}/100**
+
+## クレーム確信度
+- 総数: ${Number(cs.total ?? 0)}件（活性+stale）
+- 健全(≥0.7): ${Number(cs.healthy ?? 0)}件
+- 要注意(<0.3): ${Number(cs.at_risk ?? 0)}件
+- Stale済み: ${Number(cs.stale_count ?? 0)}件
+- 平均確信度: ${Number(cs.avg_conf ?? 0).toFixed(2)}
+
+## エンティティカバレッジ
+- 追跡対象(mention≥3): ${Number(es.total ?? 0)}エンティティ
+- クレーム枯渇: ${Number(es.orphaned ?? 0)}エンティティ
+
+## 埋め込みカバレッジ（直近7日）
+- 記事数: ${Number(eg.total ?? 0)}件 / 埋め込み未生成: ${Number(eg.missing_embed ?? 0)}件
+
+## 確信度が最も低いエンティティ（要注意）
+${staleEntsText}`;
+
+  await db.insert(schema.reports).values({
+    type: 'corpus_health',
+    content,
+    reportDate: today,
+  }).onConflictDoNothing();
+  console.log(`[Health] スコア ${healthScore}/100 | healthy=${Number(cs.healthy ?? 0)} at_risk=${Number(cs.at_risk ?? 0)}`);
+}
+
 async function logPipeline(collected: number, failed: number, durationMs: number) {
   try {
     await db.insert(schema.pipelineLogs).values({
@@ -2827,6 +2983,14 @@ async function main() {
       }
 
       await runKnowledgeExtraction();
+
+      // 確信度スペクトル: 日次decay + stale移行 + カスケード。非クリティカル
+      try {
+        await runDecayTick();
+        await runCorpusHealth();
+      } catch (e: any) {
+        console.warn('[Pipeline] Decay/Health失敗(非クリティカル):', e.message);
+      }
 
       // v3: 自律リサーチ（アラート検知→問い生成→夜間調査→ブリーフ）。非クリティカル
       let briefingContent: string | null = null;
