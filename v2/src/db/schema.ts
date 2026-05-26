@@ -72,6 +72,8 @@ export const claims = sqliteTable("claims", {
   entityId: integer("entity_id"),
   validFrom: text("valid_from"),       // YYYY-MM-DD（記事公開日 or 収集日）
   status: text("status").default('active'), // 'active' | 'stale'
+  // 確信度スペクトル: 0-1 float。日次decayと裏付けブーストで変動。0.25未満でstale自動移行
+  confidenceScore: real("confidence_score").default(0.7),
 });
 
 // v3: エンティティ正規化（GPT-4o / GPT4o / gpt-4 omni → 同一ノード）
