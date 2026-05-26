@@ -254,32 +254,34 @@ export async function getArticleCounts(): Promise<ArticleCounts> {
 }
 
 export async function getActivityData() {
-  try {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  return cached('activityData', 2 * 60_000, async () => {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // JST基準で集計（createdAtはUTC格納。+9hでJST日付に揃え、ラベルもJSTで生成）
-    const rows = await db.select({
-      date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`.as('date'),
-      cnt: count(),
-    })
-      .from(collectedData)
-      .where(gte(collectedData.createdAt, sqlTs(sevenDaysAgo)))
-      .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`);
+      // JST基準で集計（createdAtはUTC格納。+9hでJST日付に揃え、ラベルもJSTで生成）
+      const rows = await db.select({
+        date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`.as('date'),
+        cnt: count(),
+      })
+        .from(collectedData)
+        .where(gte(collectedData.createdAt, sqlTs(sevenDaysAgo)))
+        .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`);
 
-    const result: { name: string; count: number }[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000);
-      const dateStr = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-      const name = d.toLocaleDateString('ja-JP', { weekday: 'short', timeZone: 'Asia/Tokyo' });
-      const found = rows.find(r => r.date === dateStr);
-      result.push({ name, count: found ? Number(found.cnt) : 0 });
+      const result: { name: string; count: number }[] = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(Date.now() - i * 86400000);
+        const dateStr = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+        const name = d.toLocaleDateString('ja-JP', { weekday: 'short', timeZone: 'Asia/Tokyo' });
+        const found = rows.find(r => r.date === dateStr);
+        result.push({ name, count: found ? Number(found.cnt) : 0 });
+      }
+      return result;
+    } catch (error) {
+      console.error("Failed to fetch activity data:", error);
+      return [];
     }
-    return result;
-  } catch (error) {
-    console.error("Failed to fetch activity data:", error);
-    return [];
-  }
+  });
 }
 
 export async function getSourcePerformance() {
@@ -362,43 +364,45 @@ export async function getSourceROI() {
 }
 
 export async function getCategoryTrendData() {
-  try {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  return cached('catTrend', 10 * 60_000, async () => {
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // JST基準で集計（+9hでJST日付に統一、ラベルもJSTで生成）
-    const rows = await db.select({
-      date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`,
-      category: collectedData.category,
-      cnt: count(),
-    })
-      .from(collectedData)
-      .where(gte(collectedData.createdAt, sqlTs(sevenDaysAgo)))
-      .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`, collectedData.category);
+      // JST基準で集計（+9hでJST日付に統一、ラベルもJSTで生成）
+      const rows = await db.select({
+        date: sql<string>`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`,
+        category: collectedData.category,
+        cnt: count(),
+      })
+        .from(collectedData)
+        .where(gte(collectedData.createdAt, sqlTs(sevenDaysAgo)))
+        .groupBy(sql`strftime('%Y-%m-%d', ${collectedData.createdAt}, '+9 hours')`, collectedData.category);
 
-    const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'];
+      const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'];
 
-    const result: any[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000);
-      const dateStr = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-      const md = d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short', timeZone: 'Asia/Tokyo' });
-      const entry: any = { name: md };
-      for (const cat of CATS) {
-        const found = rows.find(r => r.date === dateStr && r.category === cat);
-        entry[cat] = found ? Number(found.cnt) : 0;
+      const result: any[] = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(Date.now() - i * 86400000);
+        const dateStr = d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+        const md = d.toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short', timeZone: 'Asia/Tokyo' });
+        const entry: any = { name: md };
+        for (const cat of CATS) {
+          const found = rows.find(r => r.date === dateStr && r.category === cat);
+          entry[cat] = found ? Number(found.cnt) : 0;
+        }
+        result.push(entry);
       }
-      result.push(entry);
+      return result;
+    } catch (error) {
+      console.error("Failed to fetch category trend:", error);
+      return [];
     }
-    return result;
-  } catch (error) {
-    console.error("Failed to fetch category trend:", error);
-    return [];
-  }
+  });
 }
 
 export async function getModelMentionData() {
- return cached('modelMentions', 180_000, async () => {
+ return cached('modelMentions', 10 * 60_000, async () => {
   try {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -433,6 +437,7 @@ export async function getModelMentionData() {
 }
 
 export async function getTrendingKeywords(): Promise<TrendingKeyword[]> {
+  return cached('trendingKw', 10 * 60_000, async () => {
   try {
     const now = new Date();
     const sevenDaysAgo = sqlTs(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000));
@@ -493,6 +498,7 @@ export async function getTrendingKeywords(): Promise<TrendingKeyword[]> {
     console.error("Failed to fetch trending keywords:", error);
     return [];
   }
+  }) as Promise<TrendingKeyword[]>;
 }
 
 export async function getPipelineLogs(): Promise<PipelineLog[]> {
@@ -1456,6 +1462,7 @@ export async function getPersonalizedFeed(limit = 40): Promise<CollectedItem[]> 
 
 // 今週の話題の塊（複数記事が報じたトピック = story_idで束ねたもの）
 export async function getTopicClusters(): Promise<TopicCluster[]> {
+  return cached('topicClusters', 10 * 60_000, async () => {
   try {
     const sevenAgo = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
     const groups = await db.select({
@@ -1509,6 +1516,7 @@ export async function getTopicClusters(): Promise<TopicCluster[]> {
     console.error('Failed to fetch topic clusters:', error);
     return [];
   }
+  }) as Promise<TopicCluster[]>;
 }
 
 // 読書DNA連動の推薦: エンゲージ記事の重心に近い「未読・未お気に入り」記事
@@ -1574,4 +1582,29 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
     console.error('Failed to fetch recommendations:', error);
     return [];
   }
+}
+
+// ─── ページロード最適化: 複数クエリを1HTTP往復で取得 ────────────────────────
+
+// Phase 1: 記事・ソース・レポートなど即表示が必要なコアデータを1往復で取得
+export async function getCoreData(articleLimit = 60) {
+  const [srcs, data, reportsData, activity, counts] = await Promise.all([
+    getSourcesData(),
+    getCollectedDataList(articleLimit, 0),
+    getReportsData(),
+    getActivityData(),
+    getArticleCounts(),
+  ]);
+  return { srcs, data, reportsData, activity, counts };
+}
+
+// Phase 2: グラフ・トレンド系アナリティクスを1往復で取得（コアと並列発火）
+export async function getAnalyticsData() {
+  const [catTrend, modelMentions, trending, clusters] = await Promise.all([
+    getCategoryTrendData(),
+    getModelMentionData(),
+    getTrendingKeywords(),
+    getTopicClusters(),
+  ]);
+  return { catTrend, modelMentions, trending, clusters };
 }

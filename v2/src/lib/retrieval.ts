@@ -4,6 +4,7 @@
 import { client } from '@/db';
 import { google } from '@ai-sdk/google';
 import { embedMany } from 'ai';
+import { cached } from '@/lib/cache';
 
 export interface RetrievedDoc {
   id: number;
@@ -15,6 +16,19 @@ export interface RetrievedDoc {
   importance: number;
   storyCount: number;
   snippet: string | null; // 最良一致チャンク（無ければrawContent冒頭）
+}
+
+// RETRIEVAL_QUERYタスクでクエリを埋め込み。10分キャッシュで同一クエリの重複API呼び出しを防ぐ。
+export async function cachedQueryEmbed(query: string): Promise<number[] | null> {
+  const key = `qembed:${query.slice(0, 200)}`;
+  return cached(key, 10 * 60_000, async () => {
+    const { embeddings } = await embedMany({
+      model: google.embedding('gemini-embedding-001'),
+      values: [query],
+      providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
+    });
+    return embeddings[0] as number[];
+  });
 }
 
 // クエリをFTS5(trigram)用のMATCH式に変換。trigramは3文字以上の語のみ対象。
@@ -34,15 +48,11 @@ export async function hybridSearch(query: string, topK = 8): Promise<RetrievedDo
   const q = query.trim().slice(0, 300);
   if (!q) return [];
 
-  // クエリ埋め込み（非対称: RETRIEVAL_QUERY）
+  // クエリ埋め込み（10分キャッシュで重複API呼び出しを防止）
   let vecStr: string | null = null;
   try {
-    const { embeddings } = await embedMany({
-      model: google.embedding('gemini-embedding-001'),
-      values: [q],
-      providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
-    });
-    vecStr = JSON.stringify(embeddings[0]);
+    const vec = await cachedQueryEmbed(q);
+    if (vec) vecStr = JSON.stringify(vec);
   } catch (e: any) {
     console.warn('[hybridSearch] クエリ埋め込み失敗:', e.message?.slice(0, 80));
   }
