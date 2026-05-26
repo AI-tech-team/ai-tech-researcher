@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import { google } from '@ai-sdk/google';
-import { generateText, generateObject, embedMany } from 'ai';
+import { generateText, generateObject, embedMany, tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { eq, sql, desc, asc, count, and, gte, lt, isNull, inArray } from 'drizzle-orm';
 import { config } from 'dotenv';
@@ -777,170 +777,61 @@ importanceは1〜10でAI技術的重要度を評価。tagsは3〜5個の短い�
   return { collected, failed };
 }
 
-// v3.1 読書DNA: 読者プロファイルからレポートのトーン指示を生成
-async function getToneGuidance(): Promise<string> {
-  try {
-    const events = await db.select({ category: schema.readingEvents.category, weight: schema.readingEvents.weight })
-      .from(schema.readingEvents).limit(500);
-    if (events.length < 5) return '';
-    const AX: Record<string, { d: number; v: number }> = {
-      '研究/論文': { d: 5, v: 5 }, 'LLM推論': { d: 70, v: 45 }, 'エージェント': { d: 75, v: 50 },
-      'ツール/フレームワーク': { d: 95, v: 45 }, 'ハードウェア': { d: 55, v: 50 },
-      'ビジネス応用': { d: 40, v: 95 }, 'その他': { d: 50, v: 50 },
-    };
-    let w = 0, ds = 0, vs = 0;
-    for (const e of events) {
-      const a = AX[e.category ?? 'その他'] ?? AX['その他'];
-      const ww = e.weight ?? 1; w += ww; ds += a.d * ww; vs += a.v * ww;
-    }
-    if (w === 0) return '';
-    const depth = ds / w, view = vs / w;
-    const parts: string[] = [];
-    if (depth >= 65) parts.push('実装方法・コードの所在・具体的な使い方を前面に出す');
-    else if (depth <= 35) parts.push('理論的背景・前提・先行研究との違いを前面に出す');
-    if (view >= 70) parts.push('市場への影響・採用コスト・ビジネス価値を重視する');
-    else if (view <= 35) parts.push('手法の新規性・妥当性・研究的価値を重視する');
-    if (parts.length === 0) return '';
-    return `\n\n【読者プロファイルに合わせたトーン】\nこの読者の傾向に合わせて強調点を調整: ${parts.join('、')}。`;
-  } catch { return ''; }
-}
-
 async function generateReport(): Promise<string | null> {
   console.log('[Report] レポート生成開始');
 
-  const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const fourteenDaysAgoISO = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
-
-  const [rawRecent, thisWeekCounts, lastWeekCounts, recentClaims, recentBench] = await Promise.all([
-    db.select().from(schema.collectedData)
-      .where(gte(schema.collectedData.createdAt, sevenDaysAgoISO))
-      .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
-      .limit(40),
-    db.select({ category: schema.collectedData.category, cnt: count() })
-      .from(schema.collectedData)
-      .where(gte(schema.collectedData.createdAt, sevenDaysAgoISO))
-      .groupBy(schema.collectedData.category),
-    db.select({ category: schema.collectedData.category, cnt: count() })
-      .from(schema.collectedData)
-      .where(and(
-        gte(schema.collectedData.createdAt, fourteenDaysAgoISO),
-        lt(schema.collectedData.createdAt, sevenDaysAgoISO),
-      ))
-      .groupBy(schema.collectedData.category),
-    db.select({ subject: schema.claims.subject, predicate: schema.claims.predicate, value: schema.claims.value })
-      .from(schema.claims)
-      .where(and(eq(schema.claims.status, 'active'), gte(schema.claims.createdAt, sevenDaysAgoISO)))
-      .orderBy(desc(schema.claims.createdAt))
-      .limit(12),
-    db.select({ entityName: schema.benchmarks.entityName, benchmarkName: schema.benchmarks.benchmarkName, score: schema.benchmarks.score, unit: schema.benchmarks.unit })
-      .from(schema.benchmarks)
-      .where(gte(schema.benchmarks.createdAt, sevenDaysAgoISO))
-      .orderBy(desc(schema.benchmarks.createdAt))
-      .limit(12),
-  ]);
-
-  if (rawRecent.length === 0) { console.log('[Report] データなし、スキップ'); return null; }
-
-  // 重複ストーリーを集約（同一story_idは代表1件に。N媒体が報じたを注記）
-  const seenStory = new Set<number>();
-  const recentData: typeof rawRecent = [];
-  for (const d of rawRecent) {
-    if (d.storyId != null) { if (seenStory.has(d.storyId)) continue; seenStory.add(d.storyId); }
-    recentData.push(d);
-    if (recentData.length >= 15) break;
-  }
-
-  const contextStr = recentData
-    .map(d => {
-      const multi = (d.storyCount ?? 1) > 1 ? `（${d.storyCount}媒体が報じた）` : '';
-      return `[重要度:${d.importanceScore ?? 5}/10][${d.category ?? '未分類'}]${multi} ${d.titleJa || d.title}\n${d.summary}\nURL: ${d.url}\n公開日: ${d.publishedAt?.split('T')[0] ?? '不明'}`;
-    })
-    .join('\n\n---\n\n');
-
-  // 検証済みの事実・数値（レポートの根拠引用用）
-  const evidenceLines = [
-    ...recentClaims.map(c => `- ${c.subject}: ${c.predicate} = ${c.value}`),
-    ...recentBench.map(b => `- ${b.entityName} / ${b.benchmarkName}: ${b.score}${b.unit ?? ''}`),
-  ];
-  const evidenceText = evidenceLines.length > 0
-    ? '\n\n【検証済みの事実・数値（レポートで根拠として引用してよい）】\n' + evidenceLines.join('\n')
-    : '';
-
-  const lastWeekMap = new Map(lastWeekCounts.map(r => [r.category, Number(r.cnt)]));
-  const trendLines = thisWeekCounts
-    .map(r => ({
-      cat: r.category ?? 'その他',
-      now: Number(r.cnt),
-      prev: lastWeekMap.get(r.category ?? '') ?? 0,
-    }))
-    .filter(r => r.now >= 2)
-    .map(r => ({ ...r, ratio: r.prev === 0 ? r.now * 2 : r.now / r.prev }))
-    .sort((a, b) => b.ratio - a.ratio)
-    .slice(0, 5)
-    .map(r => `${r.cat}: 今週${r.now}件/先週${r.prev}件${r.ratio >= 2 ? ' 🚀急上昇' : r.ratio >= 1.3 ? ' ↑上昇' : r.ratio <= 0.7 ? ' ↓減少' : ''}`);
-
-  const trendText = trendLines.length > 0
-    ? '\n\n【カテゴリ別週次トレンド（参考データ）】\n' + trendLines.join('\n')
-    : '';
-
-  // 前日レポートのキーテーマを引き継ぎ（レポートの記憶）
-  const prevDaily = await db.select({ content: schema.reports.content })
-    .from(schema.reports)
-    .where(eq(schema.reports.type, 'daily'))
-    .orderBy(desc(schema.reports.createdAt))
-    .limit(1);
-  const prevContext = prevDaily[0]?.content
-    ? '\n\n【昨日のキートピック（続報があれば優先して報告）】\n' + prevDaily[0].content.substring(0, 500)
-    : '';
+  // データがあるか先にチェック
+  const since2d = new Date(Date.now() - 2 * 86_400_000).toISOString();
+  const check = await db.select({ c: count() }).from(schema.collectedData)
+    .where(gte(schema.collectedData.createdAt, since2d));
+  if (Number(check[0].c) === 0) { console.log('[Report] データなし、スキップ'); return null; }
 
   const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
   const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-  const toneGuidance = await getToneGuidance();
 
-  const { text } = await withRetry(() => generateText({
-    model: google('gemini-2.5-flash'),
-    system: `あなたはAI技術動向の専門アナリストです。収集データを元に、AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。${toneGuidance}
+  const { askKnowledgeAI } = await import('./src/lib/knowledge-ai');
+  const text = await withRetry(() => askKnowledgeAI(
+    `今日は${todayJST}です。AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
+
+以下のツールを順番に呼んで情報を揃えてから書いてください:
+1. get_recent_articles(days=2, limit=20, minImportance=6) で直近記事を取得
+2. get_statistics(days=7) でカテゴリ別トレンドを確認
+3. get_knowledge_graph_summary() で検証済みの数値・事実を取得
+4. get_reading_patterns(days=14) で読者の傾向を確認しトーンに反映
+5. get_previous_report('daily') で前回との変化点を把握
 
 【必須構成】
 ## 🔥 今日のハイライト
-重要度8以上の記事を中心に3〜5点。各項目は「何が起きたか」「なぜ重要か」「実務への影響」を2〜3行で。
+重要度8以上の記事を中心に3〜5点。「何が起きたか」「なぜ重要か」「実務への影響」を2〜3行で。
 
 ## 🚀 急上昇トレンド
-トレンドデータを参考に、今週急増しているカテゴリ・トピックを1段落で解説。増加の技術的背景と今後の展望を含めること。データがない場合は今週特に目立つテーマを記述。
+今週急増しているカテゴリ・トピックを1段落で解説。
 
 ## 📊 カテゴリ別トピック
-カテゴリ（LLM推論/エージェント/ツール/フレームワーク/ハードウェア/ビジネス応用/研究・論文）ごとに整理。
+LLM推論/エージェント/ツール・フレームワーク/ハードウェア/ビジネス応用/研究・論文 ごとに整理。
 
 ## 💡 エンジニアへの実践的インサイト
-今日のデータから導き出せる実装・採用・評価のポイントを箇条書きで。
+実装・採用・評価のポイントを箇条書きで。
 
-【ルール】
-- 全体1500〜2000文字
-- 具体的な数値・ベンチマーク・実装詳細を含める
-- 提示された「検証済みの事実・数値」は積極的に根拠として引用する
-- 主観的な「すごい」ではなく客観的な事実ベースで記述
-- 重要度が高い記事ほど詳しく解説する
-- 絵文字・箇条書きを活用して読みやすく`,
-    prompt: `今日の日付: ${todayJST}${trendText}${prevContext}${evidenceText}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
-  }));
+【ルール】全体1500〜2000文字。具体的な数値・ベンチマークを含める。絵文字・箇条書きを活用。`,
+    { model: 'gemini-2.5-flash', maxSteps: 6 },
+  ));
 
   const [insertedReport] = await db.insert(schema.reports).values({
-    type: 'daily',
-    content: text,
-    reportDate: reportDateJST,
+    type: 'daily', content: text, reportDate: reportDateJST,
   }).returning({ id: schema.reports.id });
 
-  const adoptedSourceIds = Array.from(new Set(
-    recentData.map(d => d.sourceId).filter((id): id is number => id !== null)
-  ));
-  if (insertedReport?.id && adoptedSourceIds.length > 0) {
-    await db.insert(schema.adoptionLogs).values(
-      adoptedSourceIds.map(sourceId => ({
-        reportId: insertedReport.id,
-        sourceId,
-        isAdopted: 1 as const,
-      }))
-    );
+  // adoptionLogs: 直近2日の高重要度記事のソースを採用済みとして記録
+  if (insertedReport?.id) {
+    const adopted = await db.select({ sourceId: schema.collectedData.sourceId })
+      .from(schema.collectedData)
+      .where(and(gte(schema.collectedData.createdAt, since2d), gte(schema.collectedData.importanceScore, 7)));
+    const sourceIds = [...new Set(adopted.map(d => d.sourceId).filter((id): id is number => id !== null))];
+    if (sourceIds.length > 0) {
+      await db.insert(schema.adoptionLogs).values(
+        sourceIds.map(sourceId => ({ reportId: insertedReport.id, sourceId, isAdopted: 1 as const }))
+      );
+    }
   }
 
   console.log('[Report] レポート生成完了');
@@ -1628,6 +1519,153 @@ async function detectAlerts() {
   console.log(`[Alerts] ${created}件の新規アラート`);
 }
 
+// ── DB連携エージェントによる問い生成（探索型。事前パッケージ不要）──────────
+// エージェントがツールでDBを自律探索し、文脈を理解した上で研究問いを生成する。
+// 事前にデータをまとめてLLMに渡す方式と違い、エージェントが「必要なものだけ」を取りにいく。
+async function generateResearchQuestionsAgent() {
+  console.log('[Research] エージェント問い生成開始');
+  const sevenDaysAgoISO = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const existing = await db.select({ q: schema.researchQuestions.question })
+    .from(schema.researchQuestions)
+    .where(gte(schema.researchQuestions.createdAt, sevenDaysAgoISO));
+  const existingSet = new Set(existing.map(e => e.q.trim().toLowerCase()));
+
+  try {
+    const { text } = await withRetry(() => generateText({
+      model: google('gemini-2.5-flash-lite'),
+      stopWhen: stepCountIs(7),
+      system: `あなたはAI技術コーパスのリサーチギャップ分析エージェントです。
+ツールでデータベースを自律的に探索し、今夜の追加調査に最も価値のある「問い」を最大4つ生成してください。
+
+【探索の優先度】
+1. 確信度が低下しているエンティティ（古くなった情報が残っている可能性 → get_stale_entities）
+2. 今週カバレッジが薄いカテゴリ（見落とし → get_topic_coverage）
+3. 最近のアラートが示す変化（裏取りが必要 → get_recent_alerts）
+4. 特定エンティティの詳細状態を確認したい場合 → get_entity_status
+5. トピックが既にコーパスで充分カバーされているか確認 → check_corpus_coverage
+
+【最終出力形式（ツール探索完了後）】
+以下のJSONのみを出力してください（コードブロック不要）:
+{"questions":[{"question":"...","origin":"gap|followup|tracking|contradiction","rationale":"..."}]}`,
+      prompt: `今日は${new Date().toISOString().slice(0, 10)}です。ツールでデータベースを探索し、今夜調査すべき問いを生成してください。`,
+      tools: {
+        get_stale_entities: tool({
+          description: '確信度が低下しているエンティティ（古くなった情報の持ち主）を一覧取得する',
+          inputSchema: z.object({ limit: z.number().int().min(1).max(15).default(8) }),
+          execute: async ({ limit }) => {
+            const rows = await client.execute({
+              sql: `SELECT e.canonical_name, AVG(COALESCE(c.confidence_score, 0.7)) AS avg_conf,
+                           COUNT(c.id) AS claim_count, MAX(c.valid_from) AS last_updated
+                    FROM entities e
+                    JOIN claims c ON c.entity_id = e.id AND c.status = 'active'
+                    GROUP BY e.id, e.canonical_name
+                    HAVING COUNT(c.id) >= 1
+                    ORDER BY avg_conf ASC LIMIT ?`,
+              args: [limit],
+            });
+            if ((rows.rows as any[]).length === 0) return '確信度低下エンティティなし';
+            return (rows.rows as any[]).map((r: any) =>
+              `${r.canonical_name}: 平均確信度${Number(r.avg_conf).toFixed(2)}, ${r.claim_count}クレーム, 最終更新${r.last_updated ?? '不明'}`
+            ).join('\n');
+          },
+        }),
+        get_entity_status: tool({
+          description: '特定エンティティの詳細状態（ベンチマーク・クレーム・関係）を取得する',
+          inputSchema: z.object({ entityName: z.string().max(80) }),
+          execute: async ({ entityName }) => {
+            const key = entityName.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const ent = await db.select().from(schema.entities)
+              .where(eq(schema.entities.normalizedKey, key)).limit(1).then(r => r[0] ?? null);
+            if (!ent) return `エンティティ「${entityName}」は知識グラフ未登録`;
+            const [benches, claims, rels] = await Promise.all([
+              db.select({ b: schema.benchmarks.benchmarkName, s: schema.benchmarks.score, d: schema.benchmarks.recordedDate })
+                .from(schema.benchmarks).where(eq(schema.benchmarks.entityId, ent.id))
+                .orderBy(desc(schema.benchmarks.recordedDate)).limit(5),
+              db.select({ p: schema.claims.predicate, v: schema.claims.value, cs: schema.claims.confidenceScore, d: schema.claims.validFrom })
+                .from(schema.claims).where(and(eq(schema.claims.entityId, ent.id), eq(schema.claims.status, 'active')))
+                .orderBy(desc(schema.claims.validFrom)).limit(6),
+              db.select({ t: schema.relations.relationType, o: schema.relations.objectName })
+                .from(schema.relations).where(and(eq(schema.relations.subjectEntityId, ent.id), eq(schema.relations.status, 'active'))).limit(4),
+            ]);
+            let out = `■ ${ent.canonicalName} (${ent.type ?? 'model'}) | mention:${ent.mentionCount}`;
+            for (const b of benches) out += `\n  [bench] ${b.b}: ${b.s} (${b.d ?? '日付不明'})`;
+            for (const c of claims) out += `\n  [claim] ${c.p}: ${c.v} (確信度${Number(c.cs ?? 0.7).toFixed(2)}, ${c.d ?? '?'})`;
+            for (const r of rels) out += `\n  [rel] ${r.t} → ${r.o}`;
+            return out;
+          },
+        }),
+        get_topic_coverage: tool({
+          description: '今週のカテゴリ別カバレッジと先週比を取得する（薄いカテゴリを特定するため）',
+          inputSchema: z.object({}),
+          execute: async () => {
+            const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+            const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+            const [thisW, prevW] = await Promise.all([
+              db.select({ cat: schema.collectedData.category, c: count() })
+                .from(schema.collectedData).where(gte(schema.collectedData.createdAt, oneWeekAgo))
+                .groupBy(schema.collectedData.category),
+              db.select({ cat: schema.collectedData.category, c: count() })
+                .from(schema.collectedData).where(and(gte(schema.collectedData.createdAt, twoWeeksAgo), lt(schema.collectedData.createdAt, oneWeekAgo)))
+                .groupBy(schema.collectedData.category),
+            ]);
+            const prev = new Map(prevW.map(r => [r.cat, Number(r.c)]));
+            return thisW.map(r => {
+              const p = prev.get(r.cat) ?? 0;
+              const diff = p > 0 ? `(先週比${Number(r.c) > p ? '+' : ''}${Number(r.c) - p})` : '(先週なし)';
+              return `${r.cat ?? '未分類'}: ${r.c}件 ${diff}`;
+            }).join('\n') || 'データなし';
+          },
+        }),
+        get_recent_alerts: tool({
+          description: '最近のアクティブなアラートを取得する（追跡中の変化・裏取りが必要な情報）',
+          inputSchema: z.object({}),
+          execute: async () => {
+            const alerts = await db.select({ title: schema.alerts.title, type: schema.alerts.type, severity: schema.alerts.severity })
+              .from(schema.alerts).where(eq(schema.alerts.status, 'active'))
+              .orderBy(desc(schema.alerts.createdAt)).limit(8);
+            return alerts.map(a => `[${a.severity ?? 'watch'}/${a.type}] ${a.title}`).join('\n') || 'アクティブなアラートなし';
+          },
+        }),
+        check_corpus_coverage: tool({
+          description: 'あるトピックが収集コーパスで既に充分カバーされているかを確認する（問いを重複させないため）',
+          inputSchema: z.object({ topic: z.string().max(200) }),
+          execute: async ({ topic }) => {
+            const { hybridSearch } = await import('./src/lib/retrieval');
+            const docs = await hybridSearch(topic, 4);
+            if (docs.length === 0) return `「${topic}」: コーパスにほぼ情報なし → 調査価値高`;
+            const titles = docs.map(d => `  [重要度${d.importance}] ${d.titleJa || d.title}`).join('\n');
+            return `「${topic}」: ${docs.length}件の関連記事あり\n${titles}`;
+          },
+        }),
+      },
+    }));
+
+    const parsed = extractJson<{ questions: Array<{ question: string; origin: string; rationale: string }> }>(text);
+    if (!parsed?.questions?.length) {
+      console.log('[Research] エージェントが問いを生成しなかった');
+      return;
+    }
+
+    let generated = 0;
+    for (const q of parsed.questions) {
+      const norm = q.question.trim().toLowerCase();
+      if (!norm || existingSet.has(norm)) continue;
+      existingSet.add(norm);
+      await db.insert(schema.researchQuestions).values({
+        question: q.question.trim(),
+        origin: (q.origin ?? 'gap') as any,
+        originRef: (q.rationale ?? '').slice(0, 150),
+        status: 'pending',
+      });
+      generated++;
+    }
+    console.log(`[Research] エージェント問い生成: ${generated}件`);
+  } catch (e: any) {
+    console.warn('[Research] エージェント問い生成失敗(非クリティカル):', e.message?.slice(0, 80));
+  }
+}
+
 // ── v3: 夜間リサーチの「問い」を自動生成 ──────────────────────────────
 const QuestionsSchema = z.object({
   questions: z.array(z.object({
@@ -1883,41 +1921,35 @@ async function generateLearningRecap(): Promise<string | null> {
 async function generateCrossInsight(): Promise<string | null> {
   try {
     console.log('[CrossInsight] 横断インサイト生成開始');
-    const since7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [topArticles, rels, alertRows, engaged] = await Promise.all([
-      db.select({ title: schema.collectedData.title, titleJa: schema.collectedData.titleJa, category: schema.collectedData.category, importance: schema.collectedData.importanceScore })
-        .from(schema.collectedData).where(gte(schema.collectedData.createdAt, since7))
-        .orderBy(desc(schema.collectedData.importanceScore)).limit(12),
-      db.select({ s: schema.relations.subjectName, t: schema.relations.relationType, o: schema.relations.objectName })
-        .from(schema.relations).where(eq(schema.relations.status, 'active')).orderBy(desc(schema.relations.validFrom)).limit(10),
-      db.select({ title: schema.alerts.title })
-        .from(schema.alerts).where(eq(schema.alerts.status, 'active')).orderBy(desc(schema.alerts.createdAt)).limit(5),
-      db.select({ category: schema.readingEvents.category, c: count() })
-        .from(schema.readingEvents).where(gte(schema.readingEvents.createdAt, since7)).groupBy(schema.readingEvents.category).orderBy(desc(count())).limit(3),
-    ]);
-    if (topArticles.length < 3) { console.log('[CrossInsight] データ不足、スキップ'); return null; }
 
-    const relLabel: Record<string, string> = { outperforms: '上回る', supersedes: '置換', competes_with: '競合', builds_on: '基づく', acquired_by: '買収', cites: '引用' };
-    const ctx = [
-      `【今週の主要トピック】\n${topArticles.map(a => `- [${a.category ?? '—'}](重要度${a.importance ?? '-'}) ${a.titleJa || a.title}`).join('\n')}`,
-      rels.length ? `【知識グラフの関係】\n${rels.map(r => `- ${r.s} ${relLabel[r.t] ?? r.t} ${r.o}`).join('\n')}` : '',
-      alertRows.length ? `【先読みアラート】\n${alertRows.map(a => `- ${a.title}`).join('\n')}` : '',
-      engaged.length ? `【あなたが今週よく読んだ分野】\n${engaged.map(e => `${e.category}(${e.c})`).join('、')}` : '',
-    ].filter(Boolean).join('\n\n');
+    const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const check = await db.select({ c: count() }).from(schema.collectedData).where(gte(schema.collectedData.createdAt, since7));
+    if (Number(check[0].c) < 3) { console.log('[CrossInsight] データ不足、スキップ'); return null; }
 
-    const { text } = await withRetry(() => generateText({
-      model: google('gemini-2.5-flash'),
-      system: `あなたはAI業界の戦略アナリスト兼パーソナルブレーンです。今週の主要トピック・知識グラフの関係・先読みアラート・読者の関心を横断的に統合し、点と点をつなぐ「考察」をMarkdownで書いてください。
-【構成】
+    const { askKnowledgeAI } = await import('./src/lib/knowledge-ai');
+    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
+
+    const text = await withRetry(() => askKnowledgeAI(
+      `今日は${today}です。今週の収集データ・知識グラフ・アラート・読書パターンを横断的に分析し、以下の構成でMarkdownを書いてください。
+
+ツールの使い方:
+- get_recent_articles(days=7, minImportance=5) で今週の主要トピックを取得
+- get_knowledge_graph_summary() で知識グラフの関係・変化を取得
+- get_alerts() で先読みアラートを取得
+- get_reading_patterns(days=7) で読者の関心分野を把握しトーンに反映
+
 ## 🔭 今週の構図
-業界全体で何が起きているかの俯瞰（2〜3段落）。トピック間のつながり・因果を読む。
+業界全体で何が起きているかを俯瞰（2〜3段落）。トピック間のつながり・因果を読む。
+
 ## 🎯 あなたにとっての意味
-読者の関心分野を踏まえ、特に注目すべき点と理由。
+読書パターンの関心分野を踏まえ、特に注目すべき点と理由。
+
 ## ♟️ 次の一手
 来週意識すべきこと・確認すべきことを2〜3点。
+
 【ルール】1000〜1400字。表面的な要約でなく「つながり」と「示唆」を述べる。`,
-      prompt: ctx,
-    }));
+      { model: 'gemini-2.5-flash', maxSteps: 5 },
+    ));
 
     const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     await db.insert(schema.reports).values({ type: 'cross_insight', content: text, reportDate: reportDateJST });
@@ -2949,7 +2981,7 @@ async function main() {
     // v3: 自律リサーチのみ実行（検証用）
     if (pipelineMode === 'research') {
       await detectAlerts();
-      await generateResearchQuestions();
+      await generateResearchQuestionsAgent();
       await runNightlyResearch();
       await generateBriefing();
       console.log('=== Research mode 完了 ===');
@@ -2996,7 +3028,7 @@ async function main() {
       let briefingContent: string | null = null;
       try {
         await detectAlerts();
-        await generateResearchQuestions();
+        await generateResearchQuestionsAgent();
         await runNightlyResearch();
         briefingContent = await generateBriefing();
       } catch (e: any) {
