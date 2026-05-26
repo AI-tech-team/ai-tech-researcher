@@ -23,14 +23,14 @@ import { ProfileTab } from '@/components/tabs/ProfileTab';
 import { ArticleDetailModal } from '@/components/ArticleDetailModal';
 import { EntityPageModal } from '@/components/EntityPageModal';
 import {
-  getSourcesData, getCollectedDataList, getReportsData,
-  addSource, deleteSource, getActivityData, toggleFavorite, toggleReadLater, markAsRead,
-  getSourceROI, getCategoryTrendData, getModelMentionData,
-  getKeywordCategoryMatrix, getTrendingKeywords, getPipelineLogs,
+  getCollectedDataList, getCoreData, getAnalyticsData,
+  addSource, deleteSource, toggleFavorite, toggleReadLater, markAsRead,
+  getSourceROI,
+  getKeywordCategoryMatrix, getPipelineLogs,
   getBenchmarkLeaderboards, getKnowledgeRelations, getBenchmarkAlerts, getKnowledgeStats,
-  getBriefing, getActiveAlerts, getReadingProfile, getTopicClusters, getRecommendations, getCrossInsight,
+  getBriefing, getActiveAlerts, getReadingProfile, getRecommendations, getCrossInsight,
   getSignalIntelligence, type SignalIntel,
-  getOwnerStatus, getMyProfile, updateMyProfile, getArticleCounts,
+  getOwnerStatus, getMyProfile, updateMyProfile,
 } from './actions';
 import type { CollectedItem, Source, Report, PipelineLog, TrendingKeyword, BenchmarkLeaderboard, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ReadingProfile, TopicCluster } from '@/types';
 
@@ -140,33 +140,26 @@ export default function Home() {
     }
   }
 
-  // コア（記事・ソース）＋概要タブ分のみ起動時に取得。分析系は開いた時に遅延ロード
+  // Phase 1（記事・ソース）とPhase 2（analytics）を同時発火。
+  // Phase 1が先に解決 → 記事を即表示し、グラフはその後に埋まる（9HTTP→2HTTP）
   async function loadCore() {
     setIsLoadingData(true);
-    const [srcs, data, reportsData, activity, catTrend, modelMentions, trending, clusters, counts] = await Promise.all([
-      getSourcesData(),
-      getCollectedDataList(ARTICLE_PAGE, 0),
-      getReportsData(),
-      getActivityData(),
-      getCategoryTrendData(),
-      getModelMentionData(),
-      getTrendingKeywords(),
-      getTopicClusters(),
-      getArticleCounts(),
-    ]);
+    const analyticsPromise = getAnalyticsData();
+    const { srcs, data, reportsData, activity, counts } = await getCoreData(ARTICLE_PAGE);
     setSourcesList(srcs as Source[]);
     const first = data as CollectedItem[];
     setCollectedItems(first);
     setArticlesOffset(first.length);
     setHasMoreArticles(first.length === ARTICLE_PAGE);
-    setArticleCounts(counts);
+    setArticleCounts(counts as { total: number; unread: number; favorite: number; readLater: number });
     setReportsList(reportsData as Report[]);
     setActivityData(activity);
-    setCategoryTrendData(catTrend);
-    setModelMentionData(modelMentions);
-    setTrendingKeywords(trending);
-    setTopicClusters(clusters as TopicCluster[]);
     setIsLoadingData(false);
+    const { catTrend, modelMentions, trending, clusters } = await analyticsPromise;
+    setCategoryTrendData(catTrend);
+    setModelMentionData(modelMentions as { model: string; count: number }[]);
+    setTrendingKeywords(trending as TrendingKeyword[]);
+    setTopicClusters(clusters as TopicCluster[]);
   }
 
   // 記事の段階ロード（100件上限を撤廃。DBオフセットで全アーカイブを順に取得）

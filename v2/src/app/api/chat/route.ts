@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db, client } from '@/db';
 import { collectedData, readingEvents, userArticleState, userProfiles } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { hybridSearch, graphContext, type RetrievedDoc } from '@/lib/retrieval';
+import { hybridSearch, graphContext, cachedQueryEmbed, type RetrievedDoc } from '@/lib/retrieval';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
 
@@ -31,17 +31,14 @@ function docsToContext(docs: RetrievedDoc[]): string {
 async function recallMemory(userId: number, query: string): Promise<string> {
   try {
     if (!query.trim()) return '';
-    const { embeddings } = await embedMany({
-      model: google.embedding('gemini-embedding-001'),
-      values: [query.slice(0, 800)],
-      providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
-    });
+    const vec = await cachedQueryEmbed(query.slice(0, 800));
+    if (!vec) return '';
     const res = await client.execute({
       sql: `SELECT cm.role AS role, cm.content AS content
             FROM vector_top_k('chat_memory_embedding_idx', vector32(?), 12) AS v
             JOIN chat_memory cm ON cm.rowid = v.id
             WHERE cm.user_id = ? LIMIT 5`,
-      args: [JSON.stringify(embeddings[0]), userId],
+      args: [JSON.stringify(vec), userId],
     });
     if (res.rows.length === 0) return '';
     return (res.rows as any[])
