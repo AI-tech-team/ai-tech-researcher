@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutGrid, Globe, FileText, Settings,
-  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut, Radar, UserCircle,
+  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut, Radar, UserCircle, HelpCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession, signIn, signOut } from 'next-auth/react';
@@ -22,6 +22,7 @@ import { SignalsTab } from '@/components/tabs/SignalsTab';
 import { ProfileTab } from '@/components/tabs/ProfileTab';
 import { ArticleDetailModal } from '@/components/ArticleDetailModal';
 import { EntityPageModal } from '@/components/EntityPageModal';
+import { OnboardingTour } from '@/components/OnboardingTour';
 import {
   getCollectedDataList, getCoreData, getAnalyticsData,
   addSource, deleteSource, toggleFavorite, toggleReadLater, markAsRead,
@@ -68,6 +69,16 @@ const SLIDE = {
   exit: { opacity: 0, y: -8 },
   transition: { duration: 0.15 },
 };
+
+// 初見ユーザー向けツアー。各ステップで該当タブを表示しながら説明する。
+const TOUR_STEPS: { title: string; body: string; tab: Tab; insightSub?: InsightSub }[] = [
+  { title: 'AI Tech Researcher へようこそ', body: 'AIの最新動向を自動で集め、要約・分析して日々「育つ」リサーチ・ダッシュボードです。ログインなしでそのまま閲覧できます。', tab: 'overview' },
+  { title: '① 全体概要', body: '今日のハイライトと急上昇トピックが、ここで一目で分かります。まずはここから。', tab: 'overview' },
+  { title: '② 記事', body: '収集したAI技術記事の一覧です。重要度順に並び、気になるものを開いて読めます。', tab: 'data' },
+  { title: '③ 調査レポート', body: 'AIが毎日まとめる要約レポート。最近の流れや要点を短時間で把握できます。', tab: 'reports' },
+  { title: '④ 知識グラフ', body: 'このツールの強みです。長く観測してきた蓄積（ベンチマークの推移・モデル同士の関係）を可視化します。新しく立ち上げたAIには出せない"縦の時間軸"です。', tab: 'insight', insightSub: 'knowledge' },
+  { title: 'ログインでもっと便利に', body: 'Googleログインすると、お気に入り保存やAIチャットが使えます（任意）。それでは始めましょう。', tab: 'overview' },
+];
 
 export default function Home() {
   const { toast } = useToast();
@@ -239,6 +250,30 @@ export default function Home() {
     ensureGroup(sub);
   };
 
+  // ── 初見ユーザー向けツアー ──
+  const [tourActive, setTourActive] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  // 初回訪問時のみ自動起動（マウント後にlocalStorageを読む＝hydration安全）
+  useEffect(() => {
+    try { if (!localStorage.getItem('onboarding_v1_done')) { setTourStep(0); setTourActive(true); } } catch {}
+  }, []);
+  // ツアー中は現在ステップの該当タブを表示
+  useEffect(() => {
+    if (!tourActive) return;
+    const s = TOUR_STEPS[tourStep];
+    if (!s) return;
+    setActiveTab(s.tab);
+    if (s.insightSub) { setInsightSub(s.insightSub); ensureGroup(s.insightSub); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourActive, tourStep]);
+  const endTour = () => {
+    try { localStorage.setItem('onboarding_v1_done', '1'); } catch {}
+    setTourActive(false); setTourStep(0); setActiveTab('overview');
+  };
+  const tourNext = () => { if (tourStep >= TOUR_STEPS.length - 1) endTour(); else setTourStep(s => s + 1); };
+  const tourBack = () => setTourStep(s => Math.max(0, s - 1));
+  const startTour = () => { setTourStep(0); setTourActive(true); };
+
   const handleSyncData = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
@@ -259,6 +294,7 @@ export default function Home() {
   };
 
   const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
+    if (!sessionUserId) { toast('お気に入りの保存にはログインが必要です', 'info'); signIn('google'); return; }
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
     setArticleCounts(c => c && { ...c, favorite: Math.max(0, c.favorite + (currentlyFavorited ? -1 : 1)) });
     toast(currentlyFavorited ? 'お気に入りを解除しました' : '⭐ お気に入りに追加しました', 'success');
@@ -272,6 +308,7 @@ export default function Home() {
   };
 
   const handleToggleReadLater = async (id: number, current: boolean) => {
+    if (!sessionUserId) { toast('「後で読む」の保存にはログインが必要です', 'info'); signIn('google'); return; }
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isReadLater: current ? 0 : 1 } : item));
     setArticleCounts(c => c && { ...c, readLater: Math.max(0, c.readLater + (current ? -1 : 1)) });
     toast(current ? '「後で読む」を解除しました' : '🔖 「後で読む」に追加しました', 'success');
@@ -312,7 +349,7 @@ export default function Home() {
     ['insight', <Layers key="insight" size={19} />, '分析'],
     ['settings', <Settings key="settings" size={19} />, '設定'],
     ['profile', <UserCircle key="profile" size={19} />, 'プロフィール'],
-  ].filter(([tab]) => tab !== 'settings' || isOwner) as [Tab, React.ReactNode, string][];
+  ].filter(([tab]) => (tab !== 'settings' || isOwner) && (!tourActive || ['overview', 'data', 'reports', 'insight'].includes(tab as string))) as [Tab, React.ReactNode, string][];
   const mobileNavItems: [Tab, React.ReactNode][] = [
     ['overview', <LayoutGrid key="overview" size={21} />],
     ['data', <Globe key="data" size={21} />],
@@ -320,7 +357,7 @@ export default function Home() {
     ['insight', <Layers key="insight" size={21} />],
     ['settings', <Settings key="settings" size={21} />],
     ['profile', <UserCircle key="profile" size={21} />],
-  ].filter(([tab]) => tab !== 'settings' || isOwner) as [Tab, React.ReactNode][];
+  ].filter(([tab]) => (tab !== 'settings' || isOwner) && (!tourActive || ['overview', 'data', 'reports', 'insight'].includes(tab as string))) as [Tab, React.ReactNode][];
 
   const insightLoading = !loadedGroups[insightSub];
 
@@ -473,13 +510,19 @@ export default function Home() {
         <div className="hidden md:flex flex-col gap-3 px-6 pt-5 pb-4 border-b border-white/5">
           <div className="flex items-center justify-between">
             <h1 className="text-lg font-bold font-outfit">{currentLabel}</h1>
-            {isOwner && (
-              <button onClick={handleSyncData} disabled={isSyncing}
-                className={`btn-primary flex items-center gap-1.5 ${isSyncing ? 'opacity-40 cursor-not-allowed' : ''}`}>
-                <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
-                {isSyncing ? '同期中' : '同期'}
+            <div className="flex items-center gap-2">
+              <button onClick={startTour} title="使い方ツアーを見る"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/10 text-slate-300 text-xs hover:bg-white/5 transition-colors">
+                <HelpCircle size={13} /> 使い方
               </button>
-            )}
+              {isOwner && (
+                <button onClick={handleSyncData} disabled={isSyncing}
+                  className={`btn-primary flex items-center gap-1.5 ${isSyncing ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                  <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
+                  {isSyncing ? '同期中' : '同期'}
+                </button>
+              )}
+            </div>
           </div>
           {/* Slim status line */}
           <div className="flex items-center gap-3.5 font-mono text-[11px] text-slate-500">
@@ -499,13 +542,19 @@ export default function Home() {
             <div className="live-dot" />
             <span className="font-mono text-[11px] text-slate-400 tracking-wide">{currentLabel}</span>
           </div>
-          {isOwner && (
-            <button onClick={handleSyncData} disabled={isSyncing}
-              className="btn-primary flex items-center gap-1.5 disabled:opacity-40">
-              <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
-              {isSyncing ? '同期中...' : '同期'}
+          <div className="flex items-center gap-2">
+            <button onClick={startTour} title="使い方ツアーを見る"
+              className="p-1.5 rounded-lg border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-colors">
+              <HelpCircle size={14} />
             </button>
-          )}
+            {isOwner && (
+              <button onClick={handleSyncData} disabled={isSyncing}
+                className="btn-primary flex items-center gap-1.5 disabled:opacity-40">
+                <RefreshCw size={10} className={isSyncing ? 'animate-spin' : ''} />
+                {isSyncing ? '同期中...' : '同期'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tab content */}
@@ -576,6 +625,20 @@ export default function Home() {
         onOpenArticle={(id) => { setDetailEntityName(null); openArticle(id); }}
         onOpenEntity={openEntity}
       />
+
+      {/* ── 初見ユーザー向けツアー ── */}
+      {tourActive && TOUR_STEPS[tourStep] && (
+        <OnboardingTour
+          step={tourStep}
+          total={TOUR_STEPS.length}
+          title={TOUR_STEPS[tourStep].title}
+          body={TOUR_STEPS[tourStep].body}
+          isLast={tourStep >= TOUR_STEPS.length - 1}
+          onNext={tourNext}
+          onBack={tourBack}
+          onSkip={endTour}
+        />
+      )}
     </div>
   );
 }
