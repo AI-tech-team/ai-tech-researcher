@@ -273,6 +273,8 @@ export default function Home() {
   const tourNext = () => { if (tourStep >= TOUR_STEPS.length - 1) endTour(); else setTourStep(s => s + 1); };
   const tourBack = () => setTourStep(s => Math.max(0, s - 1));
   const startTour = () => { setTourStep(0); setTourActive(true); };
+  // 最終ステップの「ログインして始める」: ツアー完了を記録してGoogleログインへ
+  const tourLogin = () => { try { localStorage.setItem('onboarding_v1_done', '1'); } catch {} setTourActive(false); signIn('google'); };
 
   const handleSyncData = async () => {
     if (isSyncing) return;
@@ -637,6 +639,7 @@ export default function Home() {
           onNext={tourNext}
           onBack={tourBack}
           onSkip={endTour}
+          onLogin={tourLogin}
         />
       )}
     </div>
