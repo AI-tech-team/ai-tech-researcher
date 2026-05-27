@@ -1233,30 +1233,15 @@ async function ingestKnowledge(
   parsed: z.infer<typeof KnowledgeSchema>,
   opts: { replace?: boolean } = {},
 ): Promise<{ claims: number; benchmarks: number; relations: number; stale: number }> {
-  // replace=true（Batch再抽出）: 改善ロジックでこの記事の寄与を作り直す。
+  // replace=true（Batch再抽出）: 改善ロジックでこの記事の寄与を新規導出として作り直す。
+  // 既存claims/benchmarks/relationsを削除→再挿入。confidence_scoreは0.7から再スタート（仕様）。
   // 裏付けブースト・stale移行はスキップ（バルク再導出での確信度インフレ・staleバタつき回避）。
+  // ※claim確信度を保つ差分マージは、LLMの言い換えで一致せず実質replaceだったため不採用。
   const replace = opts.replace ?? false;
-  const ck = (s: string, p: string, v: string) =>
-    `${(s ?? '').trim().toLowerCase()}${(p ?? '').trim().toLowerCase()}${(v ?? '').trim().toLowerCase()}`;
-  const preservedClaimKeys = new Set<string>();
   if (replace) {
-    // benchmarks/relations は confidence_score を持たないので従来どおり作り直し（重複防止）
+    await db.delete(schema.claims).where(eq(schema.claims.articleId, article.id));
     await db.delete(schema.benchmarks).where(eq(schema.benchmarks.articleId, article.id));
     await db.delete(schema.relations).where(eq(schema.relations.articleId, article.id));
-    // claims は差分マージ: 新セットに無い既存claim（＝改善ロジックが除外した偽陽性）だけ削除し、
-    // 一致するものは confidence_score を保持して残す。確信度スペクトルを壊さない。
-    const newKeys = new Set(parsed.claims.map(c => ck(c.subject, c.predicate, c.value)));
-    const existing = await db.select({
-      id: schema.claims.id, subject: schema.claims.subject,
-      predicate: schema.claims.predicate, value: schema.claims.value,
-    }).from(schema.claims).where(eq(schema.claims.articleId, article.id));
-    const removeIds: number[] = [];
-    for (const e of existing) {
-      const k = ck(e.subject, e.predicate, e.value);
-      if (newKeys.has(k)) preservedClaimKeys.add(k); // 既存を保持（再挿入しない）
-      else removeIds.push(e.id);                      // 新ロジックが出さない＝削除
-    }
-    if (removeIds.length) await db.delete(schema.claims).where(inArray(schema.claims.id, removeIds));
   }
 
   let claims = 0, benchmarks = 0, relations = 0, stale = 0;
@@ -1283,11 +1268,6 @@ async function ingestKnowledge(
               WHERE entity_id = ? AND predicate = ? AND status = 'active'`,
         args: [entity.id, claim.predicate],
       });
-    }
-    // 差分マージ: 既存と一致するclaimは再挿入せず confidence_score を保持
-    if (replace && preservedClaimKeys.has(ck(claim.subject, claim.predicate, claim.value))) {
-      claims++;
-      continue;
     }
     await db.insert(schema.claims).values({
       articleId: article.id,
