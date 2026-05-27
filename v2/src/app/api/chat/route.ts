@@ -7,6 +7,7 @@ import { eq, and } from 'drizzle-orm';
 import { hybridSearch, graphContext, cachedQueryEmbed, type RetrievedDoc } from '@/lib/retrieval';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export const maxDuration = 60;
 
@@ -89,9 +90,26 @@ const targetSchema = z.object({
 
 export async function POST(req: Request) {
   if (!(await isOwner())) return Response.json({ error: 'オーナー権限が必要です' }, { status: 403 });
-  const { messages } = await req.json();
-  const modelMessages = await convertToModelMessages(messages);
+
+  // 不正利用防止: 巨大ボディ拒否＋入力サイズ上限＋レート制限（userId別・IP不使用）
+  const contentLength = Number(req.headers.get('content-length') ?? 0);
+  if (contentLength > 200_000) return Response.json({ error: 'リクエストが大きすぎます' }, { status: 413 });
+
   const userId = ((await auth())?.user as { id?: number } | undefined)?.id;
+  const rlKey = String(userId ?? 'owner');
+  if (!(await checkRateLimit('chat_min', rlKey, 20, 60_000)) || !(await checkRateLimit('chat_day', rlKey, 300, 86_400_000))) {
+    return Response.json({ error: 'レート制限に達しました。しばらく待ってから再試行してください。' }, { status: 429 });
+  }
+
+  const body = await req.json().catch(() => null);
+  const messages = body?.messages;
+  if (!Array.isArray(messages) || messages.length === 0 || messages.length > 50) {
+    return Response.json({ error: 'メッセージ形式が不正です' }, { status: 400 });
+  }
+  const totalChars = messages.reduce((n: number, m: any) => n + msgText(m).length, 0);
+  if (totalChars > 24_000) return Response.json({ error: '入力が長すぎます' }, { status: 400 });
+
+  const modelMessages = await convertToModelMessages(messages);
 
   const userTexts = modelMessages.filter((m: any) => m.role === 'user').map(msgText).filter(Boolean);
   const lastText = userTexts[userTexts.length - 1] ?? '';

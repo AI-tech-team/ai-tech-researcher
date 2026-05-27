@@ -118,6 +118,8 @@ export default function Home() {
   const refreshOwner = () => { getOwnerStatus().then(setOwner).catch(() => setOwner(null)); };
   // オーナー状態はCookie（解錠）＋セッション（id===1フォールバック）に依存するため、ログイン変化で再取得
   useEffect(() => { refreshOwner(); }, [sessionUserId]);
+  // 設定タブはオーナー専用。非オーナーが（施錠等で）設定に居たら概要へ退避
+  useEffect(() => { if (!isOwner && activeTab === 'settings') setActiveTab('overview'); }, [isOwner, activeTab]);
 
   useEffect(() => { loadCore(); }, []);
 
@@ -302,6 +304,7 @@ export default function Home() {
   const unreadCount = collectedItems.filter(i => !i.isRead).length;
   const currentLabel = activeTab === 'insight' ? INSIGHT_LABELS[insightSub] : TAB_LABELS[activeTab];
 
+  // 設定タブはオーナーにのみ表示する
   const navItems: [Tab, React.ReactNode, string][] = [
     ['overview', <LayoutGrid key="overview" size={19} />, '全体概要'],
     ['data', <Globe key="data" size={19} />, `記事${unreadCount > 0 ? ` (未読${unreadCount})` : ''}`],
@@ -309,7 +312,7 @@ export default function Home() {
     ['insight', <Layers key="insight" size={19} />, '分析'],
     ['settings', <Settings key="settings" size={19} />, '設定'],
     ['profile', <UserCircle key="profile" size={19} />, 'プロフィール'],
-  ];
+  ].filter(([tab]) => tab !== 'settings' || isOwner) as [Tab, React.ReactNode, string][];
   const mobileNavItems: [Tab, React.ReactNode][] = [
     ['overview', <LayoutGrid key="overview" size={21} />],
     ['data', <Globe key="data" size={21} />],
@@ -317,7 +320,7 @@ export default function Home() {
     ['insight', <Layers key="insight" size={21} />],
     ['settings', <Settings key="settings" size={21} />],
     ['profile', <UserCircle key="profile" size={21} />],
-  ];
+  ].filter(([tab]) => tab !== 'settings' || isOwner) as [Tab, React.ReactNode][];
 
   const insightLoading = !loadedGroups[insightSub];
 
@@ -383,7 +386,7 @@ export default function Home() {
           )}
         </motion.div>
       )}
-      {activeTab === 'settings' && (
+      {activeTab === 'settings' && isOwner && (
         <motion.div key="settings" {...SLIDE}>
           <SettingsTab sourcesList={sourcesList} isLoadingData={isLoadingData}
             isOwner={isOwner}

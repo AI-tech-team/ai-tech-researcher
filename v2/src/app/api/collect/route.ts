@@ -5,6 +5,7 @@ import { sources, collectedData } from '@/db/schema';
 import { eq, sql, and } from 'drizzle-orm';
 import { withRetry, extractJson, resolveGroundingUrl } from '@/lib/llm';
 import { isOwner } from '@/lib/owner';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export const maxDuration = 60;
 
@@ -183,6 +184,7 @@ importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価。tags
 
 export async function POST() {
   if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
+  if (!(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
   try {
     // 1件のソース失敗でSYNC全体を失敗にしないため、複数候補を順に試行
     const candidates = await db.select().from(sources)

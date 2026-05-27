@@ -6,6 +6,7 @@ import { collectedData } from '@/db/schema';
 import { eq, isNull, or, inArray } from 'drizzle-orm';
 import { withRetry } from '@/lib/llm';
 import { isOwner } from '@/lib/owner';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export const maxDuration = 60;
 
@@ -20,6 +21,7 @@ const RecatSchema = z.object({
 
 export async function POST() {
   if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
+  if (!(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
   try {
     // カテゴリが未設定またはその他の記事を対象（最大40件）
     const items = await db.select({ id: collectedData.id, title: collectedData.title, summary: collectedData.summary })
