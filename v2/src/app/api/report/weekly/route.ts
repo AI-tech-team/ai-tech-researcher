@@ -4,11 +4,13 @@ import { db } from '@/db';
 import { collectedData, reports } from '@/db/schema';
 import { desc, gte, eq } from 'drizzle-orm';
 import { isOwner } from '@/lib/owner';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 export const maxDuration = 60;
 
 export async function POST() {
   if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
+  if (!(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
   try {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);

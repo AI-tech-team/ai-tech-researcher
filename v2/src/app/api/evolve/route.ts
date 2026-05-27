@@ -6,6 +6,7 @@ import { sources, collectedData, adoptionLogs } from '@/db/schema';
 import { eq, sql, desc, count, gte, and } from 'drizzle-orm';
 import { withRetry } from '@/lib/llm';
 import { isOwner } from '@/lib/owner';
+import { checkRateLimit } from '@/lib/ratelimit';
 
 const KeywordsSchema = z.object({ keywords: z.array(z.string().min(2).max(60)).max(5) });
 
@@ -20,6 +21,7 @@ const KW_STOPWORDS = new Set([
 
 export async function POST() {
   if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
+  if (!(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
   try {
     const now = new Date();
     const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
