@@ -32,6 +32,8 @@ export const collectedData = sqliteTable("collected_data", {
   // v3ベクトル基盤: 同一ストーリーの代表記事ID（自己参照）と束ねた記事数
   storyId: integer("story_id"),
   storyCount: integer("story_count").default(1),
+  // 知識抽出ロジックのバージョン。現EXTRACTION_VERSION未満の記事をBatchで再抽出する（遡及適用）
+  extractionVersion: integer("extraction_version").default(0),
   // embedding (F32_BLOB) はDrizzle非対応のため生SQLで管理（select時に巨大blobを引かないようスキーマ外）
 });
 
