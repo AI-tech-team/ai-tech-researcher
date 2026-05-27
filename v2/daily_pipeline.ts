@@ -1474,8 +1474,11 @@ interface BatchState {
   jobs: { name: string; articleIds: number[]; ingested?: boolean }[];
 }
 
-async function runBatchSubmit(maxArticles = 3000, chunkSize = 150) {
-  console.log(`[Batch] 再抽出ジョブ投入開始 (EXTRACTION_VERSION=${EXTRACTION_VERSION})`);
+async function runBatchSubmit(
+  maxArticles = Number(process.env.BATCH_MAX ?? 3000),
+  chunkSize = Number(process.env.BATCH_CHUNK ?? 150),
+) {
+  console.log(`[Batch] 再抽出ジョブ投入開始 (EXTRACTION_VERSION=${EXTRACTION_VERSION}, max=${maxArticles})`);
   const targets = await db.select({
     id: schema.collectedData.id,
     title: schema.collectedData.title,
@@ -1492,7 +1495,7 @@ async function runBatchSubmit(maxArticles = 3000, chunkSize = 150) {
 
   if (targets.length === 0) { console.log('[Batch] 再抽出対象なし（全記事が最新バージョン）'); return; }
 
-  const jobs: BatchState['jobs'] = [];
+  const state: BatchState = { version: EXTRACTION_VERSION, submittedAt: new Date().toISOString(), jobs: [] };
   for (let i = 0; i < targets.length; i += chunkSize) {
     const slice = targets.slice(i, i + chunkSize);
     const src = slice.map(a => ({
@@ -1505,13 +1508,12 @@ async function runBatchSubmit(maxArticles = 3000, chunkSize = 150) {
       config: { displayName: `reextract-v${EXTRACTION_VERSION}-${i}` },
     });
     if (!job?.name) { console.warn('[Batch] ジョブ名が取得できずスキップ'); continue; }
-    jobs.push({ name: job.name, articleIds: slice.map(a => a.id) });
+    state.jobs.push({ name: job.name, articleIds: slice.map(a => a.id) });
+    writeFileSync(BATCH_STATE_PATH, JSON.stringify(state, null, 2)); // 投入ごとに保存（途中失敗でも投入済みを記録）
     console.log(`[Batch] 投入: ${job.name} (${slice.length}件)`);
   }
 
-  const state: BatchState = { version: EXTRACTION_VERSION, submittedAt: new Date().toISOString(), jobs };
-  writeFileSync(BATCH_STATE_PATH, JSON.stringify(state, null, 2));
-  console.log(`[Batch] ${jobs.length}ジョブ・計${targets.length}件を投入。${BATCH_STATE_PATH} に保存。完了後 PIPELINE_MODE=batch_fetch で取り込み。`);
+  console.log(`[Batch] ${state.jobs.length}ジョブ・計${targets.length}件を投入。${BATCH_STATE_PATH} に保存。完了後 PIPELINE_MODE=batch_fetch で取り込み。`);
 }
 
 // Batchのインライン応答からテキストを取り出す（SDK版差異に備え複数経路を試す）
