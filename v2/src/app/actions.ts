@@ -4,9 +4,8 @@ import { db, client } from '@/db';
 import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState, userProfiles, users } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, lt, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
-import { cookies } from 'next/headers';
 import { auth } from '@/auth';
-import { isOwner, verifyOwnerPassword, ownerToken, ownerPasswordConfigured, OWNER_COOKIE } from '@/lib/owner';
+import { isOwner } from '@/lib/owner';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
 import { cached } from '@/lib/cache';
@@ -69,28 +68,9 @@ async function currentUserId(): Promise<number | undefined> {
   } catch { return undefined; }
 }
 
-// ─── v6: オーナー解錠（パスワード）──────────────────────────────────
-export async function unlockOwner(password: string) {
-  if (!verifyOwnerPassword(password)) return { success: false };
-  const c = await cookies();
-  c.set(OWNER_COOKIE, ownerToken(), {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30, // 30日
-  });
-  return { success: true };
-}
-
-export async function lockOwner() {
-  const c = await cookies();
-  c.delete(OWNER_COOKIE);
-  return { success: true };
-}
-
-export async function getOwnerStatus(): Promise<{ isOwner: boolean; passwordConfigured: boolean }> {
-  return { isOwner: await isOwner(), passwordConfigured: ownerPasswordConfigured() };
+// v6: オーナー状態（Googleアカウントのメールで判定。パスワード解錠UIは廃止）
+export async function getOwnerStatus(): Promise<{ isOwner: boolean }> {
+  return { isOwner: await isOwner() };
 }
 
 // v6: 取得済み記事リストに、ログインユーザーのお気に入り/後で読む/既読を上書き
