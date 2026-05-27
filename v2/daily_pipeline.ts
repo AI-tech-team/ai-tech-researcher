@@ -2,7 +2,7 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import { google } from '@ai-sdk/google';
 import { generateText, generateObject, embedMany, tool, stepCountIs } from 'ai';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
 import { eq, sql, desc, asc, count, and, gte, lt, isNull, inArray } from 'drizzle-orm';
 import { config } from 'dotenv';
@@ -1233,14 +1233,30 @@ async function ingestKnowledge(
   parsed: z.infer<typeof KnowledgeSchema>,
   opts: { replace?: boolean } = {},
 ): Promise<{ claims: number; benchmarks: number; relations: number; stale: number }> {
-  // replace=true（Batch再抽出）: この記事の既存寄与を一旦削除して作り直す（重複防止＝改善ロジックで再導出）。
-  // 同時に裏付けブースト・stale移行はスキップする。バルク再導出でこれらを走らせると
-  // 確信度インフレ・staleバタつきという副作用が出るため（毎日の増分抽出専用の機構）。
+  // replace=true（Batch再抽出）: 改善ロジックでこの記事の寄与を作り直す。
+  // 裏付けブースト・stale移行はスキップ（バルク再導出での確信度インフレ・staleバタつき回避）。
   const replace = opts.replace ?? false;
+  const ck = (s: string, p: string, v: string) =>
+    `${(s ?? '').trim().toLowerCase()}${(p ?? '').trim().toLowerCase()}${(v ?? '').trim().toLowerCase()}`;
+  const preservedClaimKeys = new Set<string>();
   if (replace) {
-    await db.delete(schema.claims).where(eq(schema.claims.articleId, article.id));
+    // benchmarks/relations は confidence_score を持たないので従来どおり作り直し（重複防止）
     await db.delete(schema.benchmarks).where(eq(schema.benchmarks.articleId, article.id));
     await db.delete(schema.relations).where(eq(schema.relations.articleId, article.id));
+    // claims は差分マージ: 新セットに無い既存claim（＝改善ロジックが除外した偽陽性）だけ削除し、
+    // 一致するものは confidence_score を保持して残す。確信度スペクトルを壊さない。
+    const newKeys = new Set(parsed.claims.map(c => ck(c.subject, c.predicate, c.value)));
+    const existing = await db.select({
+      id: schema.claims.id, subject: schema.claims.subject,
+      predicate: schema.claims.predicate, value: schema.claims.value,
+    }).from(schema.claims).where(eq(schema.claims.articleId, article.id));
+    const removeIds: number[] = [];
+    for (const e of existing) {
+      const k = ck(e.subject, e.predicate, e.value);
+      if (newKeys.has(k)) preservedClaimKeys.add(k); // 既存を保持（再挿入しない）
+      else removeIds.push(e.id);                      // 新ロジックが出さない＝削除
+    }
+    if (removeIds.length) await db.delete(schema.claims).where(inArray(schema.claims.id, removeIds));
   }
 
   let claims = 0, benchmarks = 0, relations = 0, stale = 0;
@@ -1267,6 +1283,11 @@ async function ingestKnowledge(
               WHERE entity_id = ? AND predicate = ? AND status = 'active'`,
         args: [entity.id, claim.predicate],
       });
+    }
+    // 差分マージ: 既存と一致するclaimは再挿入せず confidence_score を保持
+    if (replace && preservedClaimKeys.has(ck(claim.subject, claim.predicate, claim.value))) {
+      claims++;
+      continue;
     }
     await db.insert(schema.claims).values({
       articleId: article.id,
@@ -1462,11 +1483,47 @@ async function runRelationInference() {
 const BATCH_STATE_PATH = 'batch_state.json';
 const BATCH_MODEL = 'gemini-2.5-flash-lite';
 
-// JSON mode用に出力構造を明示（generateObjectのスキーマ注入の代替）
-const EXTRACTION_JSON_SHAPE = `
-
-出力は次の形のJSONのみ（前後の文章・コードブロック不要。該当がない配列は []）:
-{"claims":[{"subject":"主語","predicate":"述語","value":"値","confidence":"high|medium|low"}],"benchmarks":[{"entity":"モデル名","benchmark":"ベンチ名","score":数値,"unit":"%|points|Elo|null","confidence":"high|medium|low"}],"relations":[{"subject":"主語","relation":"${RELATION_TYPES.join('|')}","object":"目的語","confidence":"high|medium|low"}]}`;
+// Batch出力の構造を強制する responseSchema（generateObjectのZodスキーマ強制と同等。KnowledgeSchemaに対応）
+const CONF_ENUM = ['high', 'medium', 'low'];
+const EXTRACTION_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    claims: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          subject: { type: Type.STRING }, predicate: { type: Type.STRING }, value: { type: Type.STRING },
+          confidence: { type: Type.STRING, enum: CONF_ENUM },
+        },
+        required: ['subject', 'predicate', 'value', 'confidence'],
+      },
+    },
+    benchmarks: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          entity: { type: Type.STRING }, benchmark: { type: Type.STRING }, score: { type: Type.NUMBER },
+          unit: { type: Type.STRING, nullable: true }, confidence: { type: Type.STRING, enum: CONF_ENUM },
+        },
+        required: ['entity', 'benchmark', 'score', 'confidence'],
+      },
+    },
+    relations: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          subject: { type: Type.STRING }, relation: { type: Type.STRING, enum: [...RELATION_TYPES] }, object: { type: Type.STRING },
+          confidence: { type: Type.STRING, enum: CONF_ENUM },
+        },
+        required: ['subject', 'relation', 'object', 'confidence'],
+      },
+    },
+  },
+  required: ['claims', 'benchmarks', 'relations'],
+};
 
 interface BatchState {
   version: number;
@@ -1499,8 +1556,8 @@ async function runBatchSubmit(
   for (let i = 0; i < targets.length; i += chunkSize) {
     const slice = targets.slice(i, i + chunkSize);
     const src = slice.map(a => ({
-      contents: [{ role: 'user', parts: [{ text: buildExtractionPrompt(a) + EXTRACTION_JSON_SHAPE }] }],
-      config: { responseMimeType: 'application/json' },
+      contents: [{ role: 'user', parts: [{ text: buildExtractionPrompt(a) }] }],
+      config: { responseMimeType: 'application/json', responseSchema: EXTRACTION_RESPONSE_SCHEMA },
     }));
     const job: any = await genai.batches.create({
       model: BATCH_MODEL,
@@ -1516,14 +1573,40 @@ async function runBatchSubmit(
   console.log(`[Batch] ${state.jobs.length}ジョブ・計${targets.length}件を投入。${BATCH_STATE_PATH} に保存。完了後 PIPELINE_MODE=batch_fetch で取り込み。`);
 }
 
-// Batchのインライン応答からテキストを取り出す（SDK版差異に備え複数経路を試す）
+// Batchのインライン応答からテキストを取り出す。思考(thought)partは除外して本文textのみ連結する。
 function batchResponseText(resp: any): string | null {
   const r = resp?.response;
   if (!r) return null;
+  const parts = r.candidates?.[0]?.content?.parts;
+  if (Array.isArray(parts)) {
+    const t = parts.filter((p: any) => !p?.thought).map((p: any) => p?.text ?? '').join('');
+    if (t) return t;
+  }
   if (typeof r.text === 'string') return r.text;
   if (typeof r.text === 'function') { try { const t = r.text(); if (typeof t === 'string') return t; } catch { /* fallthrough */ } }
-  const parts = r.candidates?.[0]?.content?.parts;
-  if (Array.isArray(parts)) return parts.map((p: any) => p?.text ?? '').join('') || null;
+  return null;
+}
+
+// 文字列から最初の波括弧バランスの取れたJSONオブジェクトだけを取り出す。
+// 複数オブジェクト連結・末尾余分・前後の文章があっても先頭の1個を確実に拾う。
+function firstBalancedJson(text: string): unknown | null {
+  const s = text.replace(/```json/gi, '').replace(/```/g, '');
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) { try { return JSON.parse(s.slice(start, i + 1)); } catch { return null; } }
+    }
+  }
   return null;
 }
 
@@ -1566,7 +1649,9 @@ async function runBatchFetch() {
       if (resp?.error) { failed++; continue; }
       const text = batchResponseText(resp);
       if (!text) { failed++; continue; }
-      const parsed = KnowledgeSchema.safeParse(extractJson(text));
+      const raw = firstBalancedJson(text); // 連結/末尾余分に強い第1オブジェクト抽出
+      if (raw === null) { failed++; continue; }
+      const parsed = KnowledgeSchema.safeParse(raw);
       if (!parsed.success) { failed++; continue; }
       const validFrom = (art.publishedAt ?? new Date().toISOString()).split('T')[0];
       try {
