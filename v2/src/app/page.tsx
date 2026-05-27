@@ -82,7 +82,7 @@ const TOUR_STEPS: { title: string; body: string; tab: Tab; insightSub?: InsightS
 
 export default function Home() {
   const { toast } = useToast();
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [insightSub, setInsightSub] = useState<InsightSub>('knowledge');
   const [sourcesList, setSourcesList] = useState<Source[]>([]);
@@ -253,10 +253,13 @@ export default function Home() {
   // ── 初見ユーザー向けツアー ──
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep] = useState(0);
-  // 初回訪問時のみ自動起動（マウント後にlocalStorageを読む＝hydration安全）
+  // 自動ツアーは「未ログインの新規ユーザー」だけに出す。
+  // ログイン中/読込中は出さない（ログイン直後にツアーが出てプロフィール等が見えなくなるのを防ぐ）。
+  // ログイン済みでも「使い方」ボタンからの手動再生は可能。
   useEffect(() => {
+    if (sessionStatus !== 'unauthenticated') { setTourActive(false); return; }
     try { if (!localStorage.getItem('onboarding_v1_done')) { setTourStep(0); setTourActive(true); } } catch {}
-  }, []);
+  }, [sessionStatus]);
   // ツアー中は現在ステップの該当タブを表示
   useEffect(() => {
     if (!tourActive) return;
