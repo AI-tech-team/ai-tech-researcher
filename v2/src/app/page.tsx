@@ -122,7 +122,7 @@ export default function Home() {
   const [hasMoreArticles, setHasMoreArticles] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const ARTICLE_PAGE = 60;
-  const [owner, setOwner] = useState<{ isOwner: boolean; dbgEmail?: string | null; dbgOwnerSet?: boolean } | null>(null);
+  const [owner, setOwner] = useState<{ isOwner: boolean } | null>(null);
   const isOwner = owner?.isOwner === true;
   const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
 

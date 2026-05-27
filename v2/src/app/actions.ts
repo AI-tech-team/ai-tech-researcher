@@ -69,14 +69,8 @@ async function currentUserId(): Promise<number | undefined> {
 }
 
 // v6: オーナー状態（Googleアカウントのメールで判定。パスワード解錠UIは廃止）
-// ※ dbg* は一時的な診断用（オーナー判定が効かない原因切り分け後に削除する）
-export async function getOwnerStatus(): Promise<{ isOwner: boolean; dbgEmail?: string | null; dbgOwnerSet?: boolean }> {
-  const session = await auth();
-  return {
-    isOwner: await isOwner(),
-    dbgEmail: (session?.user as { email?: string } | undefined)?.email ?? null,
-    dbgOwnerSet: !!(process.env.OWNER_EMAIL ?? '').trim(),
-  };
+export async function getOwnerStatus(): Promise<{ isOwner: boolean }> {
+  return { isOwner: await isOwner() };
 }
 
 // v6: 取得済み記事リストに、ログインユーザーのお気に入り/後で読む/既読を上書き

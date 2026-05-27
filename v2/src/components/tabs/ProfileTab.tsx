@@ -30,7 +30,7 @@ export function ProfileTab({ onInterestsChange, onNavigateToDna }: ProfileTabPro
   const [profile, setProfile] = useState<MyProfile | null | undefined>(undefined);
   const [stats, setStats] = useState<ProfileStats | null>(null);
   const [dna, setDna] = useState<ReadingProfile | null>(null);
-  const [owner, setOwner] = useState<{ isOwner: boolean; dbgEmail?: string | null; dbgOwnerSet?: boolean } | null>(null);
+  const [owner, setOwner] = useState<{ isOwner: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
   const [newInterest, setNewInterest] = useState('');
 
@@ -255,14 +255,9 @@ export function ProfileTab({ onInterestsChange, onNavigateToDna }: ProfileTabPro
             <ShieldCheck size={14} /> オーナーとしてログイン中 — パイプライン実行・ソース管理・チャットが利用できます
           </span>
         ) : (
-          <div className="space-y-1.5">
-            <p className="text-[12px] text-slate-500 leading-relaxed">
-              このアカウントはオーナーではありません。オーナーのGoogleアカウントでログインすると、同期・設定・チャットなどの管理機能が使えます。
-            </p>
-            <p className="font-mono text-[10px] text-amber-400/80 break-all">
-              診断: login={owner.dbgEmail ?? '(なし)'} / OWNER_EMAIL設定={owner.dbgOwnerSet ? 'あり' : 'なし'}
-            </p>
-          </div>
+          <p className="text-[12px] text-slate-500 leading-relaxed">
+            このアカウントはオーナーではありません。オーナーのGoogleアカウントでログインすると、同期・設定・チャットなどの管理機能が使えます。
+          </p>
         )}
       </section>
 
