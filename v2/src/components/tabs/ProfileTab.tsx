@@ -3,14 +3,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Mail, Calendar, ShieldCheck, Tag, Target, Fingerprint, Star, Bookmark,
-  CheckCircle2, LogOut, LogIn, KeyRound, Lock, ArrowRight, Activity,
+  CheckCircle2, LogOut, LogIn, KeyRound, ArrowRight, Activity,
 } from 'lucide-react';
 import { signIn, signOut } from 'next-auth/react';
 import { useToast } from '@/components/Toast';
 import { SkeletonStat } from '@/components/Skeleton';
 import {
   getMyProfile, updateMyProfile, getProfileStats, getReadingProfile,
-  getOwnerStatus, unlockOwner, lockOwner,
+  getOwnerStatus,
   type MyProfile, type ProfileStats,
 } from '@/app/actions';
 import type { ReadingProfile } from '@/types';
@@ -25,16 +25,14 @@ interface ProfileTabProps {
 const parseInterests = (s: string): string[] =>
   [...new Set((s ?? '').split(/[,、\s]+/).map(t => t.trim()).filter(Boolean))];
 
-export function ProfileTab({ onInterestsChange, onOwnerChange, onNavigateToDna }: ProfileTabProps) {
+export function ProfileTab({ onInterestsChange, onNavigateToDna }: ProfileTabProps) {
   const { toast } = useToast();
   const [profile, setProfile] = useState<MyProfile | null | undefined>(undefined);
   const [stats, setStats] = useState<ProfileStats | null>(null);
   const [dna, setDna] = useState<ReadingProfile | null>(null);
-  const [owner, setOwner] = useState<{ isOwner: boolean; passwordConfigured: boolean } | null>(null);
+  const [owner, setOwner] = useState<{ isOwner: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
   const [newInterest, setNewInterest] = useState('');
-  const [ownerPw, setOwnerPw] = useState('');
-  const [unlocking, setUnlocking] = useState(false);
 
   const loadOwner = useCallback(() => { getOwnerStatus().then(setOwner).catch(() => setOwner(null)); }, []);
 
@@ -85,30 +83,6 @@ export function ProfileTab({ onInterestsChange, onOwnerChange, onNavigateToDna }
   };
   const removeInterest = (tag: string) => commitInterests(interests.filter(t => t !== tag));
 
-  const doUnlock = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ownerPw.trim() || unlocking) return;
-    setUnlocking(true);
-    try {
-      const r = await unlockOwner(ownerPw);
-      if (r.success) {
-        setOwnerPw('');
-        toast('オーナー権限を解錠しました', 'success');
-        loadOwner();
-        onOwnerChange?.();
-      } else {
-        toast('パスワードが違います', 'error');
-      }
-    } catch {
-      toast('解錠に失敗しました', 'error');
-    } finally { setUnlocking(false); }
-  };
-  const doLock = async () => {
-    await lockOwner();
-    toast('オーナー権限を施錠しました', 'success');
-    loadOwner();
-    onOwnerChange?.();
-  };
 
   /* ── 未ログイン ── */
   if (profile === null) {
@@ -277,30 +251,12 @@ export function ProfileTab({ onInterestsChange, onOwnerChange, onNavigateToDna }
         {owner == null ? (
           <p className="font-mono text-[11px] text-slate-600">確認中...</p>
         ) : owner.isOwner ? (
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-              <ShieldCheck size={14} /> 解錠済み — パイプライン実行・ソース管理・チャットが利用できます
-            </span>
-            {owner.passwordConfigured && (
-              <button onClick={doLock}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-slate-400 text-xs transition-colors">
-                <Lock size={12} /> 施錠
-              </button>
-            )}
-          </div>
-        ) : owner.passwordConfigured ? (
-          <form onSubmit={doUnlock} className="flex gap-2">
-            <input type="password" value={ownerPw} onChange={e => setOwnerPw(e.target.value)}
-              placeholder="オーナーパスワード" autoComplete="current-password"
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm text-slate-200 focus:outline-none focus:border-amber-500/40 transition-colors" />
-            <button type="submit" disabled={unlocking || !ownerPw.trim()}
-              className="btn-primary flex items-center gap-1.5 disabled:opacity-40">
-              <KeyRound size={12} /> {unlocking ? '解錠中...' : '解錠'}
-            </button>
-          </form>
+          <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+            <ShieldCheck size={14} /> オーナーとしてログイン中 — パイプライン実行・ソース管理・チャットが利用できます
+          </span>
         ) : (
-          <p className="font-mono text-[11px] text-slate-600">
-            オーナー機能は環境変数 <code className="text-amber-400">OWNER_PASSWORD</code> を設定すると有効になります。
+          <p className="text-[12px] text-slate-500 leading-relaxed">
+            このアカウントはオーナーではありません。オーナーのGoogleアカウントでログインすると、同期・設定・チャットなどの管理機能が使えます。
           </p>
         )}
       </section>
