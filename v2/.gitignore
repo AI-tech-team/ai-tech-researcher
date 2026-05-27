@@ -27,6 +27,10 @@
 # Batch遡及再抽出のローカルジョブ状態（本番ジョブ名を含む一時ファイル）
 batch_state.json
 
+# Playwrightスクショ出力（実機確認用・コミットしない）
+.screenshots/
+_shot_*.png
+
 # debug
 npm-debug.log*
 yarn-debug.log*
