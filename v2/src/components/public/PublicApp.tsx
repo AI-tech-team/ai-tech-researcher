@@ -6,7 +6,7 @@ import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Spa
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
-  getCoreData, getCollectedDataList,
+  getCoreData, getCollectedDataList, getReportById,
   getRecommendations, getMyReadLater, getReadingProfile,
   toggleFavorite, toggleReadLater, markAsRead,
 } from '@/app/actions';
@@ -15,6 +15,7 @@ import { EntityPageModal } from '@/components/EntityPageModal';
 import { ReportModal } from '@/components/public/ReportModal';
 import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
+import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import type { CollectedItem, Report, ReadingProfile } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -107,8 +108,37 @@ export function PublicApp() {
   const [openReport, setOpenReport] = useState<Report | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
-  const openArticle = (id: number) => setDetailArticleId(id);
+  // URL ↔ モーダル状態の同期（シェア用ディープリンク）
+  const updateUrl = (article: number | null, report: number | null) => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (article) { url.searchParams.set('article', String(article)); url.searchParams.delete('report'); }
+    else if (report) { url.searchParams.set('report', String(report)); url.searchParams.delete('article'); }
+    else { url.searchParams.delete('article'); url.searchParams.delete('report'); }
+    window.history.replaceState({}, '', url.pathname + url.search);
+  };
+
+  const openArticle = (id: number) => { setDetailArticleId(id); updateUrl(id, null); };
+  const closeArticle = () => { setDetailArticleId(null); updateUrl(null, null); };
+  const openReportObj = (r: Report) => { setOpenReport(r); updateUrl(null, r.id); };
+  const closeReport = () => { setOpenReport(null); updateUrl(null, null); };
+
+  // 初回マウント時にURLからモーダルを復元（シェアされたURLで直接開ける）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const aid = Number(sp.get('article'));
+    const rid = Number(sp.get('report'));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (Number.isFinite(aid) && aid > 0) setDetailArticleId(aid);
+    if (Number.isFinite(rid) && rid > 0) {
+      getReportById(rid).then(r => { if (r) setOpenReport(r); }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // パーソナライズの再取得（プロフィール保存後など）
   const reloadPersonalization = async () => {
@@ -207,11 +237,15 @@ export function PublicApp() {
   };
 
   const heroReport = reportsList.find(r => r.type === 'daily') ?? reportsList[0] ?? null;
-  const featured = [...collectedItems]
+  // カテゴリ絞り込み中はそのカテゴリの記事のみを対象に。featuredと最新の二分割もカテゴリ内で行う
+  const filteredItems = selectedCategory
+    ? collectedItems.filter(i => i.category === selectedCategory)
+    : collectedItems;
+  const featured = [...filteredItems]
     .sort((a, b) => (b.importanceScore ?? 0) - (a.importanceScore ?? 0))
     .slice(0, 6);
   const featuredIds = new Set(featured.map(f => f.id));
-  const feed = collectedItems.filter(i => !featuredIds.has(i.id));
+  const feed = filteredItems.filter(i => !featuredIds.has(i.id));
 
   // 注目のテーマ: 直近記事のカテゴリ頻度（タグはHNスコア等のノイズが多いので使わない）
   const catCounts = new Map<string, number>();
@@ -270,7 +304,7 @@ export function PublicApp() {
         {heroReport && (
           <motion.section
             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
-            onClick={() => setOpenReport(heroReport)}
+            onClick={() => openReportObj(heroReport)}
             className="cursor-pointer rounded-3xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.07] to-sky-500/[0.04] p-6 sm:p-8 hover:border-emerald-500/30 transition-colors group"
           >
             <div className="flex items-center gap-2 mb-3 font-mono text-[11px]">
@@ -290,7 +324,7 @@ export function PublicApp() {
         )}
 
         {/* ── あなた向け（ログインユーザー限定・行動ベース） ── */}
-        {sessionUserId && (recommendations.length > 0 || readLater.length > 0 || readingProfile?.persona) && (
+        {sessionUserId && (
           <section className="space-y-5">
             <div className="flex items-center gap-2 flex-wrap">
               <Sparkles size={16} className="text-indigo-400" />
@@ -300,28 +334,53 @@ export function PublicApp() {
               )}
             </div>
 
-            {recommendations.length > 0 && (
-              <div>
-                <p className="text-[11px] text-slate-500 mb-2">あなたの読み方に近いおすすめ</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {recommendations.slice(0, 4).map(item => (
-                    <PubCard key={item.id} item={item} onOpen={openArticle} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {readLater.length > 0 && (
-              <div>
-                <p className="text-[11px] text-slate-500 mb-2 flex items-center gap-1.5">
-                  <Bookmark size={12} /> 後で読む（{readLater.length}）
+            {recommendations.length === 0 && readLater.length === 0 && !readingProfile?.persona ? (
+              // 初回ログイン直後など、まだ何も溜まっていないときの案内
+              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5 space-y-2">
+                <p className="text-sm text-slate-200">まだあなた専用のおすすめは溜まっていません。</p>
+                <p className="text-[12px] text-slate-500 leading-relaxed">
+                  記事を開いたり「後で読む」「お気に入り」に保存していくと、読み方に合った記事が自動でここに並びます。<br />
+                  興味のテーマや目標をプロフィールに書いておくと、さらに精度が上がります。
                 </p>
-                <div className="grid grid-cols-1 gap-3">
-                  {readLater.slice(0, 5).map(item => (
-                    <PubCard key={item.id} item={item} onOpen={openArticle} />
-                  ))}
+                <div className="pt-1">
+                  <button onClick={() => setProfileOpen(true)}
+                    className="text-[12px] font-bold text-indigo-300 hover:text-indigo-200 transition-colors">
+                    プロフィールを設定 →
+                  </button>
                 </div>
               </div>
+            ) : (
+              <>
+                {recommendations.length > 0 && (
+                  <div>
+                    <p className="text-[11px] text-slate-500 mb-2">あなたの読み方に近いおすすめ</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {recommendations.slice(0, 4).map(item => (
+                        <PubCard key={item.id} item={item} onOpen={openArticle} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {readLater.length > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                        <Bookmark size={12} /> 後で読む（{readLater.length}）
+                      </p>
+                      <button onClick={() => setSavedOpen(true)}
+                        className="text-[11px] text-indigo-300 hover:text-indigo-200 transition-colors">
+                        全部見る →
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3">
+                      {readLater.slice(0, 5).map(item => (
+                        <PubCard key={item.id} item={item} onOpen={openArticle} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </section>
         )}
@@ -336,15 +395,23 @@ export function PublicApp() {
             <div className="flex items-center gap-2 flex-wrap">
               {themes.map(([cat, cnt]) => {
                 const color = CATEGORY_COLORS[cat] ?? '#475569';
+                const active = selectedCategory === cat;
                 return (
-                  <span key={cat}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs"
-                    style={{ borderColor: `${color}28`, background: `${color}10` }}>
+                  <button key={cat}
+                    onClick={() => setSelectedCategory(active ? null : cat)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors ${active ? 'ring-2 ring-offset-0' : 'hover:bg-white/[0.04]'}`}
+                    style={{ borderColor: `${color}${active ? '60' : '28'}`, background: `${color}${active ? '22' : '10'}` }}>
                     <span className="font-bold" style={{ color }}>{cat}</span>
                     <span className="font-mono text-[10px] text-slate-500">{cnt}</span>
-                  </span>
+                  </button>
                 );
               })}
+              {selectedCategory && (
+                <button onClick={() => setSelectedCategory(null)}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] text-slate-400 hover:text-white transition-colors">
+                  × フィルタ解除
+                </button>
+              )}
             </div>
           </section>
         )}
@@ -402,7 +469,7 @@ export function PublicApp() {
       {/* ── モーダル ── */}
       <ArticleDetailModal
         articleId={detailArticleId}
-        onClose={() => setDetailArticleId(null)}
+        onClose={closeArticle}
         onToggleFavorite={handleToggleFavorite}
         onToggleReadLater={handleToggleReadLater}
         onMarkAsRead={handleMarkAsRead}
@@ -415,8 +482,8 @@ export function PublicApp() {
       />
       <ReportModal
         report={openReport}
-        onClose={() => setOpenReport(null)}
-        onArticleRef={(id) => { setOpenReport(null); openArticle(id); }}
+        onClose={closeReport}
+        onArticleRef={(id) => { closeReport(); openArticle(id); }}
       />
       <SearchPalette
         open={searchOpen}
@@ -427,6 +494,13 @@ export function PublicApp() {
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
         onSaved={() => { void reloadPersonalization(); }}
+      />
+      <SavedItemsModal
+        open={savedOpen}
+        onClose={() => setSavedOpen(false)}
+        onOpenArticle={openArticle}
+        onToggleReadLater={handleToggleReadLater}
+        onToggleFavorite={handleToggleFavorite}
       />
     </div>
   );
