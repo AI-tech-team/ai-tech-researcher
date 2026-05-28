@@ -11,6 +11,7 @@ interface ReportsTabProps {
   isLoadingData: boolean;
   collectedItemsCount: number;
   onReload: () => Promise<void>;
+  isOwner?: boolean;
 }
 
 function downloadMarkdown(report: Report) {
@@ -25,7 +26,7 @@ function downloadMarkdown(report: Report) {
   URL.revokeObjectURL(url);
 }
 
-export function ReportsTab({ reportsList, isLoadingData, collectedItemsCount, onReload }: ReportsTabProps) {
+export function ReportsTab({ reportsList, isLoadingData, collectedItemsCount, onReload, isOwner = false }: ReportsTabProps) {
   const { toast } = useToast();
   const [reportTypeFilter, setReportTypeFilter] = useState<'all' | 'daily' | 'weekly' | 'monthly'>('all');
   const [generating, setGenerating] = useState<Record<string, boolean>>({});
@@ -71,19 +72,22 @@ export function ReportsTab({ reportsList, isLoadingData, collectedItemsCount, on
             </button>
           ))}
         </div>
-        <div className="flex gap-2">
-          {buttons.map(btn => (
-            <button
-              key={btn.type}
-              onClick={() => handleGenerate(btn.type)}
-              disabled={generating[btn.type] || collectedItemsCount === 0}
-              className={`bg-gradient-to-r ${btn.color} text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <Sparkles size={14} className={generating[btn.type] ? 'animate-spin' : ''} />
-              {generating[btn.type] ? '生成中...' : btn.label}
-            </button>
-          ))}
-        </div>
+        {/* レポート生成はオーナー限定（LLMコスト発生のため） */}
+        {isOwner && (
+          <div className="flex gap-2">
+            {buttons.map(btn => (
+              <button
+                key={btn.type}
+                onClick={() => handleGenerate(btn.type)}
+                disabled={generating[btn.type] || collectedItemsCount === 0}
+                className={`bg-gradient-to-r ${btn.color} text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 text-sm shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <Sparkles size={14} className={generating[btn.type] ? 'animate-spin' : ''} />
+                {generating[btn.type] ? '生成中...' : btn.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {isLoadingData ? (

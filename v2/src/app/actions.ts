@@ -1391,6 +1391,53 @@ export async function semanticSearch(query: string): Promise<CollectedItem[]> {
   }
 }
 
+// 公開UIのグローバル検索向け: 無料テキスト検索（LLM不使用・全コーパス対象）。
+// 匿名ユーザーも叩くため、埋め込みAPIを使うsemanticSearchと違いコスト/濫用の心配がない。
+export async function searchArticles(query: string): Promise<CollectedItem[]> {
+  const q = query.trim().slice(0, 100);
+  if (q.length < 2) return [];
+  try {
+    const userId = await currentUserId();
+    const rows = await db.select(COLLECTED_SELECT)
+      .from(collectedData)
+      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+      .where(or(
+        like(collectedData.title, `%${q}%`),
+        like(collectedData.titleJa, `%${q}%`),
+        like(collectedData.summary, `%${q}%`),
+      ))
+      .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
+      .limit(25);
+    const items = parseCollectedRows(rows);
+    await overlayUserState(items, userId);
+    return items;
+  } catch (error) {
+    console.error('searchArticles failed:', error);
+    return [];
+  }
+}
+
+// 公開UIのパーソナライズ向け: ログインユーザーの「後で読む」記事一覧
+export async function getMyReadLater(): Promise<CollectedItem[]> {
+  try {
+    const userId = await currentUserId();
+    if (!userId) return [];
+    const rows = await db.select(COLLECTED_SELECT)
+      .from(userArticleState)
+      .innerJoin(collectedData, eq(userArticleState.articleId, collectedData.id))
+      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+      .where(and(eq(userArticleState.userId, userId), eq(userArticleState.isReadLater, 1)))
+      .orderBy(desc(collectedData.createdAt))
+      .limit(30);
+    const items = parseCollectedRows(rows);
+    await overlayUserState(items, userId);
+    return items;
+  } catch (error) {
+    console.error('getMyReadLater failed:', error);
+    return [];
+  }
+}
+
 // 興味/目標テキストの埋め込みベクトル（プロフィール変更時しか変わらないのでキャッシュ＝コスト最小）
 async function profileInterestVector(userId: number): Promise<number[] | null> {
   try {
