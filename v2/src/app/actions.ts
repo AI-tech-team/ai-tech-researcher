@@ -9,7 +9,7 @@ import { isOwner } from '@/lib/owner';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
 import { cached } from '@/lib/cache';
-import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief, ReadingProfile, TopicCluster } from '@/types';
+import type { CollectedItem, PipelineLog, TrendingKeyword, Claim, ConflictingClaim, UserTopicWeight, BenchmarkLeaderboard, BenchmarkEntry, KnowledgeRelation, BenchmarkAlert, KnowledgeStats, BriefingReport, AlertItem, ResearchBrief, ReadingProfile, TopicCluster, Report } from '@/types';
 
 // 読書DNA: カテゴリ→4軸の寄与（depth:0理論↔100実装 / view:0研究者↔50エンジニア↔100ビジネス / recency:0長期↔100近未来）
 const CAT_AXIS: Record<string, { depth: number; view: number; recency: number }> = {
@@ -1413,6 +1413,39 @@ export async function searchArticles(query: string): Promise<CollectedItem[]> {
     return items;
   } catch (error) {
     console.error('searchArticles failed:', error);
+    return [];
+  }
+}
+
+// 公開UIのディープリンク向け: レポートをIDで単体取得
+export async function getReportById(id: number): Promise<Report | null> {
+  try {
+    if (!Number.isFinite(id)) return null;
+    const [r] = await db.select().from(reports).where(eq(reports.id, id)).limit(1);
+    return (r as Report) ?? null;
+  } catch (error) {
+    console.error('getReportById failed:', error);
+    return null;
+  }
+}
+
+// 公開UIのパーソナライズ向け: ログインユーザーの「お気に入り」記事一覧
+export async function getMyFavorites(): Promise<CollectedItem[]> {
+  try {
+    const userId = await currentUserId();
+    if (!userId) return [];
+    const rows = await db.select(COLLECTED_SELECT)
+      .from(userArticleState)
+      .innerJoin(collectedData, eq(userArticleState.articleId, collectedData.id))
+      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+      .where(and(eq(userArticleState.userId, userId), eq(userArticleState.isFavorited, 1)))
+      .orderBy(desc(collectedData.createdAt))
+      .limit(60);
+    const items = parseCollectedRows(rows);
+    await overlayUserState(items, userId);
+    return items;
+  } catch (error) {
+    console.error('getMyFavorites failed:', error);
     return [];
   }
 }
