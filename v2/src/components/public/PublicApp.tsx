@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
-  getCoreData, getCollectedDataList, getReportById,
+  getCoreData, getCollectedDataList, getReportById, getKnowledgeStats,
   getRecommendations, getMyReadLater, getReadingProfile,
   toggleFavorite, toggleReadLater, markAsRead,
 } from '@/app/actions';
@@ -16,7 +16,7 @@ import { ReportModal } from '@/components/public/ReportModal';
 import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
-import type { CollectedItem, Report, ReadingProfile } from '@/types';
+import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
@@ -49,9 +49,9 @@ function reportLead(content: string, max = 200): string {
   return text.length > max ? text.slice(0, max) + '…' : text;
 }
 
-// 公開トップで使うエディトリアル型の記事カード
-function PubCard({ item, onOpen, featured = false }: {
-  item: CollectedItem; onOpen: (id: number) => void; featured?: boolean;
+// 公開トップで使うエディトリアル型の記事カード（lead=雑誌一面 / featured=見どころ / 通常=フィード）
+function PubCard({ item, onOpen, featured = false, lead = false }: {
+  item: CollectedItem; onOpen: (id: number) => void; featured?: boolean; lead?: boolean;
 }) {
   const color = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
   const title = item.titleJa || item.title || '無題';
@@ -59,24 +59,29 @@ function PubCard({ item, onOpen, featured = false }: {
   const multi = (item.storyCount ?? 1) > 1 && outlets.length > 0;
   return (
     <article onClick={() => onOpen(item.id)}
-      className="group cursor-pointer rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10 transition-colors p-5 flex flex-col gap-2.5">
+      className={`group cursor-pointer rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 transition-all duration-200 flex flex-col gap-2.5 ${lead ? 'p-6 sm:p-7' : 'p-5'}`}>
       <div className="flex items-center gap-2 flex-wrap">
+        {lead && (
+          <span className="flex items-center gap-1 font-mono text-[10px] font-bold tracking-widest uppercase text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-px rounded">
+            <Sparkles size={10} /> 今日の一押し
+          </span>
+        )}
         <span className="font-mono text-[10px] font-bold tracking-widest uppercase" style={{ color }}>
           {item.category ?? 'OTHER'}
         </span>
         {multi && (
           <span title={outlets.join('、')}
-            className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300/90">
+            className={`flex items-center gap-0.5 font-mono text-[10px] ${lead || featured ? 'text-cyan-200 border border-cyan-500/25 bg-cyan-500/10 px-1.5 py-px rounded' : 'text-cyan-300/90'}`}>
             <Newspaper size={10} />{outlets.length}媒体が報じた
           </span>
         )}
         <span className="ml-auto font-mono text-[10px] text-slate-600">{timeAgo(item.publishedAt ?? item.createdAt)}</span>
       </div>
-      <h3 className={`font-bold leading-snug text-white group-hover:text-sky-300 transition-colors ${featured ? 'text-lg' : 'text-base'}`}>
+      <h3 className={`font-bold leading-snug text-white group-hover:text-sky-300 transition-colors ${lead ? 'text-xl sm:text-2xl' : featured ? 'text-lg' : 'text-base'}`}>
         {title}
       </h3>
       {item.summary && (
-        <p className={`text-sm text-slate-400 leading-relaxed ${featured ? 'line-clamp-3' : 'line-clamp-2'}`}>
+        <p className={`text-slate-400 leading-relaxed ${lead ? 'text-base line-clamp-3' : featured ? 'text-sm line-clamp-3' : 'text-sm line-clamp-2'}`}>
           {item.summary}
         </p>
       )}
@@ -95,6 +100,9 @@ export function PublicApp() {
 
   const [collectedItems, setCollectedItems] = useState<CollectedItem[]>([]);
   const [reportsList, setReportsList] = useState<Report[]>([]);
+  const [stats, setStats] = useState<KnowledgeStats | null>(null);
+  const [totalArticles, setTotalArticles] = useState<number | null>(null);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [recommendations, setRecommendations] = useState<CollectedItem[]>([]);
   const [readLater, setReadLater] = useState<CollectedItem[]>([]);
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
@@ -149,6 +157,21 @@ export function PublicApp() {
     setReadingProfile(prof as ReadingProfile | null);
   };
 
+  // 未ログインの初訪問でウェルカム・ストリップを出す（1度閉じれば再表示しない）
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (sessionUserId) { setWelcomeOpen(false); return; }
+    try {
+      if (typeof window === 'undefined') return;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (!localStorage.getItem('welcome_v1_dismissed')) setWelcomeOpen(true);
+    } catch {}
+  }, [sessionUserId]);
+  const dismissWelcome = () => {
+    setWelcomeOpen(false);
+    try { localStorage.setItem('welcome_v1_dismissed', '1'); } catch {}
+  };
+
   // ⌘K / Ctrl+K でグローバル検索を開く
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -165,14 +188,17 @@ export function PublicApp() {
     let cancelled = false;
     (async () => {
       setIsLoading(true);
-      const { data, reportsData } = await getCoreData(PAGE);
+      const statsPromise = getKnowledgeStats();
+      const { data, reportsData, counts } = await getCoreData(PAGE);
       if (cancelled) return;
       const first = data as CollectedItem[];
       setCollectedItems(first);
       setOffset(first.length);
       setHasMore(first.length === PAGE);
       setReportsList(reportsData as Report[]);
+      setTotalArticles((counts as { total: number }).total);
       setIsLoading(false);
+      statsPromise.then(s => { if (!cancelled) setStats(s as KnowledgeStats); }).catch(() => {});
     })();
     return () => { cancelled = true; };
   }, []);
@@ -300,28 +326,74 @@ export function PublicApp() {
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-10">
 
+        {/* ── ウェルカム・ストリップ（未ログイン初訪問のみ） ── */}
+        {welcomeOpen && !sessionUserId && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
+            className="relative rounded-2xl border border-sky-500/20 bg-gradient-to-br from-sky-500/[0.08] to-indigo-500/[0.04] p-4 sm:p-5 pr-10"
+          >
+            <button onClick={dismissWelcome} aria-label="閉じる"
+              className="absolute top-2.5 right-2.5 p-1 rounded-md hover:bg-white/10 text-slate-500 hover:text-white transition-colors">
+              <X size={14} />
+            </button>
+            <p className="text-sm sm:text-base text-slate-100 leading-relaxed">
+              <span className="font-bold text-white">毎日朝、AI業界の最新ニュースを自動で集めて日本語で要約。</span>
+              <span className="text-slate-400"> サクッと読む / 保存 / 検索 を1ページで。</span>
+            </p>
+            <div className="flex items-center gap-3 mt-3 flex-wrap">
+              <button onClick={() => signIn('google')}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-xs font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
+                <LogIn size={13} /> Googleで30秒で始める
+              </button>
+              <button onClick={dismissWelcome}
+                className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors">
+                とりあえず読む →
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {/* ── 今日のAI（最新レポート要約） ── */}
         {heroReport && (
           <motion.section
             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
             onClick={() => openReportObj(heroReport)}
-            className="cursor-pointer rounded-3xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.07] to-sky-500/[0.04] p-6 sm:p-8 hover:border-emerald-500/30 transition-colors group"
+            className="cursor-pointer rounded-3xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.08] via-sky-500/[0.04] to-indigo-500/[0.04] p-7 sm:p-10 hover:border-emerald-500/30 transition-colors group relative overflow-hidden"
           >
-            <div className="flex items-center gap-2 mb-3 font-mono text-[11px]">
+            {/* ほんのり光るグロー */}
+            <div className="pointer-events-none absolute -top-24 -right-24 w-64 h-64 rounded-full bg-emerald-400/10 blur-3xl" />
+            <p className="text-[11px] sm:text-xs font-bold tracking-[0.2em] uppercase text-emerald-300/80 mb-2">今日のAI、3分で。</p>
+            <div className="flex items-center gap-2 mb-4 font-mono text-[11px]">
               <span className="flex items-center gap-1.5 text-emerald-400">
-                <FileText size={13} /> 今日のAI
+                <FileText size={13} /> デイリーレポート
               </span>
               <span className="text-slate-600">·</span>
               <span className="text-slate-500">{heroReport.reportDate}</span>
             </div>
-            <p className="text-base sm:text-lg text-slate-200 leading-relaxed">
-              {reportLead(heroReport.content ?? '', 240) || 'AIの最新動向を自動で集め、要約・分析してお届けします。'}
+            <p className="text-lg sm:text-xl text-slate-100 leading-relaxed font-medium">
+              {reportLead(heroReport.content ?? '', 260) || 'AIの最新動向を自動で集め、要約・分析してお届けします。'}
             </p>
-            <span className="inline-flex items-center gap-1.5 mt-4 text-sm font-bold text-emerald-300 group-hover:gap-2.5 transition-all">
+            <span className="inline-flex items-center gap-1.5 mt-5 text-sm font-bold text-emerald-300 group-hover:gap-2.5 transition-all">
               全文を読む <ArrowRight size={15} />
             </span>
           </motion.section>
         )}
+
+        {/* ── 信頼スタッツ・ストリップ ── */}
+        <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap font-mono text-[10px] sm:text-[11px] text-slate-500 -mt-4">
+          <span className="flex items-center gap-1.5">
+            <span className="live-dot" style={{ width: 5, height: 5 }} />
+            <span><span className="text-slate-300 font-bold">{(totalArticles ?? collectedItems.length).toLocaleString()}</span>件 分析中</span>
+          </span>
+          <span className="text-slate-700">·</span>
+          <span>毎朝 <span className="text-slate-300 font-bold">06:00 JST</span> 更新</span>
+          {stats && stats.entities > 0 && (
+            <>
+              <span className="text-slate-700">·</span>
+              <span><span className="text-slate-300 font-bold">{stats.entities.toLocaleString()}</span> モデル/技術を追跡</span>
+            </>
+          )}
+        </div>
 
         {/* ── あなた向け（ログインユーザー限定・行動ベース） ── */}
         {sessionUserId && (
@@ -416,17 +488,22 @@ export function PublicApp() {
           </section>
         )}
 
-        {/* ── 見どころ ── */}
+        {/* ── 見どころ（雑誌の一面レイアウト: 先頭1枚を大カード、残りをグリッド） ── */}
         {!isLoading && featured.length > 0 && (
           <section>
             <div className="flex items-center gap-2 mb-4">
-              <Sparkles size={16} className="text-sky-400" />
+              <Flame size={16} className="text-orange-400" />
               <h2 className="text-sm font-bold font-outfit">今日の見どころ</h2>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {featured.map(item => (
-                <PubCard key={item.id} item={item} onOpen={openArticle} featured />
-              ))}
+            <div className="space-y-4">
+              <PubCard item={featured[0]} onOpen={openArticle} lead />
+              {featured.length > 1 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {featured.slice(1).map(item => (
+                    <PubCard key={item.id} item={item} onOpen={openArticle} featured />
+                  ))}
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -460,6 +537,22 @@ export function PublicApp() {
             <p className="text-sm text-slate-500">記事がまだありません。</p>
           )}
         </section>
+
+        {/* ── 未ログイン向け末尾CTA（控えめ） ── */}
+        {!sessionUserId && (
+          <section className="rounded-2xl border border-sky-500/15 bg-gradient-to-br from-sky-500/[0.06] to-indigo-500/[0.04] p-6 sm:p-7 text-center space-y-3">
+            <p className="text-base sm:text-lg text-white font-bold">もっと自分のための場所にする</p>
+            <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
+              ログインすると <span className="text-sky-300">あなた向けのおすすめ</span> / <span className="text-sky-300">後で読む</span> / <span className="text-sky-300">興味学習</span> が使えます。閲覧は無料でずっと続けられます。
+            </p>
+            <div className="pt-1">
+              <button onClick={() => signIn('google')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
+                <LogIn size={13} /> Googleでログイン
+              </button>
+            </div>
+          </section>
+        )}
 
         <footer className="pt-4 pb-2 text-center font-mono text-[10px] text-slate-700">
           AI Tech Researcher — 毎日「育つ」AIリサーチ
