@@ -23,6 +23,7 @@ import { ProfileTab } from '@/components/tabs/ProfileTab';
 import { ArticleDetailModal } from '@/components/ArticleDetailModal';
 import { EntityPageModal } from '@/components/EntityPageModal';
 import { OnboardingTour } from '@/components/OnboardingTour';
+import { PublicApp } from '@/components/public/PublicApp';
 import {
   getCollectedDataList, getCoreData, getAnalyticsData,
   addSource, deleteSource, toggleFavorite, toggleReadLater, markAsRead,
@@ -81,6 +82,19 @@ const TOUR_STEPS: { title: string; body: string; tab: Tab; insightSub?: InsightS
 ];
 
 export default function Home() {
+  const { data: session } = useSession();
+  const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
+  const [ownerState, setOwnerState] = useState<{ isOwner: boolean } | null>(null);
+  useEffect(() => {
+    getOwnerStatus().then(setOwnerState).catch(() => setOwnerState({ isOwner: false }));
+  }, [sessionUserId]);
+  // 一般ユーザー（未ログイン・非オーナーのログイン）には新しい公開UIを出す。
+  // オーナー判定が未確定の間も公開UIを表示し、初見の体感速度を優先する。
+  if (ownerState?.isOwner) return <OwnerDashboard />;
+  return <PublicApp />;
+}
+
+function OwnerDashboard() {
   const { toast } = useToast();
   const { data: session, status: sessionStatus } = useSession();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
@@ -391,7 +405,7 @@ export default function Home() {
       {activeTab === 'reports' && (
         <motion.div key="reports" {...SLIDE}>
           <ReportsTab reportsList={reportsList} isLoadingData={isLoadingData}
-            collectedItemsCount={collectedItems.length} onReload={refresh} />
+            collectedItemsCount={collectedItems.length} onReload={refresh} isOwner={isOwner} />
         </motion.div>
       )}
       {activeTab === 'insight' && (
