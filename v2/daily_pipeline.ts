@@ -10,6 +10,7 @@ import * as nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
 import { discoverFeedUrl, fetchArticleText } from './src/lib/feeds';
+import { isSafeFetchUrl } from './src/lib/safeUrl';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 config({ path: '.env.local' });
@@ -207,6 +208,7 @@ async function filterUnseenUrls<T>(items: T[], getUrl: (i: T) => string | null |
 
 // ── RSS収集（RSS/Atom両対応）─────────────────────────────────────────
 async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenDaysAgo: string): Promise<number> {
+  if (!isSafeFetchUrl(source.value)) return 0; // SSRF対策: 内部/プライベート宛フィードは弾く
   const res = await fetch(source.value, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
     signal: AbortSignal.timeout(15000),
@@ -547,6 +549,7 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
 
   for (const target of urlSources) {
     if (target.status !== 'active') continue;
+    if (!isSafeFetchUrl(target.value)) continue; // SSRF対策
     try {
       const res = await fetch(target.value, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },

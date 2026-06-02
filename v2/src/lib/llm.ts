@@ -1,4 +1,5 @@
 // LLM呼び出しの共通ユーティリティ（リトライ・堅牢なJSON抽出）
+import { isSafeFetchUrl } from './safeUrl';
 
 export async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 700): Promise<T> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -17,6 +18,7 @@ export async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDel
 export async function resolveGroundingUrl(url: string | null | undefined): Promise<string | null> {
   if (!url) return null;
   if (!/vertexaisearch\.cloud\.google\.com|grounding-api-redirect/.test(url)) return url;
+  if (!isSafeFetchUrl(url)) return null; // SSRF対策: fetchするのは安全なhttp(s)ホストのみ
   // 1. HEADでLocationヘッダだけ取得（軽量）
   try {
     const head = await fetch(url, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(8000) });

@@ -6,6 +6,7 @@ import { eq, sql, and } from 'drizzle-orm';
 import { withRetry, extractJson, resolveGroundingUrl } from '@/lib/llm';
 import { isOwner } from '@/lib/owner';
 import { checkRateLimit } from '@/lib/ratelimit';
+import { isSafeFetchUrl } from '@/lib/safeUrl';
 
 export const maxDuration = 60;
 
@@ -39,6 +40,7 @@ function parseTechDripScore(scoreStr: string): number {
 
 // ITEMS_BY_DATE 形式のページから記事を一括抽出
 async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, today: string) {
+  if (!isSafeFetchUrl(targetSource.value)) throw new Error('安全でないソースURLのためスキップ'); // SSRF対策
   const res = await fetch(targetSource.value, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
     signal: AbortSignal.timeout(15000),
@@ -101,6 +103,7 @@ async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, to
 
   // Phase 2: 高スコア記事の元URL から全文取得（最大3件）
   for (const url of deepFetchUrls.slice(0, 3)) {
+    if (!isSafeFetchUrl(url)) continue; // SSRF対策
     try {
       const res = await fetch(url, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
