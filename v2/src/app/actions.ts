@@ -6,7 +6,7 @@ import { desc, asc, eq, count, gte, lte, lt, sql, like, or, isNotNull, and, inAr
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
-import { checkRateLimit } from '@/lib/ratelimit';
+import { checkRateLimit, memRateLimit } from '@/lib/ratelimit';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
 import { cached } from '@/lib/cache';
@@ -599,6 +599,7 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
+    if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const newValue = currentlyFavorited ? 0 : 1;
     const [item] = await db.select({
       sourceId: collectedData.sourceId,
@@ -644,6 +645,7 @@ export async function toggleReadLater(id: number, current: boolean) {
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
+    if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const newValue = current ? 0 : 1;
     await db.insert(userArticleState)
       .values({ userId, articleId: id, isReadLater: newValue })
@@ -668,6 +670,7 @@ export async function markAsRead(id: number, currentIsRead: boolean) {
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
+    if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const newValue = currentIsRead ? 0 : 1;
     await db.insert(userArticleState)
       .values({ userId, articleId: id, isRead: newValue })
@@ -708,6 +711,8 @@ export async function markAsRead(id: number, currentIsRead: boolean) {
 }
 
 export async function getConflictingClaims(): Promise<ConflictingClaim[]> {
+  // 未使用＋公開コーパス由来だが、完全ロックダウンのためオーナー限定にする
+  if (!(await isOwner())) return [];
   try {
     const twoWeeksAgo = sqlTs(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
 
@@ -1066,6 +1071,7 @@ export async function updateMyProfile(data: { displayName: string; interests: st
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false };
+    if (!memRateLimit('profile', userId, 30, 60_000)) return { success: false, message: '更新が多すぎます。少し待ってください' };
     const now = new Date().toISOString();
     const vals = {
       displayName: (data.displayName ?? '').slice(0, 80),
