@@ -22,6 +22,16 @@ function memCheck(bucket: string, windowEnd: number, limit: number, now: number)
   return e.count <= limit;
 }
 
+// DBを使わない軽量レート制限（インスタンス内メモリ・PII不使用）。
+// ログインユーザーの書込スパム等、DB往復を増やしたくない高頻度経路向け。
+// キーは userId 等の非PIIを使う（IP/UAは使わない＝匿名性方針と両立）。
+export function memRateLimit(name: string, key: string | number, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  const windowStart = Math.floor(now / windowMs) * windowMs;
+  const bucket = `${name}:${key}:${windowStart}`;
+  return memCheck(bucket, windowStart + windowMs, limit, now);
+}
+
 export async function checkRateLimit(
   name: string,
   key: string | number,
