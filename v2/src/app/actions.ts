@@ -130,6 +130,9 @@ export async function getReportsData() {
 }
 
 export async function getSourcesData() {
+  // ソース一覧(フィードURL/スコア/状態)は運用情報。公開UI(PublicApp)はsrcsを使わないため
+  // オーナー限定にして匿名へのキュレーション戦略の露出を防ぐ（getCoreData経由でも非オーナーは[]）。
+  if (!(await isOwner())) return [];
   try {
     return await db.select().from(sources).orderBy(desc(sources.score));
   } catch (error) {
