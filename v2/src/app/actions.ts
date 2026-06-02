@@ -424,6 +424,8 @@ export async function getModelMentionData() {
 }
 
 export async function getTrendingKeywords(): Promise<TrendingKeyword[]> {
+  // 追跡キーワード/ソース名を露出するためオーナー限定（公開UIは未使用・キュレーション戦略を隠す）
+  if (!(await isOwner())) return [];
   return cached('trendingKw', 10 * 60_000, async () => {
   try {
     const now = new Date();
@@ -757,6 +759,8 @@ export async function getConflictingClaims(): Promise<ConflictingClaim[]> {
 }
 
 export async function getUserTopicWeights(): Promise<UserTopicWeight[]> {
+  // 上位トピック(キーワード)を露出するためオーナー限定（公開UIは未使用）
+  if (!(await isOwner())) return [];
   try {
     const rows = await db.select({ keyword: userTopicWeights.keyword, weight: userTopicWeights.weight })
       .from(userTopicWeights)
