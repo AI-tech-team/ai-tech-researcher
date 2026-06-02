@@ -1152,6 +1152,8 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
 // ─── v3自律リサーチ ─────────────────────────────────────────────────
 
 export async function getBriefing(): Promise<BriefingReport | null> {
+  // briefingは内部/メール専用レポート。Server Actionは直接POST可能なためオーナー限定にする
+  if (!(await isOwner())) return null;
   try {
     const rows = await db.select({
       id: reports.id, content: reports.content, reportDate: reports.reportDate, createdAt: reports.createdAt,
@@ -1168,6 +1170,8 @@ export async function getBriefing(): Promise<BriefingReport | null> {
 }
 
 export async function getCrossInsight(): Promise<BriefingReport | null> {
+  // cross_insightは内部/インサイト専用レポート。オーナー限定にする
+  if (!(await isOwner())) return null;
   try {
     const rows = await db.select({
       id: reports.id, content: reports.content, reportDate: reports.reportDate, createdAt: reports.createdAt,
@@ -1184,6 +1188,8 @@ export async function getCrossInsight(): Promise<BriefingReport | null> {
 }
 
 export async function getActiveAlerts(): Promise<AlertItem[]> {
+  // アラートはオーナーダッシュボード専用。公開UIは未使用のためオーナー限定にする
+  if (!(await isOwner())) return [];
   try {
     return await db.select({
       id: alerts.id, type: alerts.type, title: alerts.title, reason: alerts.reason,
