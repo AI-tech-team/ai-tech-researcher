@@ -5,6 +5,8 @@
 // 重要: フィード自体の「AI濃度」をゲートする。単発で1本だけAI記事を出したが
 // フィードは非AIファイアホース(NYT/Business Insider等)を弾き、巡回トークンの浪費を防ぐ。
 
+import { isSafeFetchUrl } from './safeUrl';
+
 const FEED_LINK_RE = /<link\b[^>]*>/gi;
 // homepageに<link rel=alternate>が無いサイト向けの定番パス
 const COMMON_PATHS = ['/feed', '/rss.xml', '/atom.xml', '/feed.xml', '/index.xml', '/feed/', '/blog/feed/'];
@@ -21,6 +23,7 @@ function titleIsAi(t: string): boolean {
 }
 
 async function fetchText(url: string, timeoutMs = 6000): Promise<string | null> {
+  if (!isSafeFetchUrl(url)) return null; // SSRF対策: 内部/プライベート宛は弾く
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
@@ -99,6 +102,7 @@ export function extractMainText(html: string): string {
 
 // 記事URLから本文テキストを取得（HTML以外・抽出失敗時はnull）。maxCharsで上限。
 export async function fetchArticleText(url: string, maxChars = 6000): Promise<string | null> {
+  if (!isSafeFetchUrl(url)) return null; // SSRF対策: 内部/プライベート宛は弾く
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
