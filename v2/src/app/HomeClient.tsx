@@ -314,10 +314,17 @@ function OwnerDashboard() {
 
   const handleToggleFavorite = async (id: number, currentlyFavorited: boolean) => {
     if (!sessionUserId) { toast('お気に入りの保存にはログインが必要です', 'info'); signIn('google'); return; }
+    // 楽観的更新 → サーバ結果を確認し、失敗ならロールバック（成功と誤表示しない）
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 0 : 1 } : item));
     setArticleCounts(c => c && { ...c, favorite: Math.max(0, c.favorite + (currentlyFavorited ? -1 : 1)) });
-    toast(currentlyFavorited ? 'お気に入りを解除しました' : '⭐ お気に入りに追加しました', 'success');
-    await toggleFavorite(id, currentlyFavorited);
+    const r = await toggleFavorite(id, currentlyFavorited);
+    if (r?.success) {
+      toast(currentlyFavorited ? 'お気に入りを解除しました' : '⭐ お気に入りに追加しました', 'success');
+    } else {
+      setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isFavorited: currentlyFavorited ? 1 : 0 } : item));
+      setArticleCounts(c => c && { ...c, favorite: Math.max(0, c.favorite + (currentlyFavorited ? 1 : -1)) });
+      toast('保存に失敗しました。通信状況を確認してください', 'error');
+    }
   };
 
   // 他タブのおすすめ等から記事タブの該当記事へジャンプ
@@ -330,14 +337,25 @@ function OwnerDashboard() {
     if (!sessionUserId) { toast('「後で読む」の保存にはログインが必要です', 'info'); signIn('google'); return; }
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isReadLater: current ? 0 : 1 } : item));
     setArticleCounts(c => c && { ...c, readLater: Math.max(0, c.readLater + (current ? -1 : 1)) });
-    toast(current ? '「後で読む」を解除しました' : '🔖 「後で読む」に追加しました', 'success');
-    await toggleReadLater(id, current);
+    const r = await toggleReadLater(id, current);
+    if (r?.success) {
+      toast(current ? '「後で読む」を解除しました' : '🔖 「後で読む」に追加しました', 'success');
+    } else {
+      setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isReadLater: current ? 1 : 0 } : item));
+      setArticleCounts(c => c && { ...c, readLater: Math.max(0, c.readLater + (current ? 1 : -1)) });
+      toast('保存に失敗しました。通信状況を確認してください', 'error');
+    }
   };
 
   const handleMarkAsRead = async (id: number, currentIsRead: boolean) => {
+    if (!sessionUserId) return; // 既読は自動発火もするため、未ログイン時は何もしない（誤った楽観更新を防ぐ）
     setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isRead: currentIsRead ? 0 : 1 } : item));
     setArticleCounts(c => c && { ...c, unread: Math.max(0, c.unread + (currentIsRead ? 1 : -1)) });
-    await markAsRead(id, currentIsRead);
+    const r = await markAsRead(id, currentIsRead);
+    if (!r?.success) {
+      setCollectedItems(prev => prev.map(item => item.id === id ? { ...item, isRead: currentIsRead ? 1 : 0 } : item));
+      setArticleCounts(c => c && { ...c, unread: Math.max(0, c.unread + (currentIsRead ? -1 : 1)) });
+    }
   };
 
   const handleAddSource = async (keyword: string) => {

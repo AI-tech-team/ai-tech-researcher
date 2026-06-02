@@ -5,9 +5,10 @@ on:
     - cron: '0 21 * * *'     # 毎日 06:00 JST (daily pipeline, full mode)
     - cron: '0 3 * * *'      # 毎日 12:00 JST (collect-only)
     - cron: '0 9 * * *'      # 毎日 18:00 JST (collect-only)
-    - cron: '30 21 * * 0'    # 毎週日曜 06:30 JST (週次レポート)
-    - cron: '0 22 1 * *'     # 毎月1日 07:00 JST (月次レポート + 再分類)
     - cron: '0 20 * * 0'     # 毎週日曜 05:00 JST (週次バックアップ)
+    # ※ 週次/月次レポートは daily pipeline(full) が日曜/月初に判定して生成・メール送信する。
+    #    旧: 週次/月次/再分類を /api/report/* に curl する cron があったが、これらのエンドポイントは
+    #    isOwner() 必須でcron認証バイパスが無く、無認証curlは403で空振り（死んだcron）だったため削除した。
   workflow_dispatch:
     inputs:
       report_type:
@@ -15,7 +16,7 @@ on:
         required: false
         default: 'daily'
         type: choice
-        options: [daily, collect, weekly, monthly, recategorize, backup]
+        options: [daily, collect, backup]
 
 jobs:
   research:
@@ -33,7 +34,9 @@ jobs:
       - name: Install dependencies
         run: cd v2 && npm install
 
-      - name: Run Daily Pipeline (full)
+      # GitHub Actions cron は数時間遅延するため、デイリーレポート/メールは外部cron→/api/report に集約。
+      # ここでは収集・ベクトル化・知識抽出・自律リサーチ・evolve のみ実行する（レポート/メールは SKIP）。
+      - name: Run Daily Pipeline (full, no daily report/email)
         if: github.event.schedule == '0 21 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily')
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
@@ -41,6 +44,7 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SKIP_DAILY_REPORT_EMAIL: '1'
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Run Collection (midday/evening)
@@ -53,29 +57,6 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           PIPELINE_MODE: collect
         run: cd v2 && npx tsx daily_pipeline.ts
-
-      - name: Generate Weekly Report
-        if: github.event.schedule == '30 21 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'weekly')
-        env:
-          VERCEL_URL: ${{ secrets.VERCEL_URL }}
-        run: |
-          curl -X POST "${VERCEL_URL}/api/report/weekly" -H "Content-Type: application/json"
-
-      - name: Generate Monthly Report + Recategorize
-        if: github.event.schedule == '0 22 1 * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'monthly')
-        env:
-          VERCEL_URL: ${{ secrets.VERCEL_URL }}
-        run: |
-          curl -X POST "${VERCEL_URL}/api/report/monthly" -H "Content-Type: application/json"
-          echo "月次レポート生成完了、再分類を実行..."
-          curl -X POST "${VERCEL_URL}/api/recategorize" -H "Content-Type: application/json"
-
-      - name: Recategorize Only
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'recategorize'
-        env:
-          VERCEL_URL: ${{ secrets.VERCEL_URL }}
-        run: |
-          curl -X POST "${VERCEL_URL}/api/recategorize" -H "Content-Type: application/json"
 
       - name: Weekly DB Backup
         if: github.event.schedule == '0 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup')

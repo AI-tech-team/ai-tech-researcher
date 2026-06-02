@@ -242,24 +242,34 @@ export function PublicApp() {
   const handleToggleFavorite = async (id: number, current: boolean) => {
     if (!sessionUserId) return requireLogin('お気に入りの保存にはログインが必要です');
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isFavorited: current ? 0 : 1 } : i));
-    await toggleFavorite(id, current);
+    const r = await toggleFavorite(id, current);
+    if (!r?.success) { // 失敗時はロールバック（保存できていないのに保存済み表示にしない）
+      setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isFavorited: current ? 1 : 0 } : i));
+      toast('保存に失敗しました。通信状況を確認してください', 'error');
+    }
   };
   const handleToggleReadLater = async (id: number, current: boolean) => {
     if (!sessionUserId) return requireLogin('「後で読む」の保存にはログインが必要です');
+    const item = collectedItems.find(i => i.id === id) ?? recommendations.find(i => i.id === id) ?? readLater.find(i => i.id === id);
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isReadLater: current ? 0 : 1 } : i));
-    // 「後で読む」一覧も同期（解除なら除外、追加なら一覧へ）
-    if (current) {
-      setReadLater(prev => prev.filter(i => i.id !== id));
-    } else {
-      const found = collectedItems.find(i => i.id === id) ?? recommendations.find(i => i.id === id);
-      if (found && !readLater.some(i => i.id === id)) setReadLater(prev => [{ ...found, isReadLater: 1 }, ...prev]);
+    // 「後で読む」一覧も同期（解除なら除外、追加なら一覧へ）。関数型更新で安全に
+    setReadLater(prev => current
+      ? prev.filter(i => i.id !== id)
+      : (item && !prev.some(i => i.id === id) ? [{ ...item, isReadLater: 1 }, ...prev] : prev));
+    const r = await toggleReadLater(id, current);
+    if (!r?.success) { // 失敗時はフラグ・一覧の両方をロールバック
+      setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isReadLater: current ? 1 : 0 } : i));
+      setReadLater(prev => current
+        ? (item && !prev.some(i => i.id === id) ? [{ ...item, isReadLater: 1 }, ...prev] : prev)
+        : prev.filter(i => i.id !== id));
+      toast('保存に失敗しました。通信状況を確認してください', 'error');
     }
-    await toggleReadLater(id, current);
   };
   const handleMarkAsRead = async (id: number, current: boolean) => {
     if (!sessionUserId) return; // 未ログインは静かに無視（閲覧は自由）
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 0 : 1 } : i));
-    await markAsRead(id, current);
+    const r = await markAsRead(id, current);
+    if (!r?.success) setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 1 : 0 } : i));
   };
 
   const heroReport = reportsList.find(r => r.type === 'daily') ?? reportsList[0] ?? null;

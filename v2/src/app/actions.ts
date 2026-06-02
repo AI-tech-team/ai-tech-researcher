@@ -6,6 +6,7 @@ import { desc, asc, eq, count, gte, lte, lt, sql, like, or, isNotNull, and, inAr
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
+import { checkRateLimit } from '@/lib/ratelimit';
 import { google } from '@ai-sdk/google';
 import { generateText, embedMany } from 'ai';
 import { cached } from '@/lib/cache';
@@ -265,6 +266,8 @@ export async function getActivityData() {
 }
 
 export async function getSourcePerformance() {
+  // 運用内部データ（ソース戦略・スコア）はオーナー専用。Server Actionは直接POST可能なため内部でgate
+  if (!(await isOwner())) return [];
   try {
     return await db.select({
       id: sources.id,
@@ -288,6 +291,7 @@ export async function getSourcePerformance() {
 }
 
 export async function getSourceROI() {
+  if (!(await isOwner())) return [];
   try {
     // 収集数・重要度avg・お気に入り・後で読む（実際のユーザー価値シグナル）
     const rows = await db.select({
@@ -482,6 +486,7 @@ export async function getTrendingKeywords(): Promise<TrendingKeyword[]> {
 }
 
 export async function getPipelineLogs(): Promise<PipelineLog[]> {
+  if (!(await isOwner())) return [];
   try {
     const rows = await db.select().from(pipelineLogs)
       .orderBy(desc(pipelineLogs.date))
@@ -501,6 +506,8 @@ export async function getPipelineLogs(): Promise<PipelineLog[]> {
 }
 
 export async function logPipelineRun(data: { date: string; collected: number; failed: number; durationMs: number }) {
+  // 無認証の書込を防ぐ（偽ログ挿入対策）。日次パイプラインはサーバ直実行でこの関数を使わない
+  if (!(await isOwner())) return;
   try {
     await db.insert(pipelineLogs).values(data);
   } catch (error) {
@@ -509,6 +516,7 @@ export async function logPipelineRun(data: { date: string; collected: number; fa
 }
 
 export async function getKeywordCategoryMatrix() {
+ if (!(await isOwner())) return { keywords: [], categories: [], matrix: [], maxCount: 1 };
  return cached('kwMatrix', 180_000, async () => {
   try {
     const rows = await db.select({
@@ -927,6 +935,7 @@ export interface SignalIntel {
 
 export async function getSignalIntelligence(): Promise<SignalIntel> {
   const empty: SignalIntel = { categoryVelocity: [], risingEntities: [], hotRepos: [] };
+  if (!(await isOwner())) return empty;
   try {
     const wk = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
     const prevStart = sqlTs(new Date(Date.now() - 28 * 24 * 60 * 60 * 1000));
@@ -1207,6 +1216,10 @@ export async function dismissAlert(id: number) {
 }
 
 export async function generateResearchBrief(topic: string): Promise<ResearchBrief | null> {
+  // 不正利用防止: Server Actionは直接POSTで叩けるため、UI非表示だけでは保護にならない。
+  // 課金LLM(gemini-2.5-flash+Google検索)を呼ぶためオーナー限定＋レート制限を必須にする。
+  if (!(await isOwner())) return null;
+  if (!(await checkRateLimit('research', 'owner', 5, 60_000))) return null;
   const t = topic.trim().slice(0, 120);
   if (!t) return null;
   try {
@@ -1347,6 +1360,8 @@ export async function getReadingProfile(): Promise<ReadingProfile | null> {
 
 // クエリを埋め込み、ベクトル近傍検索（旧: Geminiキーワード展開＋LIKE）
 export async function semanticSearch(query: string): Promise<CollectedItem[]> {
+  // 埋め込みAPIを呼ぶためオーナー限定（匿名の公開検索はLLM不使用の searchArticles を使う）。
+  if (!(await isOwner())) return [];
   const sanitized = query.trim().slice(0, 200);
   if (!sanitized) return [];
   try {
@@ -1417,11 +1432,18 @@ export async function searchArticles(query: string): Promise<CollectedItem[]> {
   }
 }
 
-// 公開UIのディープリンク向け: レポートをIDで単体取得
+// 公開UIのディープリンク向け: レポートをIDで単体取得。
+// 内部限定(briefing/learning_recap/cross_insight)は公開ディープリンク/OGメタから除外する
+// （getReportsDataと同じ除外。Server Actionは直接POST可能なため、ここでtype制限しないとID総当たりで露出する）。
 export async function getReportById(id: number): Promise<Report | null> {
   try {
     if (!Number.isFinite(id)) return null;
-    const [r] = await db.select().from(reports).where(eq(reports.id, id)).limit(1);
+    const [r] = await db.select().from(reports)
+      .where(and(
+        eq(reports.id, id),
+        sql`${reports.type} NOT IN ('briefing', 'learning_recap', 'cross_insight')`,
+      ))
+      .limit(1);
     return (r as Report) ?? null;
   } catch (error) {
     console.error('getReportById failed:', error);

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { X, Star, Bookmark, CheckCircle2, ExternalLink, ListTree, Newspaper } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getArticleById, type ArticleDetail } from '@/app/actions';
+import { safeHttpUrl } from '@/lib/safeUrl';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
@@ -50,6 +51,7 @@ export function ArticleDetailModal({
   const rl = !!article?.isReadLater;
   const read = !!article?.isRead;
   const color = CATEGORY_COLORS[article?.category ?? ''] ?? '#475569';
+  const safeUrl = safeHttpUrl(article?.url); // javascript:/data:等を弾いてから href に使う
 
   const patch = (p: Partial<ArticleDetail>) =>
     setResult(r => (r && r.article ? { ...r, article: { ...r.article, ...p } } : r));
@@ -130,8 +132,8 @@ export function ArticleDetailModal({
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${read ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'}`}>
                     <CheckCircle2 size={13} /> {read ? '既読' : '既読にする'}
                   </button>
-                  {article.url && (
-                    <a href={article.url} target="_blank" rel="noopener noreferrer"
+                  {safeUrl && (
+                    <a href={safeUrl} target="_blank" rel="noopener noreferrer"
                       onClick={() => { if (!read) toggleRead(); }}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 text-xs font-bold transition-colors">
                       <ExternalLink size={13} /> 元記事

@@ -26,9 +26,15 @@ async function main() {
   await run(`CREATE UNIQUE INDEX IF NOT EXISTS uas_user_article ON user_article_state(user_id, article_id)`);
   await run(`ALTER TABLE reading_events ADD COLUMN user_id INTEGER`);
 
-  // オーナー = 最初のユーザー
-  const owner = (await client.execute(`SELECT id FROM users ORDER BY id ASC LIMIT 1`)).rows[0] as any;
-  if (!owner) { console.log('ユーザー未登録のため移行スキップ（ログイン後に再実行可）'); process.exit(0); }
+  // オーナーは OWNER_EMAIL(Googleメール) で特定する（src/lib/owner.ts isOwner() と同基準）。
+  // 「先頭ユーザーid」での代用は、オーナー以外が先にログインしていた場合に
+  // オーナーの私的データ(お気に入り/既読/閲覧履歴)を他人へ誤って紐づけるため不可。
+  const ownerEmail = (process.env.OWNER_EMAIL ?? '').split(',')[0].trim().toLowerCase();
+  if (!ownerEmail) { console.log('OWNER_EMAIL 未設定のため移行を中止しました。設定後に再実行してください。'); process.exit(1); }
+  const owner = (await client.execute({
+    sql: `SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1`, args: [ownerEmail],
+  })).rows[0] as any;
+  if (!owner) { console.log(`OWNER_EMAIL(${ownerEmail}) のユーザーが未登録のため移行スキップ（オーナーがログイン後に再実行）`); process.exit(0); }
   const ownerId = Number(owner.id);
   console.log(`オーナー user_id = ${ownerId}`);
 
