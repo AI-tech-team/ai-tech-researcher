@@ -71,6 +71,8 @@ async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, to
 
     const rawScore = parseInt((item.score ?? '').replace(/[^\d]/g, ''), 10);
     if (isNaN(rawScore) || rawScore < 20) { skipped++; continue; } // Phase 1: 低品質スキップ
+    // http(s)以外のURL（javascript:/data: 等）は保存しない（描画時のstored XSS対策）
+    if (!/^https?:\/\//i.test(item.url ?? '')) { skipped++; continue; }
 
     const tags = JSON.stringify([item.src, item.domain].filter(Boolean).slice(0, 3));
     const importanceScore = parseTechDripScore(item.score ?? '');
@@ -168,7 +170,10 @@ importanceは1(低)〜10(高)でAI技術的重要度・新規性を評価。tags
   if (/vertexaisearch\.cloud\.google\.com|grounding-api-redirect/.test(parsedData.url)) {
     throw new Error('リダイレクトURLを解決できませんでした');
   }
-  try { new URL(parsedData.url); } catch { throw new Error(`無効なURL: ${String(parsedData.url).slice(0, 60)}`); }
+  try {
+    const u = new URL(parsedData.url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('non-http scheme');
+  } catch { throw new Error(`無効なURL: ${String(parsedData.url).slice(0, 60)}`); }
 
   // 鮮度チェック: 14日以上前の記事は破棄
   if (parsedData.publishedAt) {

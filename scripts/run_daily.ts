@@ -1,4 +1,4 @@
-import { ResearcherAgent } from "./src/core/agent";
+import { ResearcherAgent } from "../src/core/agent";
 
 async function runDailyPipeline() {
   console.log("--- Starting Daily Pipeline ---");

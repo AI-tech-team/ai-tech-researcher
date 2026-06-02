@@ -3,6 +3,7 @@
 import { useState, useRef, useLayoutEffect } from 'react';
 import { Star, Bookmark, ExternalLink, CheckCircle2, Newspaper } from 'lucide-react';
 import type { CollectedItem } from '@/types';
+import { safeHttpUrl } from '@/lib/safeUrl';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論':          '#38bdf8',
@@ -62,6 +63,7 @@ export function ArticleCard({
   const isRead = !!item.isRead;
   const isFav  = !!item.isFavorited;
   const isRL   = !!item.isReadLater;
+  const safeUrl = safeHttpUrl(item.url); // 外部リンクは http(s) のみ許可（javascript:/data: 等を弾く）
   const isMatch = interestTags.length > 0 && interestTags.some(tag =>
     [item.title, item.summary, item.category].some(f => f?.toLowerCase().includes(tag.toLowerCase()))
   );
@@ -147,8 +149,8 @@ export function ArticleCard({
                 <Bookmark size={13} className={isRL ? 'fill-sky-400 text-sky-400' : 'text-slate-600 hover:text-sky-400 transition-colors'} />
               </button>
             )}
-            {item.url && (
-              <a href={item.url} target="_blank" rel="noopener noreferrer"
+            {safeUrl && (
+              <a href={safeUrl} target="_blank" rel="noopener noreferrer"
                 onClick={() => { if (onMarkAsRead && !isRead) onMarkAsRead(item.id, false); }}
                 className="p-1.5 rounded-md hover:bg-white/5 text-slate-600 hover:text-white transition-colors">
                 <ExternalLink size={13} />
