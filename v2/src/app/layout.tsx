@@ -1,15 +1,13 @@
 import type { Metadata } from "next";
 import { Inter, Outfit } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { ToastProvider } from "@/components/Toast";
 import { Providers } from "@/components/Providers";
+import { SITE_URL, SITE_NAME, SITE_DESC } from "@/lib/site";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
-
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
-const SITE_NAME = 'AI Tech Researcher';
-const SITE_DESC = '毎日「育つ」AIリサーチ — 最新動向を自動で集め、要約・分析・知識グラフ化してお届けします。';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -37,6 +35,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Providers>
           <ToastProvider>{children}</ToastProvider>
         </Providers>
+        {/* Cookieレス・匿名のアクセス解析（PIIを集めない方針と両立）。Vercel側でWeb Analytics有効化が必要 */}
+        <Analytics />
       </body>
     </html>
   );

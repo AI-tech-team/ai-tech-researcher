@@ -1,4 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap');
+/* フォントは next/font(layout.tsx) が自己ホストするため、Google Fonts への外部@importは廃止
+   （描画ブロックの外部リクエストを削減し、外部依存も減らす） */
 @import 'tailwindcss';
 
 @theme {
