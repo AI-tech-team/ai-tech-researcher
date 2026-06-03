@@ -1,9 +1,7 @@
 import type { Metadata } from 'next';
 import HomeClient from './HomeClient';
 import { getArticleById, getReportById } from './actions';
-
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
-const SITE_NAME = 'AI Tech Researcher';
+import { SITE_URL, SITE_NAME } from '@/lib/site';
 
 // シェア時のOG/Twitterカードを動的生成。?article=N または ?report=N が付いていれば
 // その記事/レポートのタイトル・サマリーで上書きする。LLM追加コストなし（DB参照のみ）。

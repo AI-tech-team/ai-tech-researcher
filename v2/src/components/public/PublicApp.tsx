@@ -17,6 +17,7 @@ import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
+import { CONTACT_EMAIL } from '@/lib/site';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
@@ -564,8 +565,18 @@ export function PublicApp() {
           </section>
         )}
 
-        <footer className="pt-4 pb-2 text-center font-mono text-[10px] text-slate-700">
-          AI Tech Researcher — 毎日「育つ」AIリサーチ
+        <footer className="pt-4 pb-2 text-center space-y-2">
+          <div className="flex items-center justify-center gap-3 font-mono text-[10px] text-slate-600">
+            <a href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</a>
+            {CONTACT_EMAIL && (
+              <>
+                <span className="text-slate-700">·</span>
+                <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('AI Tech Researcher フィードバック')}`}
+                  className="hover:text-slate-300 transition-colors">フィードバック</a>
+              </>
+            )}
+          </div>
+          <p className="font-mono text-[10px] text-slate-700">AI Tech Researcher — 毎日「育つ」AIリサーチ</p>
         </footer>
       </main>
 
