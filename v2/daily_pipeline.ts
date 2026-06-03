@@ -1063,6 +1063,7 @@ async function sendPersonalizedBriefs() {
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
   const twoDaysAgo = sqlTs(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
   const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
   let sent = 0;
 
   for (const r of recipients) {
@@ -1108,11 +1109,11 @@ async function sendPersonalizedBriefs() {
         <h2 style="color:#0ea5e9;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日のおすすめ</h2>
         <p style="font-size:13px;color:#64748b;">あなたの興味に近い新着 ${ranked.length}件です。</p>
         ${items}
-        <p style="font-size:11px;color:#94a3b8;margin-top:16px;">配信停止は設定タブのプロフィールから。</p>
+        <p style="font-size:11px;color:#94a3b8;margin-top:16px;">配信の停止・再開は <a href="${siteUrl}" style="color:#0ea5e9;">サイト</a> にログインし、右上の「プロフィール」から切り替えられます。</p>
       </div>`;
 
       await transporter.sendMail({
-        from: user, to: r.email,
+        from: `AI Tech Researcher <${user}>`, to: r.email,
         subject: `☀️ 今日のあなた向け AI記事 ${today}`,
         html,
       });
