@@ -311,6 +311,8 @@ export function PublicApp() {
 
   const feedbackAvailable = !!FEEDBACK_FORM_ACTION || !!CONTACT_EMAIL;
   const heroReport = reportsList.find(r => r.type === 'daily') ?? reportsList[0] ?? null;
+  const weeklyReport = reportsList.find(r => r.type === 'weekly') ?? null;
+  const monthlyReport = reportsList.find(r => r.type === 'monthly') ?? null;
   // カテゴリ絞り込み中はそのカテゴリの記事のみを対象に。featuredと最新の二分割もカテゴリ内で行う
   const filteredItems = selectedCategory
     ? collectedItems.filter(i => i.category === selectedCategory)
@@ -480,6 +482,40 @@ export function PublicApp() {
           )}
         </div>
 
+        {/* ── 今週/今月のまとめ（週次・月次レポートを表に出す。データ既存・LLM追加コストなし） ── */}
+        {(weeklyReport || monthlyReport) && (
+          <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {weeklyReport && (
+              <button onClick={() => openReportObj(weeklyReport)}
+                className="group text-left rounded-2xl border border-indigo-500/15 bg-gradient-to-br from-indigo-500/[0.07] to-sky-500/[0.03] hover:border-indigo-500/30 p-5 transition-colors">
+                <div className="flex items-center gap-1.5 font-mono text-[10px] text-indigo-300/90 mb-1.5">
+                  <FileText size={12} /> 今週のまとめ
+                  <span className="text-slate-600">·</span>
+                  <span className="text-slate-500">{weeklyReport.reportDate}</span>
+                </div>
+                <p className="text-sm text-slate-300 leading-relaxed line-clamp-2">
+                  {reportLead(weeklyReport.content ?? '', 100) || '今週のAIの流れを振り返ります。'}
+                </p>
+                <span className="inline-flex items-center gap-1 mt-2 text-[12px] font-bold text-indigo-300 group-hover:gap-2 transition-all">読む <ArrowRight size={13} /></span>
+              </button>
+            )}
+            {monthlyReport && (
+              <button onClick={() => openReportObj(monthlyReport)}
+                className="group text-left rounded-2xl border border-purple-500/15 bg-gradient-to-br from-purple-500/[0.07] to-indigo-500/[0.03] hover:border-purple-500/30 p-5 transition-colors">
+                <div className="flex items-center gap-1.5 font-mono text-[10px] text-purple-300/90 mb-1.5">
+                  <FileText size={12} /> 今月のまとめ
+                  <span className="text-slate-600">·</span>
+                  <span className="text-slate-500">{monthlyReport.reportDate}</span>
+                </div>
+                <p className="text-sm text-slate-300 leading-relaxed line-clamp-2">
+                  {reportLead(monthlyReport.content ?? '', 100) || '今月のAIの流れを振り返ります。'}
+                </p>
+                <span className="inline-flex items-center gap-1 mt-2 text-[12px] font-bold text-purple-300 group-hover:gap-2 transition-all">読む <ArrowRight size={13} /></span>
+              </button>
+            )}
+          </section>
+        )}
+
         {/* ── あなた向け（ログインユーザー限定・行動ベース） ── */}
         {sessionUserId && (
           <section className="space-y-5">
@@ -520,22 +556,15 @@ export function PublicApp() {
                 )}
 
                 {readLater.length > 0 && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                        <Bookmark size={12} /> 後で読む（{readLater.length}）
-                      </p>
-                      <button onClick={() => setSavedOpen(true)}
-                        className="text-[11px] text-indigo-300 hover:text-indigo-200 transition-colors">
-                        全部見る →
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 gap-3">
-                      {readLater.slice(0, 5).map(item => (
-                        <PubCard key={item.id} item={item} onOpen={openArticle} />
-                      ))}
-                    </div>
-                  </div>
+                  // コンパクト表示（溜め込みが場所を取りすぎないよう、件数＋全部見るのみ）
+                  <button onClick={() => setSavedOpen(true)}
+                    className="w-full flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] px-4 py-3 transition-colors">
+                    <span className="flex items-center gap-2 text-[13px] text-slate-300">
+                      <Bookmark size={14} className="text-indigo-300" /> 後で読む
+                      <span className="font-mono text-[11px] text-slate-500">{readLater.length}件</span>
+                    </span>
+                    <span className="flex items-center gap-1 text-[12px] text-indigo-300">全部見る <ArrowRight size={12} /></span>
+                  </button>
                 )}
               </>
             )}
