@@ -3071,17 +3071,23 @@ async function ensureSources() {
     { type: 'rss', value: 'https://simonwillison.net/atom/everything/',      score: 7 }, // Simon Willison(高信号な個人AIブログ)
   ];
   for (const src of required) {
-    const existing = await db.select({ id: schema.sources.id, status: schema.sources.status })
-      .from(schema.sources)
-      .where(eq(schema.sources.value, src.value))
-      .limit(1);
-    if (existing.length === 0) {
-      await db.insert(schema.sources).values({ type: src.type as any, value: src.value, status: 'active', score: src.score });
-      console.log(`[Init] ソース追加: ${src.value}`);
-    } else if (existing[0].status !== 'active') {
-      // 必須フィードがlow-priority等に落ちていたらactiveへ復帰（収集供給源を維持）
-      await db.update(schema.sources).set({ status: 'active' }).where(eq(schema.sources.id, existing[0].id));
-      console.log(`[Init] ソース復帰(active): ${src.value}`);
+    // Tursoの一過性エラー(コールドスタート/接続ブリップ)で1件失敗しても全体を落とさない。
+    // 各DB操作をwithRetry(指数バックオフ)で再試行し、それでも駄目なら当該フィードはスキップして継続。
+    try {
+      const existing = await withRetry(() => db.select({ id: schema.sources.id, status: schema.sources.status })
+        .from(schema.sources)
+        .where(eq(schema.sources.value, src.value))
+        .limit(1));
+      if (existing.length === 0) {
+        await withRetry(() => db.insert(schema.sources).values({ type: src.type as any, value: src.value, status: 'active', score: src.score }));
+        console.log(`[Init] ソース追加: ${src.value}`);
+      } else if (existing[0].status !== 'active') {
+        // 必須フィードがlow-priority等に落ちていたらactiveへ復帰（収集供給源を維持）
+        await withRetry(() => db.update(schema.sources).set({ status: 'active' }).where(eq(schema.sources.id, existing[0].id)));
+        console.log(`[Init] ソース復帰(active): ${src.value}`);
+      }
+    } catch (e: any) {
+      console.warn(`[Init] ソース確認失敗(スキップして継続): ${src.value} - ${(e?.message ?? e)?.toString().slice(0, 80)}`);
     }
   }
 
@@ -3191,7 +3197,12 @@ async function main() {
       process.exit(0);
     }
 
-    await ensureSources();
+    // ソース初期化は一過性DBエラーで全体を落とさない（中で再試行＋個別catch済だが念のため非致命化）
+    try {
+      await ensureSources();
+    } catch (e: any) {
+      console.warn('[Pipeline] ensureSources失敗(継続):', e?.message ?? e);
+    }
     // コスト最適化: 収集のみ実行(12:00/18:00)はキーワードGrounding(Google検索)を回さず
     // 無料ソース(RSS/HN/ArXiv/GitHub)の巡回のみ。キーワード検索＋夜間リサーチはフル実行(06:00)で実施。
     // 同一キーワードの日中再検索は新着がほぼ無く重複ばかりで、品質を落とさずGrounding費用を約6割削減できる。
