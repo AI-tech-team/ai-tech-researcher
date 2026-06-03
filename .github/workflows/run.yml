@@ -34,9 +34,11 @@ jobs:
       - name: Install dependencies
         run: cd v2 && npm install
 
-      # GitHub Actions cron は数時間遅延するため、デイリーレポート/メールは外部cron→/api/report に集約。
-      # ここでは収集・ベクトル化・知識抽出・自律リサーチ・evolve のみ実行する（レポート/メールは SKIP）。
-      - name: Run Daily Pipeline (full, no daily report/email)
+      # 日次フルパイプライン: 収集・ベクトル化・知識抽出・自律リサーチ・evolve に加え、
+      # 日次レポートの生成＋メール送信も行う（外部cronは未設定のためパイプラインで生成する）。
+      # ※ GitHub Actions cron は数時間遅延するため、生成は06:00ちょうどでなく朝7〜8時JST頃になる。
+      #   定刻にしたい場合は /api/report を外部cron(CRON_SECRET)で叩く構成へ移行する。
+      - name: Run Daily Pipeline (full)
         if: github.event.schedule == '0 21 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily')
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
@@ -44,7 +46,6 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          SKIP_DAILY_REPORT_EMAIL: '1'
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Run Collection (midday/evening)
