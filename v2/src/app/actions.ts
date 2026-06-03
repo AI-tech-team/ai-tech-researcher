@@ -1029,6 +1029,7 @@ export interface MyProfile {
   interests: string;
   goals: string;
   emailOptIn: boolean;
+  hasProfile: boolean; // プロフィール行が既にあるか（無ければ購読トグルを既定ONで見せる）
 }
 
 export async function getMyProfile(): Promise<MyProfile | null> {
@@ -1047,6 +1048,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
       interests: p?.interests ?? '',
       goals: p?.goals ?? '',
       emailOptIn: !!p?.emailOptIn,
+      hasProfile: !!p,
     };
   } catch (error) {
     console.error('getMyProfile failed:', error);
@@ -1100,6 +1102,24 @@ export async function updateMyProfile(data: { displayName: string; interests: st
     return { success: true };
   } catch (error) {
     console.error('updateMyProfile failed:', error);
+    return { success: false };
+  }
+}
+
+// ログイン後の購読プロンプト用：他のプロフィール項目を壊さず email_opt_in だけ 1 にする
+export async function subscribeEmailDigest() {
+  try {
+    const userId = await currentUserId();
+    if (!userId) return { success: false };
+    if (!memRateLimit('profile', userId, 30, 60_000)) return { success: false };
+    const now = new Date().toISOString();
+    await db.insert(userProfiles)
+      .values({ userId, emailOptIn: 1, updatedAt: now })
+      .onConflictDoUpdate({ target: userProfiles.userId, set: { emailOptIn: 1, updatedAt: now } });
+    revalidatePath('/');
+    return { success: true };
+  } catch (error) {
+    console.error('subscribeEmailDigest failed:', error);
     return { success: false };
   }
 }
