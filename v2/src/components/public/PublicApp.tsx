@@ -361,6 +361,10 @@ export function PublicApp() {
                 とりあえず読む →
               </button>
             </div>
+            <p className="text-[10px] text-slate-500 mt-2.5">
+              続行すると Google アカウントでログインします。{' '}
+              <a href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシーポリシー</a>
+            </p>
           </motion.div>
         )}
 
@@ -562,6 +566,9 @@ export function PublicApp() {
                 <LogIn size={13} /> Googleでログイン
               </button>
             </div>
+            <p className="text-[10px] text-slate-500">
+              続行＝Googleアカウントでログイン · <a href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシー</a>
+            </p>
           </section>
         )}
 
