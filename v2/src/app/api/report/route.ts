@@ -1,5 +1,6 @@
 import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
+import * as nodemailer from 'nodemailer';
 import { db } from '@/db';
 import { collectedData, reports, claims, benchmarks, adoptionLogs } from '@/db/schema';
 import { desc, gte, and, lt, eq, count } from 'drizzle-orm';
@@ -11,9 +12,51 @@ export const maxDuration = 60;
 
 const sqlTs = (d: Date) => d.toISOString().replace('T', ' ').slice(0, 19);
 
-export async function POST() {
-  if (!(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
-  if (!(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
+// 外部cron用：Authorization: Bearer ${CRON_SECRET} を許可（GitHub Actions遅延を避けJST 06:00 ピッタリ駆動）
+function isCronAuthorized(req: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const auth = req.headers.get('authorization') ?? req.headers.get('Authorization');
+  return auth === `Bearer ${secret}`;
+}
+
+// markdown → 簡易HTML（daily_pipeline.ts の markdownToHtml と同等）
+function markdownToHtml(md: string): string {
+  let html = md
+    .replace(/^## (.+)$/gm, '<h2 style="color:#38bdf8;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;margin-top:28px;margin-bottom:12px">$1</h2>')
+    .replace(/^### (.+)$/gm, '<h3 style="color:#818cf8;margin-top:16px;margin-bottom:8px">$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:0.9em">$1</code>')
+    .replace(/^- (.+)$/gm, '<li style="margin:5px 0;line-height:1.6">$1</li>')
+    .replace(/\n\n+/g, '\n\n');
+  html = html.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => `<ul style="padding-left:20px;margin:8px 0">${m}</ul>`);
+  html = html.replace(/\n\n/g, '</p><p style="margin:10px 0;line-height:1.7">');
+  html = html.replace(/\n/g, '<br>');
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:700px;margin:0 auto;padding:24px;background:#0f172a;color:#e2e8f0">
+<p style="margin:10px 0;line-height:1.7">${html}</p>
+</body></html>`;
+}
+
+async function sendEmail(content: string, type = 'デイリー'): Promise<void> {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!user || !pass) return;
+  const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
+  const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
+  await transporter.sendMail({
+    from: user, to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
+    subject: `🤖 AI Tech Researcher ${type}レポート ${today}`,
+    text: content,
+    html: markdownToHtml(content),
+  });
+}
+
+export async function POST(req: Request) {
+  const cronAuthed = isCronAuthorized(req);
+  if (!cronAuthed && !(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
+  // 外部cron経由はレート制限スキップ（オーナー手動UIのみ制限）
+  if (!cronAuthed && !(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
   try {
     const sevenDaysAgo = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
     const fourteenDaysAgo = sqlTs(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
@@ -110,7 +153,14 @@ export async function POST() {
       await db.insert(adoptionLogs).values(adoptedSourceIds.map(sourceId => ({ reportId: inserted.id, sourceId, isAdopted: 1 as const })));
     }
 
-    return Response.json({ success: true, message: 'レポートの生成に成功しました。', data: inserted });
+    // 外部cron駆動時のみメール送信（手動生成では送らない＝既存挙動を維持）
+    let emailSent = false;
+    if (cronAuthed) {
+      try { await sendEmail(text, 'デイリー'); emailSent = true; }
+      catch (e) { console.error('[Email] daily report send failed:', e); }
+    }
+
+    return Response.json({ success: true, message: 'レポートの生成に成功しました。', data: inserted, emailSent });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('Report generation error:', error);

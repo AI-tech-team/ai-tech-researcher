@@ -1033,7 +1033,7 @@ async function sendEmail(reportContent: string, type: string = 'デイリー') {
 
     await transporter.sendMail({
       from: user,
-      to: user,
+      to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
       subject: `🤖 AI Tech Researcher ${type}レポート ${today}`,
       text: reportContent,
       html: markdownToHtml(reportContent),
@@ -1134,7 +1134,7 @@ async function sendFailureEmail(error: Error) {
     const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
     await transporter.sendMail({
       from: user,
-      to: user,
+      to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
       subject: `🚨 AI Tech Researcher パイプライン失敗 ${today}`,
       text: `デイリーパイプラインが失敗しました。\n\nエラー: ${error.message}\n\nスタックトレース:\n${error.stack ?? '(なし)'}`,
     });
