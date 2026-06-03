@@ -96,7 +96,7 @@ function PubCard({ item, onOpen, featured = false, lead = false }: {
 
 export function PublicApp() {
   const { toast } = useToast();
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
 
   const [collectedItems, setCollectedItems] = useState<CollectedItem[]>([]);
@@ -185,6 +185,22 @@ export function PublicApp() {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
+  // モーダル表示中は背面(body/html)のスクロールを止める（スマホで背面がスクロールする問題の対策）
+  const anyOverlayOpen =
+    detailArticleId != null || openReport != null || searchOpen ||
+    profileOpen || savedOpen || detailEntityName != null;
+  useEffect(() => {
+    if (!anyOverlayOpen) return;
+    const prevBody = document.body.style.overflow;
+    const prevHtml = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBody;
+      document.documentElement.style.overflow = prevHtml;
+    };
+  }, [anyOverlayOpen]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -241,15 +257,22 @@ export function PublicApp() {
   const requireLogin = (msg: string) => { toast(msg, 'info'); signIn('google'); };
 
   const handleToggleFavorite = async (id: number, current: boolean) => {
+    if (status === 'loading') return; // セッション解決中はクリックを無視（ログイン誤発火＝画面遷移を防ぐ）
     if (!sessionUserId) return requireLogin('お気に入りの保存にはログインが必要です');
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isFavorited: current ? 0 : 1 } : i));
-    const r = await toggleFavorite(id, current);
-    if (!r?.success) { // 失敗時はロールバック（保存できていないのに保存済み表示にしない）
+    const rollback = () => { // 失敗時はロールバック（保存できていないのに保存済み表示にしない）
       setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isFavorited: current ? 1 : 0 } : i));
       toast('保存に失敗しました。通信状況を確認してください', 'error');
+    };
+    try {
+      const r = await toggleFavorite(id, current);
+      if (!r?.success) rollback();
+    } catch {
+      rollback();
     }
   };
   const handleToggleReadLater = async (id: number, current: boolean) => {
+    if (status === 'loading') return; // セッション解決中はクリックを無視
     if (!sessionUserId) return requireLogin('「後で読む」の保存にはログインが必要です');
     const item = collectedItems.find(i => i.id === id) ?? recommendations.find(i => i.id === id) ?? readLater.find(i => i.id === id);
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isReadLater: current ? 0 : 1 } : i));
@@ -257,20 +280,30 @@ export function PublicApp() {
     setReadLater(prev => current
       ? prev.filter(i => i.id !== id)
       : (item && !prev.some(i => i.id === id) ? [{ ...item, isReadLater: 1 }, ...prev] : prev));
-    const r = await toggleReadLater(id, current);
-    if (!r?.success) { // 失敗時はフラグ・一覧の両方をロールバック
+    const rollback = () => { // 失敗時はフラグ・一覧の両方をロールバック
       setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isReadLater: current ? 1 : 0 } : i));
       setReadLater(prev => current
         ? (item && !prev.some(i => i.id === id) ? [{ ...item, isReadLater: 1 }, ...prev] : prev)
         : prev.filter(i => i.id !== id));
       toast('保存に失敗しました。通信状況を確認してください', 'error');
+    };
+    try {
+      const r = await toggleReadLater(id, current);
+      if (!r?.success) rollback();
+    } catch {
+      rollback();
     }
   };
   const handleMarkAsRead = async (id: number, current: boolean) => {
+    if (status === 'loading') return;
     if (!sessionUserId) return; // 未ログインは静かに無視（閲覧は自由）
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 0 : 1 } : i));
-    const r = await markAsRead(id, current);
-    if (!r?.success) setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 1 : 0 } : i));
+    try {
+      const r = await markAsRead(id, current);
+      if (!r?.success) setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 1 : 0 } : i));
+    } catch {
+      setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 1 : 0 } : i));
+    }
   };
 
   const heroReport = reportsList.find(r => r.type === 'daily') ?? reportsList[0] ?? null;
@@ -311,7 +344,9 @@ export function PublicApp() {
               className="sm:hidden p-1.5 rounded-lg hover:bg-white/10 text-slate-400 transition-colors">
               <Search size={16} />
             </button>
-            {session?.user ? (
+            {status === 'loading' ? (
+              <div className="w-7 h-7 rounded-full bg-white/10 animate-pulse" />
+            ) : session?.user ? (
               <>
                 <button onClick={() => setProfileOpen(true)} title="プロフィール"
                   className="flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors">
