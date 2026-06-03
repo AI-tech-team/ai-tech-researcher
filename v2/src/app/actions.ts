@@ -601,37 +601,44 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
     if (!userId) return { success: false, needLogin: true };
     if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const newValue = currentlyFavorited ? 0 : 1;
-    const [item] = await db.select({
-      sourceId: collectedData.sourceId,
-      title: collectedData.title,
-      category: collectedData.category,
-    }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
+    // 核心: お気に入りフラグの保存。これが成功すればユーザー操作は「成功」とする
     await db.insert(userArticleState)
       .values({ userId, articleId: id, isFavorited: newValue })
       .onConflictDoUpdate({
         target: [userArticleState.userId, userArticleState.articleId],
         set: { isFavorited: newValue, updatedAt: new Date().toISOString() },
       });
-    if (item?.sourceId) {
-      await db.insert(adoptionLogs).values({ sourceId: item.sourceId, isAdopted: newValue });
-      const delta = newValue === 1 ? 2.0 : -1.0;
-      await db.update(sources)
-        .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
-        .where(eq(sources.id, item.sourceId));
-    }
-    // お気に入り = 強いシグナル
-    if (newValue === 1) {
-      await logReadingEvent(id, 'favorite', 3, item?.category ?? null, userId);
-      const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
-      const now = new Date().toISOString();
-      for (const kw of kws) {
-        await db.insert(userTopicWeights)
-          .values({ keyword: kw, weight: 0.3, updatedAt: now })
-          .onConflictDoUpdate({
-            target: userTopicWeights.keyword,
-            set: { weight: sql`${userTopicWeights.weight} + 0.3`, updatedAt: now },
-          });
+    // 副次処理（情報源スコア・興味学習・行動ログ）は分析用。ここで失敗しても保存は成功扱いにする。
+    // ※全体に例外を伝播させると、保存できているのに「失敗」表示になり誤解を生む（誤エラーの原因だった）
+    try {
+      const [item] = await db.select({
+        sourceId: collectedData.sourceId,
+        title: collectedData.title,
+        category: collectedData.category,
+      }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
+      if (item?.sourceId) {
+        await db.insert(adoptionLogs).values({ sourceId: item.sourceId, isAdopted: newValue });
+        const delta = newValue === 1 ? 2.0 : -1.0;
+        await db.update(sources)
+          .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
+          .where(eq(sources.id, item.sourceId));
       }
+      // お気に入り = 強いシグナル
+      if (newValue === 1) {
+        await logReadingEvent(id, 'favorite', 3, item?.category ?? null, userId);
+        const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
+        const now = new Date().toISOString();
+        for (const kw of kws) {
+          await db.insert(userTopicWeights)
+            .values({ keyword: kw, weight: 0.3, updatedAt: now })
+            .onConflictDoUpdate({
+              target: userTopicWeights.keyword,
+              set: { weight: sql`${userTopicWeights.weight} + 0.3`, updatedAt: now },
+            });
+        }
+      }
+    } catch (sideErr) {
+      console.warn('[favorite] 副次処理をスキップ（お気に入り自体は保存済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
     }
     revalidatePath('/');
     return { success: true };
@@ -647,16 +654,22 @@ export async function toggleReadLater(id: number, current: boolean) {
     if (!userId) return { success: false, needLogin: true };
     if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const newValue = current ? 0 : 1;
+    // 核心: 後で読むフラグの保存
     await db.insert(userArticleState)
       .values({ userId, articleId: id, isReadLater: newValue })
       .onConflictDoUpdate({
         target: [userArticleState.userId, userArticleState.articleId],
         set: { isReadLater: newValue, updatedAt: new Date().toISOString() },
       });
-    if (!current) {
-      const [item] = await db.select({ category: collectedData.category })
-        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
-      await logReadingEvent(id, 'readlater', 1, item?.category ?? null, userId);
+    // 行動ログは分析用。失敗しても保存は成功扱い
+    try {
+      if (!current) {
+        const [item] = await db.select({ category: collectedData.category })
+          .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+        await logReadingEvent(id, 'readlater', 1, item?.category ?? null, userId);
+      }
+    } catch (sideErr) {
+      console.warn('[readlater] 副次処理をスキップ（保存は成功済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
     }
     revalidatePath('/');
     return { success: true };
