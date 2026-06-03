@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -17,7 +17,8 @@ import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
-import { CONTACT_EMAIL } from '@/lib/site';
+import { FeedbackModal } from '@/components/public/FeedbackModal';
+import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION } from '@/lib/site';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
@@ -118,6 +119,7 @@ export function PublicApp() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // URL ↔ モーダル状態の同期（シェア用ディープリンク）
@@ -306,6 +308,7 @@ export function PublicApp() {
     }
   };
 
+  const feedbackAvailable = !!FEEDBACK_FORM_ACTION || !!CONTACT_EMAIL;
   const heroReport = reportsList.find(r => r.type === 'daily') ?? reportsList[0] ?? null;
   // カテゴリ絞り込み中はそのカテゴリの記事のみを対象に。featuredと最新の二分割もカテゴリ内で行う
   const filteredItems = selectedCategory
@@ -334,6 +337,18 @@ export function PublicApp() {
             <h1 className="font-bold text-sm font-outfit">AI Tech Researcher</h1>
           </div>
           <div className="flex items-center gap-2">
+            {/* フィードバック（Googleフォーム or メール） */}
+            {feedbackAvailable && (
+              <button onClick={() => setFeedbackOpen(true)} title="フィードバックを送る"
+                className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 text-xs transition-colors">
+                <MessageSquare size={14} /><span className="hidden md:inline">フィードバック</span>
+              </button>
+            )}
+            {/* プライバシー */}
+            <a href="/privacy" title="プライバシーポリシー"
+              className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 text-xs transition-colors">
+              <Shield size={14} /><span className="hidden md:inline">プライバシー</span>
+            </a>
             {/* 検索: デスクトップは⌘Kヒント付きピル、モバイルはアイコン */}
             <button onClick={() => setSearchOpen(true)} title="記事を検索 (⌘K)"
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 text-xs transition-colors">
@@ -610,11 +625,11 @@ export function PublicApp() {
         <footer className="pt-4 pb-2 text-center space-y-2">
           <div className="flex items-center justify-center gap-3 font-mono text-[10px] text-slate-600">
             <a href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</a>
-            {CONTACT_EMAIL && (
+            {feedbackAvailable && (
               <>
                 <span className="text-slate-700">·</span>
-                <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('AI Tech Researcher フィードバック')}`}
-                  className="hover:text-slate-300 transition-colors">フィードバック</a>
+                <button onClick={() => setFeedbackOpen(true)}
+                  className="hover:text-slate-300 transition-colors">フィードバック</button>
               </>
             )}
           </div>
@@ -657,6 +672,10 @@ export function PublicApp() {
         onOpenArticle={openArticle}
         onToggleReadLater={handleToggleReadLater}
         onToggleFavorite={handleToggleFavorite}
+      />
+      <FeedbackModal
+        open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)}
       />
     </div>
   );
