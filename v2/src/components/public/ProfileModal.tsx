@@ -27,6 +27,7 @@ type ProfileData = {
   interests: string;
   goals: string;
   emailOptIn: boolean;
+  hasProfile: boolean;
 };
 
 interface Props {
@@ -52,7 +53,9 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
     let cancelled = false;
     getMyProfile().then(p => {
       if (cancelled || !p) return;
-      setData(p);
+      // プロフィール未作成（＝初めて開く人）は購読トグルを既定ONで見せる。
+      // 既存ユーザーが明示的にOFFにした設定は尊重する。
+      setData({ ...p, emailOptIn: p.hasProfile ? p.emailOptIn : true });
       setInterests(p.interests ?? '');
       setGoals(p.goals ?? '');
     }).catch(() => {});

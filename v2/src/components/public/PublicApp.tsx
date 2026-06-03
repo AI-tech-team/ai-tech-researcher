@@ -2,13 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
   getCoreData, getCollectedDataList, getReportById, getKnowledgeStats,
   getRecommendations, getMyReadLater, getReadingProfile,
   toggleFavorite, toggleReadLater, markAsRead,
+  getMyProfile, subscribeEmailDigest,
 } from '@/app/actions';
 import { ArticleDetailModal } from '@/components/ArticleDetailModal';
 import { EntityPageModal } from '@/components/EntityPageModal';
@@ -132,6 +133,7 @@ export function PublicApp() {
   const [savedOpen, setSavedOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [digestPromptOpen, setDigestPromptOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // URL ↔ モーダル状態の同期（シェア用ディープリンク）
@@ -185,6 +187,32 @@ export function PublicApp() {
   const dismissWelcome = () => {
     setWelcomeOpen(false);
     try { localStorage.setItem('welcome_v1_dismissed', '1'); } catch {}
+  };
+
+  // ログイン済みで未購読なら「毎朝ダイジェスト」購読プロンプトを一度だけ出す（同意ベース）
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!sessionUserId) { setDigestPromptOpen(false); return; }
+    try {
+      if (typeof window !== 'undefined' && localStorage.getItem('digest_prompt_v1_dismissed')) return;
+    } catch {}
+    let cancelled = false;
+    getMyProfile().then(p => {
+      if (cancelled || !p) return;
+      if (!p.emailOptIn) setDigestPromptOpen(true);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionUserId]);
+  const dismissDigestPrompt = () => {
+    setDigestPromptOpen(false);
+    try { localStorage.setItem('digest_prompt_v1_dismissed', '1'); } catch {}
+  };
+  const subscribeDigest = async () => {
+    try {
+      const r = await subscribeEmailDigest();
+      toast(r?.success ? '毎朝のダイジェストを登録しました📩' : '登録に失敗しました', r?.success ? 'success' : 'error');
+    } catch { toast('登録に失敗しました', 'error'); }
+    dismissDigestPrompt();
   };
 
   // ⌘K / Ctrl+K でグローバル検索を開く
@@ -448,6 +476,40 @@ export function PublicApp() {
               続行すると Google アカウントでログインします。{' '}
               <a href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシーポリシー</a>
             </p>
+          </motion.div>
+        )}
+
+        {/* ── ログイン済み: 毎朝ダイジェスト購読プロンプト（未購読のみ・一度きり・同意ベース） ── */}
+        {digestPromptOpen && sessionUserId && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
+            className="relative rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/[0.08] to-sky-500/[0.04] p-4 sm:p-5 pr-10"
+          >
+            <button onClick={dismissDigestPrompt} aria-label="閉じる"
+              className="absolute top-2.5 right-2.5 p-1 rounded-md hover:bg-white/10 text-slate-500 hover:text-white transition-colors">
+              <X size={14} />
+            </button>
+            <div className="flex items-start gap-3">
+              <div className="shrink-0 w-9 h-9 rounded-lg bg-indigo-500/15 flex items-center justify-center text-indigo-300">
+                <Mail size={17} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm sm:text-base text-slate-100 leading-relaxed">
+                  <span className="font-bold text-white">毎朝、あなた向けダイジェストをメールで受け取りますか？</span>
+                  <span className="text-slate-400"> 今日のまとめ＋あなたの興味に近い新着が届きます。いつでも停止できます。</span>
+                </p>
+                <div className="flex items-center gap-3 mt-3 flex-wrap">
+                  <button onClick={subscribeDigest}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-sky-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-opacity">
+                    <Mail size={13} /> 受け取る
+                  </button>
+                  <button onClick={dismissDigestPrompt}
+                    className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors">
+                    あとで
+                  </button>
+                </div>
+              </div>
+            </div>
           </motion.div>
         )}
 

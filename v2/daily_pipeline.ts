@@ -1014,6 +1014,27 @@ function markdownToHtml(md: string): string {
 </body></html>`;
 }
 
+// 購読者メール（明るい背景）用：Markdown を本文フラグメントへ変換（<html>ラッパー無し）。
+// markdownToHtml（オーナー宛・ダーク）はそのまま温存し、こちらは白背景で読みやすい配色にする。
+function mdToLightHtml(md: string): string {
+  let html = md
+    .replace(/^## (.+)$/gm, '<h2 style="color:#0ea5e9;font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin:16px 0 8px">$1</h2>')
+    .replace(/^### (.+)$/gm, '<h3 style="color:#4f46e5;font-size:14px;margin:16px 0 4px">$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:2px 5px;border-radius:4px;font-family:monospace;font-size:0.9em">$1</code>')
+    .replace(/^- (.+)$/gm, '<li style="margin:3px 0;line-height:1.6">$1</li>')
+    .replace(/\n\n+/g, '\n\n');
+  html = html.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => `<ul style="padding-left:20px;margin:4px 0">${m}</ul>`);
+  html = html.replace(/\n\n/g, '</p><p style="margin:5px 0;line-height:1.7;color:#334155">');
+  html = html.replace(/\n/g, '<br>');
+  // ブロック要素（見出し/リスト）の前後に残る<br>と空段落を除去して間延びを防ぐ
+  html = html
+    .replace(/(?:<br>\s*)+(<(?:h2|h3|ul|li))/g, '$1')
+    .replace(/(<\/(?:h2|h3|ul|li)>)(?:\s*<br>)+/g, '$1')
+    .replace(/<p[^>]*>(?:\s|<br>)*<\/p>/g, '');
+  return `<p style="margin:5px 0;line-height:1.7;color:#334155">${html}</p>`;
+}
+
 async function sendEmail(reportContent: string, type: string = 'デイリー') {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
@@ -1046,10 +1067,20 @@ async function sendEmail(reportContent: string, type: string = 'デイリー') {
 }
 
 // v6: メール購読ユーザーへ「今日のあなた向け」パーソナライズbriefを配信（LLM不使用・低コスト）
-async function sendPersonalizedBriefs() {
+async function sendPersonalizedBriefs(reportText: string | null = null) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!user || !pass) { console.log('[Brief] メール未設定、スキップ'); return; }
+
+  // 共有のデイリーレポート本体を使い回す（無ければ最新のdailyをDBから取得）。LLM追加コストなし。
+  let reportMd = reportText;
+  if (!reportMd) {
+    const [latest] = await db.select({ content: schema.reports.content })
+      .from(schema.reports).where(eq(schema.reports.type, 'daily'))
+      .orderBy(desc(schema.reports.createdAt)).limit(1);
+    reportMd = latest?.content ?? null;
+  }
+  const reportHtml = reportMd ? mdToLightHtml(reportMd) : '';
 
   const recipients = await db.select({
     uid: schema.users.id, email: schema.users.email, name: schema.users.name,
@@ -1097,24 +1128,31 @@ async function sendPersonalizedBriefs() {
         if (interestKws.some(k => text.includes(k))) score += 4;
         return { a, score };
       }).sort((x, y) => y.score - x.score).slice(0, 6).map(x => x.a);
-      if (ranked.length === 0) continue;
+      // レポート本体があれば、おすすめが0件でも配信する（共有レポートだけでも価値がある）
+      if (ranked.length === 0 && !reportHtml) continue;
 
       const items = ranked.map(a => `
         <div style="margin:0 0 12px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;">
           <div style="font-size:11px;color:#64748b;">${escapeHtml(a.category ?? '')} ・ ★${Number(a.imp ?? 0)}</div>
           <a href="${safeMailHref(a.url)}" style="font-size:15px;font-weight:600;color:#0f172a;text-decoration:none;">${escapeHtml(a.titleJa || a.title || '無題')}</a>
-          <div style="font-size:12px;color:#475569;margin-top:4px;">${escapeHtml((a.summary ?? '').slice(0, 120))}</div>
+          <div style="font-size:12px;color:#475569;margin-top:4px;line-height:1.55;">${escapeHtml(a.summary ?? '')}</div>
         </div>`).join('');
-      const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;color:#0f172a;">
-        <h2 style="color:#0ea5e9;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日のおすすめ</h2>
-        <p style="font-size:13px;color:#64748b;">あなたの興味に近い新着 ${ranked.length}件です。</p>
-        ${items}
-        <p style="font-size:11px;color:#94a3b8;margin-top:16px;">配信の停止・再開は <a href="${siteUrl}" style="color:#0ea5e9;">サイト</a> にログインし、右上の「プロフィール」から切り替えられます。</p>
+      // ✨ あなたへのおすすめ（パーソナライズ・各タイトルが元記事リンク）
+      const recsBlock = ranked.length > 0 ? `
+        <h2 style="color:#0ea5e9;font-size:16px;margin:24px 0 4px;">✨ あなたへのおすすめ記事</h2>
+        <p style="font-size:13px;color:#64748b;margin:0 0 10px;">あなたの興味に近い新着 ${ranked.length}件です。タイトルを押すと記事が開きます。</p>
+        ${items}` : '';
+      const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;margin:0 auto;color:#0f172a;padding:8px 4px;">
+        <h1 style="font-size:20px;margin:0 0 2px;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日のダイジェスト</h1>
+        <p style="font-size:12px;color:#94a3b8;margin:0 0 16px;">${today}</p>
+        ${reportHtml ? `<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:8px;">${reportHtml}</div>` : ''}
+        ${recsBlock}
+        <p style="font-size:11px;color:#94a3b8;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px;">配信の停止・再開は <a href="${siteUrl}" style="color:#0ea5e9;">サイト</a> にログインし、右上の「プロフィール」から切り替えられます。</p>
       </div>`;
 
       await transporter.sendMail({
         from: `AI Tech Researcher <${user}>`, to: r.email,
-        subject: `☀️ 今日のあなた向け AI記事 ${today}`,
+        subject: `☀️ 今日のダイジェスト ${today}`,
         html,
       });
       sent++;
@@ -3254,11 +3292,12 @@ async function main() {
       // 外部cron→/api/report に集約してJST 06:00 ピッタリ駆動する。
       // SKIP_DAILY_REPORT_EMAIL=1 のときはここでの生成・送信をスキップ（briefingContentは生成済なのでDBには残る）。
       const skipDailyReportEmail = process.env.SKIP_DAILY_REPORT_EMAIL === '1';
+      let dailyReportContent: string | null = null; // 購読者メールへ使い回す（再生成しない）
       if (!skipDailyReportEmail) {
-        const reportContent = await generateReport();
-        if (reportContent) {
+        dailyReportContent = await generateReport();
+        if (dailyReportContent) {
           // ブリーフィングを朝のメール冒頭に統合
-          const emailBody = briefingContent ? `${briefingContent}\n\n---\n\n${reportContent}` : reportContent;
+          const emailBody = briefingContent ? `${briefingContent}\n\n---\n\n${dailyReportContent}` : dailyReportContent;
           await sendEmail(emailBody);
         }
       } else {
@@ -3266,7 +3305,7 @@ async function main() {
       }
 
       // v6: メール購読ユーザーへパーソナライズbriefを配信（非クリティカル）
-      try { await sendPersonalizedBriefs(); } catch (e: any) { console.warn('[Brief] 配信失敗(非クリティカル):', e.message); }
+      try { await sendPersonalizedBriefs(dailyReportContent); } catch (e: any) { console.warn('[Brief] 配信失敗(非クリティカル):', e.message); }
 
       // JST の曜日・日付を確実に取得（toLocaleStringの文字列分割は環境依存なので使わない）
       const jstDateStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
