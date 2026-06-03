@@ -128,6 +128,22 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors resize-none" />
               </div>
 
+              {/* メール配信設定（毎朝のあなた向けダイジェスト） */}
+              <div className="flex items-center justify-between gap-3 border-t border-white/5 pt-4">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-bold text-slate-200">毎朝のメールダイジェスト</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                    あなたの興味に近い新着を毎朝メールでお届けします。いつでも停止できます。
+                  </p>
+                </div>
+                <button type="button" role="switch" aria-checked={data?.emailOptIn ?? false}
+                  aria-label="毎朝のメールダイジェストを受け取る"
+                  onClick={() => setData(d => d ? { ...d, emailOptIn: !d.emailOptIn } : d)}
+                  className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${data?.emailOptIn ? 'bg-sky-500' : 'bg-white/15'}`}>
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${data?.emailOptIn ? 'translate-x-5' : ''}`} />
+                </button>
+              </div>
+
               <div className="flex items-center justify-end pt-2">
                 <button onClick={handleSave} disabled={saving || !data}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity disabled:opacity-50">
