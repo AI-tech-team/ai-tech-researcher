@@ -276,7 +276,7 @@ export function PublicApp() {
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isFavorited: current ? 0 : 1 } : i));
     const rollback = () => { // 失敗時はロールバック（保存できていないのに保存済み表示にしない）
       setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isFavorited: current ? 1 : 0 } : i));
-      toast('保存に失敗しました。通信状況を確認してください', 'error');
+      toast('保存に失敗しました。少し時間をおいて再度お試しください', 'error');
     };
     try {
       const r = await toggleFavorite(id, current);
@@ -299,7 +299,7 @@ export function PublicApp() {
       setReadLater(prev => current
         ? (item && !prev.some(i => i.id === id) ? [{ ...item, isReadLater: 1 }, ...prev] : prev)
         : prev.filter(i => i.id !== id));
-      toast('保存に失敗しました。通信状況を確認してください', 'error');
+      toast('保存に失敗しました。少し時間をおいて再度お試しください', 'error');
     };
     try {
       const r = await toggleReadLater(id, current);
