@@ -25,6 +25,17 @@ const CATEGORY_COLORS: Record<string, string> = {
   'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#475569',
 };
 
+// 初心者向け：テーマ（カテゴリ）の大まかな説明。ホームの「注目のテーマ」でホバー/選択時に出す
+const CATEGORY_DESC: Record<string, string> = {
+  'LLM推論': '大規模言語モデル（ChatGPT等）の性能・推論・最適化の話題',
+  'エージェント': '自分で考えて作業を進める自律型AIの話題',
+  'ツール/フレームワーク': '開発に使うライブラリや基盤ソフトの話題',
+  'ハードウェア': 'GPU・専用チップなどAI向けの計算資源',
+  'ビジネス応用': '製品や仕事へのAI導入・活用事例',
+  '研究/論文': '最新の研究成果や論文の話題',
+  'その他': '上記に当てはまらない話題',
+};
+
 const PAGE = 30;
 
 function timeAgo(dateStr: string | null): string {
@@ -583,7 +594,7 @@ export function PublicApp() {
                 const color = CATEGORY_COLORS[cat] ?? '#475569';
                 const active = selectedCategory === cat;
                 return (
-                  <button key={cat}
+                  <button key={cat} title={CATEGORY_DESC[cat] ?? ''}
                     onClick={() => setSelectedCategory(active ? null : cat)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors ${active ? 'ring-2 ring-offset-0' : 'hover:bg-white/[0.04]'}`}
                     style={{ borderColor: `${color}${active ? '60' : '28'}`, background: `${color}${active ? '22' : '10'}` }}>
@@ -599,6 +610,10 @@ export function PublicApp() {
                 </button>
               )}
             </div>
+            {/* 選んだテーマの説明（初心者向け・モバイルでも見える） */}
+            {selectedCategory && CATEGORY_DESC[selectedCategory] && (
+              <p className="text-[11px] text-slate-500 mt-2.5 leading-relaxed">💡 {CATEGORY_DESC[selectedCategory]}</p>
+            )}
           </section>
         )}
 

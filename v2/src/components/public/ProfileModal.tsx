@@ -91,11 +91,15 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
     }
   };
 
-  // プリセットのタグをタップ → 興味に追加＋説明を表示
+  // プリセットのタグをタップ → 追加/解除をトグル＋説明を表示
   const interestList = interests.split(/[,、]/).map(s => s.trim()).filter(Boolean);
-  const addInterest = (label: string, desc: string) => {
+  const toggleInterest = (label: string, desc: string) => {
     setHint(desc);
-    if (!interestList.includes(label)) setInterests([...interestList, label].join(', '));
+    setInterests(
+      interestList.includes(label)
+        ? interestList.filter(x => x !== label).join(', ')
+        : [...interestList, label].join(', '),
+    );
   };
 
   return (
@@ -141,9 +145,9 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
                     const active = interestList.includes(p.label);
                     return (
                       <button key={p.label} type="button" title={p.desc}
-                        onClick={() => addInterest(p.label, p.desc)}
+                        onClick={() => toggleInterest(p.label, p.desc)}
                         className={`px-2.5 py-1 rounded-full border text-[11px] transition-colors ${active ? 'border-sky-500/40 bg-sky-500/15 text-sky-300' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.07]'}`}>
-                        {p.label}
+                        {active ? '✓ ' : ''}{p.label}
                       </button>
                     );
                   })}
@@ -152,7 +156,7 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
                 <textarea value={interests} onChange={e => setInterests(e.target.value)} maxLength={400} rows={2}
                   placeholder="LLM推論, エージェント, RAG, etc."
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors resize-none" />
-                <p className="text-[10px] text-slate-600 mt-1">上のタグをタップ、または自由に入力。「あなた向け」のおすすめ精度が上がります。</p>
+                <p className="text-[10px] text-slate-600 mt-1">タグをタップで追加／もう一度タップで解除。自由入力もOK。「あなた向け」の精度が上がります。</p>
               </div>
 
               {/* 目標 */}
