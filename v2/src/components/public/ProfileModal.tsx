@@ -6,6 +6,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { getMyProfile, updateMyProfile } from '@/app/actions';
 import { useToast } from '@/components/Toast';
 
+// 興味のプリセット（初心者向け：タップで追加でき、押すと大まかな説明が出る）
+const INTEREST_PRESETS: { label: string; desc: string }[] = [
+  { label: 'LLM推論', desc: '大規模言語モデル（ChatGPT等）の性能・推論・最適化の話題' },
+  { label: 'エージェント', desc: '自分で考えて作業を進める自律型AIの話題' },
+  { label: 'RAG', desc: '検索を組み合わせてAIの回答精度を上げる仕組み' },
+  { label: '画像/動画生成', desc: '画像や動画をつくる生成AIの話題' },
+  { label: 'ツール/フレームワーク', desc: '開発に使うライブラリや基盤ソフトの話題' },
+  { label: 'ハードウェア', desc: 'GPU・専用チップなどAI向けの計算資源' },
+  { label: 'ビジネス応用', desc: '製品や仕事へのAI導入・活用事例' },
+  { label: '研究/論文', desc: '最新の研究成果や論文の話題' },
+];
+
 type ProfileData = {
   email: string | null;
   name: string | null;
@@ -31,10 +43,12 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
   const [interests, setInterests] = useState('');
   const [goals, setGoals] = useState('');
   const [saving, setSaving] = useState(false);
+  const [hint, setHint] = useState('');
 
   // 開いたら最新のプロフィールを取得（setStateは全て.then内＝非同期、lintクリーン）
   useEffect(() => {
     if (!open) return;
+    setHint('');
     let cancelled = false;
     getMyProfile().then(p => {
       if (cancelled || !p) return;
@@ -77,6 +91,13 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
     }
   };
 
+  // プリセットのタグをタップ → 興味に追加＋説明を表示
+  const interestList = interests.split(/[,、]/).map(s => s.trim()).filter(Boolean);
+  const addInterest = (label: string, desc: string) => {
+    setHint(desc);
+    if (!interestList.includes(label)) setInterests([...interestList, label].join(', '));
+  };
+
   return (
     <AnimatePresence>
       {open && (
@@ -114,10 +135,24 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
               {/* 興味 */}
               <div>
                 <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">興味のあるテーマ</label>
+                {/* 初心者向け：タップで追加。押すと大まかな説明が出る */}
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {INTEREST_PRESETS.map(p => {
+                    const active = interestList.includes(p.label);
+                    return (
+                      <button key={p.label} type="button" title={p.desc}
+                        onClick={() => addInterest(p.label, p.desc)}
+                        className={`px-2.5 py-1 rounded-full border text-[11px] transition-colors ${active ? 'border-sky-500/40 bg-sky-500/15 text-sky-300' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.07]'}`}>
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {hint && <p className="text-[11px] text-sky-300/80 mb-2 leading-relaxed">💡 {hint}</p>}
                 <textarea value={interests} onChange={e => setInterests(e.target.value)} maxLength={400} rows={2}
                   placeholder="LLM推論, エージェント, RAG, etc."
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors resize-none" />
-                <p className="text-[10px] text-slate-600 mt-1">カンマ区切りでいくつでも。「あなた向け」のおすすめ精度が上がります。</p>
+                <p className="text-[10px] text-slate-600 mt-1">上のタグをタップ、または自由に入力。「あなた向け」のおすすめ精度が上がります。</p>
               </div>
 
               {/* 目標 */}

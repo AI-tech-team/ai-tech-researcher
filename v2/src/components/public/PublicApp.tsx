@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -120,6 +120,7 @@ export function PublicApp() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // URL ↔ モーダル状態の同期（シェア用ディープリンク）
@@ -362,19 +363,38 @@ export function PublicApp() {
             {status === 'loading' ? (
               <div className="w-7 h-7 rounded-full bg-white/10 animate-pulse" />
             ) : session?.user ? (
-              <>
-                <button onClick={() => setProfileOpen(true)} title="プロフィール"
-                  className="flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors">
+              <div className="relative">
+                {/* アカウント＝1つのメニューに集約。ログアウトは中に隠す＋確認を出す（誤操作防止） */}
+                <button onClick={() => setMenuOpen(v => !v)} title="アカウント"
+                  className="flex items-center gap-1.5 pl-1 pr-1.5 py-0.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors">
                   {session.user.image
                     ? <img src={session.user.image} alt="" className="w-6 h-6 rounded-full" />
                     : <div className="w-6 h-6 rounded-full bg-sky-500/20 flex items-center justify-center text-sky-400 text-[10px] font-bold">{(session.user.name ?? '?').slice(0, 1)}</div>}
-                  <span className="hidden sm:inline text-[11px] text-slate-300 font-medium">プロフィール</span>
+                  <span className="hidden sm:inline text-[11px] text-slate-300 font-medium max-w-[88px] truncate">{session.user.name ?? 'アカウント'}</span>
+                  <ChevronDown size={12} className={`text-slate-500 transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
                 </button>
-                <button onClick={() => signOut()} title="ログアウト"
-                  className="p-1.5 rounded-lg hover:bg-white/10 text-slate-500 hover:text-red-400 transition-colors">
-                  <LogOut size={14} />
-                </button>
-              </>
+                {menuOpen && (
+                  <>
+                    {/* 外側クリックで閉じる */}
+                    <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+                    <div className="absolute right-0 mt-1.5 w-48 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
+                      {session.user.email && (
+                        <div className="px-3 py-2 border-b border-white/5">
+                          <p className="text-[11px] text-slate-500 truncate">{session.user.email}</p>
+                        </div>
+                      )}
+                      <button onClick={() => { setMenuOpen(false); setProfileOpen(true); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
+                        <User size={14} className="text-slate-400" /> プロフィール
+                      </button>
+                      <button onClick={() => { setMenuOpen(false); if (window.confirm('ログアウトしますか？')) signOut(); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-300 hover:bg-red-500/10 hover:text-red-300 transition-colors">
+                        <LogOut size={14} /> ログアウト
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             ) : (
               <button onClick={() => signIn('google')}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-sky-500/20 bg-sky-500/5 hover:bg-sky-500/10 text-sky-400 text-xs font-bold transition-colors">
