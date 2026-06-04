@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -390,6 +390,11 @@ export function PublicApp() {
             <a href="/privacy" title="プライバシーポリシー"
               className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 text-xs transition-colors">
               <Shield size={14} /><span className="hidden md:inline">プライバシー</span>
+            </a>
+            {/* 利用規約 */}
+            <a href="/terms" title="利用規約"
+              className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 text-xs transition-colors">
+              <ScrollText size={14} /><span className="hidden md:inline">利用規約</span>
             </a>
             {/* 検索: デスクトップは⌘Kヒント付きピル、モバイルはアイコン */}
             <button onClick={() => setSearchOpen(true)} title="記事を検索 (⌘K)"
