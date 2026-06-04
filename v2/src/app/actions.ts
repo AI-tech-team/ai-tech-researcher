@@ -1693,12 +1693,16 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
     }
     if (!centroid) return [];
 
+    // 鮮度フィルタ: 直近30日の記事のみを候補に。
+    // （重心が過去履歴で固定のため、新しさを考慮しないと履歴に似た“昔の記事”ばかり出て更新されなくなる問題への対策）
+    const recentCutoff = sqlTs(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
     const nn = await client.execute({
-      sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), 40) AS v
+      sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), 300) AS v
             JOIN collected_data cd ON cd.rowid = v.id
             LEFT JOIN user_article_state uas ON uas.article_id = cd.id AND uas.user_id = ?
-            WHERE COALESCE(uas.is_read, 0) = 0 AND COALESCE(uas.is_favorited, 0) = 0`,
-      args: [JSON.stringify(centroid), userId],
+            WHERE COALESCE(uas.is_read, 0) = 0 AND COALESCE(uas.is_favorited, 0) = 0
+              AND cd.created_at >= ?`,
+      args: [JSON.stringify(centroid), userId, recentCutoff],
     });
     const engagedSet = new Set(engagedIds);
     const recIds = nn.rows.map(r => Number(r.id)).filter(id => !engagedSet.has(id)).slice(0, 8);
