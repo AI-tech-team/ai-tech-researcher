@@ -18,7 +18,6 @@ import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
-import { FeedbackModal } from '@/components/public/FeedbackModal';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION } from '@/lib/site';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -131,7 +130,6 @@ export function PublicApp() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
   const [digestPromptOpen, setDigestPromptOpen] = useState(false);
@@ -392,10 +390,10 @@ export function PublicApp() {
                   <div className="fixed inset-0 z-40" onClick={() => setInfoMenuOpen(false)} />
                   <div className="absolute right-0 mt-1.5 w-44 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
                     {feedbackAvailable && (
-                      <button onClick={() => { setInfoMenuOpen(false); setFeedbackOpen(true); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
+                      <a href="/feedback" onClick={() => setInfoMenuOpen(false)}
+                        className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                         <MessageSquare size={14} className="text-slate-400" /> フィードバック
-                      </button>
+                      </a>
                     )}
                     <a href="/privacy"
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
@@ -774,8 +772,7 @@ export function PublicApp() {
             {feedbackAvailable && (
               <>
                 <span className="text-slate-700">·</span>
-                <button onClick={() => setFeedbackOpen(true)}
-                  className="hover:text-slate-300 transition-colors">フィードバック</button>
+                <a href="/feedback" className="hover:text-slate-300 transition-colors">フィードバック</a>
               </>
             )}
           </div>
@@ -818,10 +815,6 @@ export function PublicApp() {
         onOpenArticle={openArticle}
         onToggleReadLater={handleToggleReadLater}
         onToggleFavorite={handleToggleFavorite}
-      />
-      <FeedbackModal
-        open={feedbackOpen}
-        onClose={() => setFeedbackOpen(false)}
       />
     </div>
   );
