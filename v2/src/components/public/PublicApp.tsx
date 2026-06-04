@@ -751,6 +751,8 @@ export function PublicApp() {
         <footer className="pt-4 pb-2 text-center space-y-2">
           <div className="flex items-center justify-center gap-3 font-mono text-[10px] text-slate-600">
             <a href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</a>
+            <span className="text-slate-700">·</span>
+            <a href="/terms" className="hover:text-slate-300 transition-colors">利用規約</a>
             {feedbackAvailable && (
               <>
                 <span className="text-slate-700">·</span>

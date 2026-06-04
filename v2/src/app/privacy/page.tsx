@@ -91,7 +91,8 @@ export default function PrivacyPage() {
           本ポリシーは、必要に応じて改定することがあります。重要な変更がある場合は本ページ上で告知します。
         </p>
 
-        <footer className="mt-12 pt-6 border-t border-white/5 text-center">
+        <footer className="mt-12 pt-6 border-t border-white/5 flex items-center justify-between">
+          <Link href="/terms" className="text-xs text-slate-400 hover:text-white transition-colors">利用規約 →</Link>
           <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
             <ArrowLeft size={13} /> トップに戻る
           </Link>
