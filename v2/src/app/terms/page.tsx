@@ -37,6 +37,7 @@ export default function TermsPage() {
         <p className="text-sm text-slate-300 leading-relaxed mt-6">
           本利用規約（以下「本規約」）は、{SITE_NAME}（以下「本サービス」）の利用条件を定めるものです。
           本サービスを利用された場合、本規約に同意したものとみなします。
+          本サービスに関して別途定めるポリシー（プライバシーポリシー等）は、本規約の一部を構成します。
         </p>
 
         <H>1. サービス内容</H>
@@ -66,6 +67,7 @@ export default function TermsPage() {
           <li>不正アクセス、脆弱性の悪用、リバースエンジニアリング等の解析行為</li>
           <li>他の利用者・第三者・運営者の権利を侵害する行為、なりすまし</li>
           <li>本サービスの運営を妨害する行為</li>
+          <li>反社会的勢力（暴力団・暴力団員等）への利益供与、または関与</li>
         </ul>
 
         <H>5. コンテンツと知的財産</H>
@@ -94,18 +96,23 @@ export default function TermsPage() {
           運営者は、利用者への事前の通知なく、本サービスの内容を変更し、または提供を中断・終了することがあります。
         </p>
 
-        <H>9. 準拠法・裁判管轄</H>
+        <H>9. 権利義務の譲渡禁止</H>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          利用者は、運営者の事前の承諾なく、本規約上の地位または本規約に基づく権利義務を、第三者に譲渡・承継・担保提供することはできません。
+        </p>
+
+        <H>10. 準拠法・裁判管轄</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本規約は日本法に準拠して解釈されます。本サービスに関して紛争が生じた場合は、運営者の所在地を管轄する裁判所を専属的合意管轄とします。
         </p>
 
-        <H>10. 規約の変更</H>
+        <H>11. 規約の変更</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本規約は、必要に応じて変更することがあります。重要な変更がある場合は本ページ上で告知します。
           変更後に本サービスを利用された場合、変更後の規約に同意したものとみなします。
         </p>
 
-        <H>11. お問い合わせ</H>
+        <H>12. お問い合わせ</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本規約に関するご質問は{' '}
           {CONTACT_EMAIL ? (

@@ -32,7 +32,7 @@ export default function PrivacyPage() {
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
         <h1 className="text-2xl font-bold text-white font-outfit">プライバシーポリシー</h1>
-        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年6月3日</p>
+        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年6月5日</p>
 
         <p className="text-sm text-slate-300 leading-relaxed mt-6">
           {SITE_NAME}（以下「本サービス」）における、利用者の情報の取り扱いについて定めます。
@@ -59,13 +59,25 @@ export default function PrivacyPage() {
 
         <H>第三者提供・広告</H>
         <p className="text-sm text-slate-400 leading-relaxed">
-          取得した情報を第三者に販売・提供することはありません。広告目的のトラッキングも行いません。
+          取得した情報を第三者に販売することはありません。広告目的のトラッキングも行いません。
           記事の収集・要約のためにAIモデル等の外部サービスを利用しますが、これに利用者の個人情報を渡すことはありません。
+          次の場合を除き、利用者の情報を第三者に提供しません。
         </p>
+        <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-1.5 mt-1.5">
+          <li>利用者本人の同意がある場合</li>
+          <li>法令に基づき開示が求められる場合</li>
+          <li>本サービスの運営に必要な範囲で、ホスティング・データベース等の外部サービス事業者に取り扱いを委託する場合</li>
+        </ul>
 
         <H>Cookie</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           ログイン状態を維持するためのセッションCookieのみを使用します。広告・追跡目的のCookieは使用しません。
+        </p>
+
+        <H>情報の管理</H>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          取得した情報の漏えい・滅失・毀損を防ぐため、適切な安全管理措置を講じます。
+          本サービスの運営に必要な範囲で外部サービス（ホスティング・データベース等）を利用する場合は、信頼できる事業者を選定し、適切に取り扱います。
         </p>
 
         <H>データの削除</H>
