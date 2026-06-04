@@ -53,7 +53,12 @@ export default function TermsPage() {
           {' '}に従います。
         </p>
 
-        <H>3. 禁止事項</H>
+        <H>3. 未成年の利用</H>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          未成年者が本サービスを利用する場合は、親権者など法定代理人の同意を得たうえでご利用ください。
+        </p>
+
+        <H>4. 禁止事項</H>
         <p className="text-sm text-slate-400 leading-relaxed mb-1.5">利用者は、本サービスの利用にあたり次の行為を行ってはなりません。</p>
         <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-1.5">
           <li>法令または公序良俗に違反する行為</li>
@@ -63,44 +68,44 @@ export default function TermsPage() {
           <li>本サービスの運営を妨害する行為</li>
         </ul>
 
-        <H>4. コンテンツと知的財産</H>
+        <H>5. コンテンツと知的財産</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本サービスが表示する記事の見出し・本文・画像などの著作権は、各情報源・権利者に帰属します。
           本サービスは、これらの要約・リンク・分析を提供するものであり、元記事の利用は各情報源の規約に従ってください。
           本サービスが生成する要約・レポート等はAIによって自動生成されたものです。
         </p>
 
-        <H>5. AI生成情報に関する免責</H>
+        <H>6. AI生成情報に関する免責</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本サービスの要約・分析・レポートは、自動収集およびAIによる生成を含むため、内容の正確性・完全性・最新性を保証しません。
           誤りや不正確な情報が含まれる場合があります。情報はあくまで参考としてご利用いただき、
           技術的・業務的・投資的な判断は、必ず一次情報をご確認のうえ利用者ご自身の責任で行ってください。
         </p>
 
-        <H>6. 免責事項</H>
+        <H>7. 免責事項</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本サービスは「現状有姿（as-is）」で提供されます。運営者は、本サービスの利用または利用不能、
           情報の利用、サービスの中断・終了・データの消失等によって生じたいかなる損害についても、
           法令で認められる範囲で責任を負いません。
         </p>
 
-        <H>7. サービスの変更・中断・終了</H>
+        <H>8. サービスの変更・中断・終了</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           運営者は、利用者への事前の通知なく、本サービスの内容を変更し、または提供を中断・終了することがあります。
         </p>
 
-        <H>8. 準拠法・裁判管轄</H>
+        <H>9. 準拠法・裁判管轄</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本規約は日本法に準拠して解釈されます。本サービスに関して紛争が生じた場合は、運営者の所在地を管轄する裁判所を専属的合意管轄とします。
         </p>
 
-        <H>9. 規約の変更</H>
+        <H>10. 規約の変更</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本規約は、必要に応じて変更することがあります。重要な変更がある場合は本ページ上で告知します。
           変更後に本サービスを利用された場合、変更後の規約に同意したものとみなします。
         </p>
 
-        <H>10. お問い合わせ</H>
+        <H>11. お問い合わせ</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本規約に関するご質問は{' '}
           {CONTACT_EMAIL ? (
