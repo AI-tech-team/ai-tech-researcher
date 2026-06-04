@@ -1,5 +1,6 @@
 import { google } from '@ai-sdk/google';
 import { generateText } from 'ai';
+import { after } from 'next/server';
 import * as nodemailer from 'nodemailer';
 import { db } from '@/db';
 import { collectedData, reports, claims, benchmarks, adoptionLogs } from '@/db/schema';
@@ -52,12 +53,9 @@ async function sendEmail(content: string, type = 'デイリー'): Promise<void> 
   });
 }
 
-export async function POST(req: Request) {
-  const cronAuthed = isCronAuthorized(req);
-  if (!cronAuthed && !(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
-  // 外部cron経由はレート制限スキップ（オーナー手動UIのみ制限）
-  if (!cronAuthed && !(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
-  try {
+// レポート生成本体（収集データなしは null）。同期/バックグラウンド双方から呼ぶ。
+async function buildDailyReport(): Promise<{ inserted: typeof reports.$inferSelect; text: string } | null> {
+  {
     const sevenDaysAgo = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
     const fourteenDaysAgo = sqlTs(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
 
@@ -80,9 +78,7 @@ export async function POST(req: Request) {
         .from(benchmarks).where(gte(benchmarks.createdAt, sevenDaysAgo)).orderBy(desc(benchmarks.createdAt)).limit(12),
     ]);
 
-    if (rawRecent.length === 0) {
-      return Response.json({ success: false, message: 'レポートの元になる収集データがありません。' }, { status: 400 });
-    }
+    if (rawRecent.length === 0) return null;
 
     // 重複ストーリーを代表1件に集約
     const seenStory = new Set<number>();
@@ -153,14 +149,37 @@ export async function POST(req: Request) {
       await db.insert(adoptionLogs).values(adoptedSourceIds.map(sourceId => ({ reportId: inserted.id, sourceId, isAdopted: 1 as const })));
     }
 
-    // 外部cron駆動時のみメール送信（手動生成では送らない＝既存挙動を維持）
-    let emailSent = false;
-    if (cronAuthed) {
-      try { await sendEmail(text, 'デイリー'); emailSent = true; }
-      catch (e) { console.error('[Email] daily report send failed:', e); }
-    }
+    return { inserted, text };
+  }
+}
 
-    return Response.json({ success: true, message: 'レポートの生成に成功しました。', data: inserted, emailSent });
+export async function POST(req: Request) {
+  const cronAuthed = isCronAuthorized(req);
+  if (!cronAuthed && !(await isOwner())) return Response.json({ success: false, message: 'オーナー権限が必要です' }, { status: 403 });
+  // 外部cron経由はレート制限スキップ（オーナー手動UIのみ制限）
+  if (!cronAuthed && !(await checkRateLimit('pipeline', 'owner', 5, 60_000))) return Response.json({ success: false, message: 'レート制限に達しました。少し待ってください' }, { status: 429 });
+
+  // 外部cron経由：即200を返し、生成＋メール送信はバックグラウンドで続行。
+  // cron-job.org の30秒タイムアウトによる誤失敗を回避（Vercelは maxDuration まで走り切る）。
+  if (cronAuthed) {
+    after(async () => {
+      try {
+        const result = await buildDailyReport();
+        if (!result) { console.warn('[Report] cron: 収集データなし、スキップ'); return; }
+        await sendEmail(result.text, 'デイリー');
+        console.log(`[Report] cron: 生成＋送信完了 id=${result.inserted?.id}`);
+      } catch (e) {
+        console.error('[Report] cron バックグラウンド処理失敗:', e);
+      }
+    });
+    return Response.json({ success: true, message: 'レポート生成をバックグラウンドで開始しました', queued: true });
+  }
+
+  // オーナー手動：同期実行（従来どおりメールは送らずデータを返す）
+  try {
+    const result = await buildDailyReport();
+    if (!result) return Response.json({ success: false, message: 'レポートの元になる収集データがありません。' }, { status: 400 });
+    return Response.json({ success: true, message: 'レポートの生成に成功しました。', data: result.inserted, emailSent: false });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error('Report generation error:', error);
