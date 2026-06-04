@@ -59,69 +59,72 @@ export function FeedbackModal({ open, onClose }: Props) {
   return (
     <AnimatePresence>
       {open && (
+        // 全画面表示（1画面）：背面を覆う不透明レイヤー
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          onClick={onClose}
-          className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-6"
+          className="fixed inset-0 z-[70] bg-[#03060f] overflow-y-auto"
         >
-          <motion.div
-            initial={{ y: 30, opacity: 0, scale: 0.98 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: 20, opacity: 0 }}
-            transition={{ type: 'spring', damping: 30, stiffness: 320 }}
-            onClick={e => e.stopPropagation()}
-            className="relative w-full sm:max-w-md max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#070b16] shadow-2xl"
-          >
-            <button onClick={onClose}
-              className="absolute top-3 right-3 z-10 p-1.5 rounded-full bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-colors">
-              <X size={18} />
-            </button>
-
-            <div className="p-5 sm:p-6 space-y-4">
-              <div className="flex items-center gap-2 pr-8">
-                <MessageSquare size={18} className="text-sky-400" />
-                <h2 className="text-base font-bold text-white font-outfit">フィードバック</h2>
+          {/* トップバー（タイトル＋閉じる） */}
+          <header className="sticky top-0 z-10 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+            <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare size={16} className="text-sky-400" />
+                <span className="font-bold text-sm font-outfit text-white">フィードバック</span>
               </div>
+              <button onClick={onClose} aria-label="閉じる"
+                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
+                <X size={16} /> 閉じる
+              </button>
+            </div>
+          </header>
 
-              {formMode ? (
-                <>
-                  <p className="text-[12px] text-slate-400 leading-relaxed">
-                    不具合・ご要望・気づいた点など、何でもどうぞ。匿名で送信されます。
-                  </p>
-                  <textarea value={message} onChange={e => setMessage(e.target.value)} maxLength={2000} rows={5}
-                    autoFocus
-                    placeholder="例：保存ボタンがたまに反応しない / こんな機能がほしい …"
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors resize-none" />
-                  {FEEDBACK_ENTRY_EMAIL && (
+          {/* 本文：中央寄せの1画面 */}
+          <main className="max-w-2xl mx-auto px-5 py-10 sm:py-14">
+            <h1 className="text-2xl font-bold text-white font-outfit">フィードバック</h1>
+
+            {formMode ? (
+              <>
+                <p className="text-sm text-slate-400 leading-relaxed mt-3">
+                  不具合・ご要望・気づいた点など、何でもどうぞ。匿名で送信されます。
+                </p>
+                <textarea value={message} onChange={e => setMessage(e.target.value)} maxLength={2000} rows={10}
+                  autoFocus
+                  placeholder="例：保存ボタンがたまに反応しない / こんな機能がほしい …"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-base text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors resize-none mt-6" />
+                <div className="flex items-center justify-between mt-1.5">
+                  {FEEDBACK_ENTRY_EMAIL ? (
                     <input type="email" value={email} onChange={e => setEmail(e.target.value)} maxLength={200}
                       placeholder="返信先メール（任意）"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors" />
-                  )}
-                  <div className="flex items-center justify-end pt-1">
-                    <button onClick={submit} disabled={sending || !message.trim()}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity disabled:opacity-50">
-                      <Send size={14} className={sending ? 'animate-pulse' : ''} />
-                      {sending ? '送信中…' : '送信'}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                // フォーム未設定時のフォールバック（メール）
-                <div className="space-y-3">
-                  <p className="text-[13px] text-slate-300 leading-relaxed">
-                    ご意見・ご要望をお寄せください。
-                  </p>
-                  {CONTACT_EMAIL ? (
-                    <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('AI Tech Researcher フィードバック')}`}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
-                      <Send size={14} /> メールで送る
-                    </a>
-                  ) : (
-                    <p className="text-[12px] text-slate-500">現在フィードバック窓口を準備中です。</p>
-                  )}
+                      className="flex-1 mr-3 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors" />
+                  ) : <span />}
+                  <span className="text-[11px] font-mono text-slate-600 shrink-0">{message.length}/2000</span>
                 </div>
-              )}
-            </div>
-          </motion.div>
+                <div className="flex items-center justify-end mt-5">
+                  <button onClick={submit} disabled={sending || !message.trim()}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity disabled:opacity-50">
+                    <Send size={15} className={sending ? 'animate-pulse' : ''} />
+                    {sending ? '送信中…' : '送信する'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              // フォーム未設定時のフォールバック（メール）
+              <div className="space-y-3 mt-4">
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  ご意見・ご要望をお寄せください。
+                </p>
+                {CONTACT_EMAIL ? (
+                  <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('AI Tech Researcher フィードバック')}`}
+                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
+                    <Send size={14} /> メールで送る
+                  </a>
+                ) : (
+                  <p className="text-[12px] text-slate-500">現在フィードバック窓口を準備中です。</p>
+                )}
+              </div>
+            )}
+          </main>
         </motion.div>
       )}
     </AnimatePresence>
