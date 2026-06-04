@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -133,6 +133,7 @@ export function PublicApp() {
   const [savedOpen, setSavedOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [infoMenuOpen, setInfoMenuOpen] = useState(false);
   const [digestPromptOpen, setDigestPromptOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
@@ -379,23 +380,35 @@ export function PublicApp() {
             <h1 className="font-bold text-sm font-outfit">AI Tech Researcher</h1>
           </div>
           <div className="flex items-center gap-2">
-            {/* フィードバック（Googleフォーム or メール） */}
-            {feedbackAvailable && (
-              <button onClick={() => setFeedbackOpen(true)} title="フィードバックを送る"
-                className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 text-xs transition-colors">
-                <MessageSquare size={14} /><span className="hidden md:inline">フィードバック</span>
+            {/* … メニュー（フィードバック / プライバシー / 利用規約 を集約してヘッダーをスッキリ） */}
+            <div className="relative">
+              <button onClick={() => setInfoMenuOpen(v => !v)} title="メニュー" aria-label="メニュー"
+                className="flex items-center px-2 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 transition-colors">
+                <MoreHorizontal size={18} />
               </button>
-            )}
-            {/* プライバシー */}
-            <a href="/privacy" title="プライバシーポリシー"
-              className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 text-xs transition-colors">
-              <Shield size={14} /><span className="hidden md:inline">プライバシー</span>
-            </a>
-            {/* 利用規約 */}
-            <a href="/terms" title="利用規約"
-              className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 text-xs transition-colors">
-              <ScrollText size={14} /><span className="hidden md:inline">利用規約</span>
-            </a>
+              {infoMenuOpen && (
+                <>
+                  {/* 外側クリックで閉じる */}
+                  <div className="fixed inset-0 z-40" onClick={() => setInfoMenuOpen(false)} />
+                  <div className="absolute right-0 mt-1.5 w-44 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
+                    {feedbackAvailable && (
+                      <button onClick={() => { setInfoMenuOpen(false); setFeedbackOpen(true); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
+                        <MessageSquare size={14} className="text-slate-400" /> フィードバック
+                      </button>
+                    )}
+                    <a href="/privacy"
+                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
+                      <Shield size={14} className="text-slate-400" /> プライバシー
+                    </a>
+                    <a href="/terms"
+                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
+                      <ScrollText size={14} className="text-slate-400" /> 利用規約
+                    </a>
+                  </div>
+                </>
+              )}
+            </div>
             {/* 検索: デスクトップは⌘Kヒント付きピル、モバイルはアイコン */}
             <button onClick={() => setSearchOpen(true)} title="記事を検索 (⌘K)"
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 text-xs transition-colors">
