@@ -784,7 +784,7 @@ export function PublicApp() {
       <SearchPalette
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
-        onSelect={(id) => openArticle(id)}
+        onSelect={(id) => { setSearchOpen(false); openArticle(id); }}
       />
       <ProfileModal
         open={profileOpen}
@@ -794,7 +794,7 @@ export function PublicApp() {
       <SavedItemsModal
         open={savedOpen}
         onClose={() => setSavedOpen(false)}
-        onOpenArticle={openArticle}
+        onOpenArticle={(id) => { setSavedOpen(false); openArticle(id); }}
         onToggleReadLater={handleToggleReadLater}
         onToggleFavorite={handleToggleFavorite}
       />
