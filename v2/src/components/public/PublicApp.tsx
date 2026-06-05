@@ -2,16 +2,17 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
   getCoreData, getCollectedDataList, getReportById, getKnowledgeStats,
   getRecommendations, getMyReadLater, getReadingProfile,
-  toggleFavorite, toggleReadLater, markAsRead,
+  toggleFavorite, toggleReadLater,
   getMyProfile, subscribeEmailDigest,
 } from '@/app/actions';
-import { ArticleDetailModal } from '@/components/ArticleDetailModal';
 import { EntityPageModal } from '@/components/EntityPageModal';
 import { ReportModal } from '@/components/public/ReportModal';
 import { SearchPalette } from '@/components/public/SearchPalette';
@@ -63,15 +64,15 @@ function reportLead(content: string, max = 200): string {
 }
 
 // 公開トップで使うエディトリアル型の記事カード（lead=雑誌一面 / featured=見どころ / 通常=フィード）
-function PubCard({ item, onOpen, featured = false, lead = false }: {
-  item: CollectedItem; onOpen: (id: number) => void; featured?: boolean; lead?: boolean;
+function PubCard({ item, featured = false, lead = false }: {
+  item: CollectedItem; featured?: boolean; lead?: boolean;
 }) {
   const color = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
   const title = item.titleJa || item.title || '無題';
   const outlets = item.storyOutlets ?? [];
   const multi = (item.storyCount ?? 1) > 1 && outlets.length > 0;
   return (
-    <article onClick={() => onOpen(item.id)}
+    <Link href={`/articles/${item.id}`}
       className={`group cursor-pointer rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 transition-all duration-200 flex flex-col gap-2.5 ${lead ? 'p-6 sm:p-7' : 'p-5'}`}>
       <div className="flex items-center gap-2 flex-wrap">
         {lead && (
@@ -102,12 +103,13 @@ function PubCard({ item, onOpen, featured = false, lead = false }: {
         {item.tags?.slice(0, 3).map(t => <span key={t}>#{t}</span>)}
         {item.sourceValue && <span className="ml-auto truncate max-w-[50%]" style={{ color: `${color}90` }}>{item.sourceValue}</span>}
       </div>
-    </article>
+    </Link>
   );
 }
 
 export function PublicApp() {
   const { toast } = useToast();
+  const router = useRouter();
   const { data: session, status } = useSession();
   const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
 
@@ -124,7 +126,6 @@ export function PublicApp() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const [detailArticleId, setDetailArticleId] = useState<number | null>(null);
   const [detailEntityName, setDetailEntityName] = useState<string | null>(null);
   const [openReport, setOpenReport] = useState<Report | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -145,8 +146,7 @@ export function PublicApp() {
     window.history.replaceState({}, '', url.pathname + url.search);
   };
 
-  const openArticle = (id: number) => { setDetailArticleId(id); updateUrl(id, null); };
-  const closeArticle = () => { setDetailArticleId(null); updateUrl(null, null); };
+  const openArticle = (id: number) => router.push(`/articles/${id}`);
   const openReportObj = (r: Report) => { setOpenReport(r); updateUrl(null, r.id); };
   const closeReport = () => { setOpenReport(null); updateUrl(null, null); };
 
@@ -154,14 +154,10 @@ export function PublicApp() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const sp = new URLSearchParams(window.location.search);
-    const aid = Number(sp.get('article'));
     const rid = Number(sp.get('report'));
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (Number.isFinite(aid) && aid > 0) setDetailArticleId(aid);
     if (Number.isFinite(rid) && rid > 0) {
       getReportById(rid).then(r => { if (r) setOpenReport(r); }).catch(() => {});
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // パーソナライズの再取得（プロフィール保存後など）
@@ -179,7 +175,6 @@ export function PublicApp() {
     if (sessionUserId) { setWelcomeOpen(false); return; }
     try {
       if (typeof window === 'undefined') return;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (!localStorage.getItem('welcome_v1_dismissed')) setWelcomeOpen(true);
     } catch {}
   }, [sessionUserId]);
@@ -228,7 +223,7 @@ export function PublicApp() {
 
   // モーダル表示中は背面(body/html)のスクロールを止める（スマホで背面がスクロールする問題の対策）
   const anyOverlayOpen =
-    detailArticleId != null || openReport != null || searchOpen ||
+    openReport != null || searchOpen ||
     profileOpen || savedOpen || detailEntityName != null;
   useEffect(() => {
     if (!anyOverlayOpen) return;
@@ -335,18 +330,6 @@ export function PublicApp() {
       rollback();
     }
   };
-  const handleMarkAsRead = async (id: number, current: boolean) => {
-    if (status === 'loading') return;
-    if (!sessionUserId) return; // 未ログインは静かに無視（閲覧は自由）
-    setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 0 : 1 } : i));
-    try {
-      const r = await markAsRead(id, current);
-      if (!r?.success) setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 1 : 0 } : i));
-    } catch {
-      setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isRead: current ? 1 : 0 } : i));
-    }
-  };
-
   const feedbackAvailable = !!FEEDBACK_FORM_ACTION || !!CONTACT_EMAIL;
   const heroReport = reportsList.find(r => r.type === 'daily') ?? reportsList[0] ?? null;
   const weeklyReport = reportsList.find(r => r.type === 'weekly') ?? null;
@@ -642,7 +625,7 @@ export function PublicApp() {
                     <p className="text-[11px] text-slate-500 mb-2">あなたの読み方に近いおすすめ</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {recommendations.slice(0, 4).map(item => (
-                        <PubCard key={item.id} item={item} onOpen={openArticle} />
+                        <PubCard key={item.id} item={item} />
                       ))}
                     </div>
                   </div>
@@ -707,11 +690,11 @@ export function PublicApp() {
               <h2 className="text-sm font-bold font-outfit">今日の見どころ</h2>
             </div>
             <div className="space-y-4">
-              <PubCard item={featured[0]} onOpen={openArticle} lead />
+              <PubCard item={featured[0]} lead />
               {featured.length > 1 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {featured.slice(1).map(item => (
-                    <PubCard key={item.id} item={item} onOpen={openArticle} featured />
+                    <PubCard key={item.id} item={item} featured />
                   ))}
                 </div>
               )}
@@ -732,7 +715,7 @@ export function PublicApp() {
             <>
               <div className="grid grid-cols-1 gap-3">
                 {feed.map(item => (
-                  <PubCard key={item.id} item={item} onOpen={openArticle} />
+                  <PubCard key={item.id} item={item} />
                 ))}
               </div>
               {hasMore && (
@@ -787,13 +770,6 @@ export function PublicApp() {
       </main>
 
       {/* ── モーダル ── */}
-      <ArticleDetailModal
-        articleId={detailArticleId}
-        onClose={closeArticle}
-        onToggleFavorite={handleToggleFavorite}
-        onToggleReadLater={handleToggleReadLater}
-        onMarkAsRead={handleMarkAsRead}
-      />
       <EntityPageModal
         entityName={detailEntityName}
         onClose={() => setDetailEntityName(null)}
