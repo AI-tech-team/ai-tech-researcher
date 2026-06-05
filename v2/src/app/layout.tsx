@@ -28,12 +28,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   return (
     <html lang="ja" className={`${inter.variable} ${outfit.variable} h-full antialiased`}>
       <body className="min-h-full">
         <Providers>
-          <ToastProvider>{children}</ToastProvider>
+          <ToastProvider>
+            {children}
+            {modal}
+          </ToastProvider>
         </Providers>
         {/* Cookieレス・匿名のアクセス解析（PIIを集めない方針と両立）。Vercel側でWeb Analytics有効化が必要 */}
         <Analytics />
