@@ -1224,6 +1224,30 @@ function canonicalBenchmarkName(name: string): string {
   return t;
 }
 
+// %系ベンチ（accuracy/pass率）。canonicalBenchmarkName の出力名で判定する。
+const PERCENT_BENCHMARKS = new Set([
+  'MMLU', 'MMLU-Pro', 'GSM8K', 'SWE-bench', 'HumanEval', 'MMMU', 'GPQA', 'AIME', 'ARC-AGI', 'LiveCodeBench', 'MATH',
+]);
+// ベンチ数値の正規化(D): スケール統一(0.872→87.2)＋物理的にありえない値を弾く。
+// 不明なベンチ(正規化名になく unit も不明)は触らない＝保守的。戻り値 null は「異常値→不採用」。
+function normalizeBenchmarkScore(canonName: string, score: number, unit: string | null): number | null {
+  if (!Number.isFinite(score)) return null;
+  const u = (unit ?? '').toLowerCase();
+  // Elo系(Chatbot Arena等)は 0-100 化してはいけない。妥当範囲 500-5000。
+  if (/elo|arena/i.test(canonName) || u === 'elo') {
+    return score >= 500 && score <= 5000 ? score : null;
+  }
+  // %系: 既知の%ベンチ、または unit が %。0-1 スケールは ×100 に統一し、0-100 外は異常。
+  if (PERCENT_BENCHMARKS.has(canonName) || u === '%' || u === 'percent' || u === 'pct') {
+    let s = score;
+    if (s > 0 && s <= 1) s = s * 100;
+    if (s < 0 || s > 100) return null;
+    return Math.round(s * 10) / 10;
+  }
+  // 不明: スケール変換せず、負値だけ弾く。
+  return score >= 0 ? score : null;
+}
+
 // ── v3: エンティティ正規化（GPT-4o / GPT4o / gpt-4 omni → 同一ノード）─────
 let _entityCache: Map<string, { id: number; canonicalName: string }> = new Map();
 
@@ -1353,12 +1377,15 @@ async function ingestKnowledge(
     if (!Number.isFinite(b.score)) continue;
     if (!isValidBenchmarkName(b.benchmark)) continue;       // ハードスペック/価格等を除外
     if (!looksLikeEntity(b.entity)) continue;               // エンティティが文の断片なら除外
+    const canon = canonicalBenchmarkName(b.benchmark);      // 表記ゆれを正規化
+    const normScore = normalizeBenchmarkScore(canon, b.score, b.unit ?? null); // スケール統一＋範囲ガード(D)
+    if (normScore == null) continue;                        // 異常値(範囲外/負)は採用しない
     const entity = await resolveEntity(b.entity);
     await db.insert(schema.benchmarks).values({
       entityId: entity?.id ?? null,
       entityName: entity?.canonicalName ?? b.entity.trim(),
-      benchmarkName: canonicalBenchmarkName(b.benchmark),  // 表記ゆれを正規化
-      score: b.score,
+      benchmarkName: canon,
+      score: normScore,
       unit: b.unit ?? null,
       articleId: article.id,
       sourceUrl: article.url,
@@ -2836,7 +2863,7 @@ async function runDeepExtraction(maxArticles = 25): Promise<void> {
     .from(schema.collectedData)
     .where(and(
       gte(schema.collectedData.createdAt, sevenDaysAgo),
-      gte(schema.collectedData.importanceScore, 8),
+      gte(schema.collectedData.importanceScore, 7), // 知識抽出(runKnowledgeExtraction)と同じ閾値に揃える(E)。importance7も本文ベース抽出に
       isNull(schema.collectedData.rawContent),
     ))
     .orderBy(desc(schema.collectedData.importanceScore))
@@ -2896,25 +2923,36 @@ async function runDataCleanup(): Promise<void> {
     if (chunk.length) { await db.delete(schema.relations).where(inArray(schema.relations.id, chunk)); relDel += chunk.length; }
   }
 
-  // 2. ベンチマーク: 無効（スペック等）を削除し、残りの名称を正規化
-  const benches = await db.select({ id: schema.benchmarks.id, name: schema.benchmarks.benchmarkName })
-    .from(schema.benchmarks);
+  // 2. ベンチマーク: 無効（スペック等）を削除し、残りの名称を正規化＋スコアを正規化(D・遡及)
+  const benches = await db.select({
+    id: schema.benchmarks.id, name: schema.benchmarks.benchmarkName,
+    score: schema.benchmarks.score, unit: schema.benchmarks.unit,
+  }).from(schema.benchmarks);
   const badBench = benches.filter(b => !isValidBenchmarkName(b.name)).map(b => b.id);
   let benchDel = 0;
   for (let i = 0; i < badBench.length; i += 100) {
     const chunk = badBench.slice(i, i + 100);
     if (chunk.length) { await db.delete(schema.benchmarks).where(inArray(schema.benchmarks.id, chunk)); benchDel += chunk.length; }
   }
-  let benchNorm = 0;
+  let benchNorm = 0, scoreNorm = 0, scoreDel = 0;
   for (const b of benches) {
     if (!isValidBenchmarkName(b.name)) continue;
     const canon = canonicalBenchmarkName(b.name);
-    if (canon !== b.name) {
-      await db.update(schema.benchmarks).set({ benchmarkName: canon }).where(eq(schema.benchmarks.id, b.id));
-      benchNorm++;
+    // スコア正規化(D): 再抽出せず既存行を直接補正。異常値は削除。
+    const norm = normalizeBenchmarkScore(canon, b.score, b.unit ?? null);
+    if (norm == null) {
+      await db.delete(schema.benchmarks).where(eq(schema.benchmarks.id, b.id));
+      scoreDel++;
+      continue;
+    }
+    const patch: { benchmarkName?: string; score?: number } = {};
+    if (canon !== b.name) { patch.benchmarkName = canon; benchNorm++; }
+    if (Math.abs(norm - b.score) > 1e-9) { patch.score = norm; scoreNorm++; }
+    if (Object.keys(patch).length) {
+      await db.update(schema.benchmarks).set(patch).where(eq(schema.benchmarks.id, b.id));
     }
   }
-  console.log(`[Cleanup] 関係削除${relDel}, ベンチ削除${benchDel}, ベンチ名正規化${benchNorm}`);
+  console.log(`[Cleanup] 関係削除${relDel}, ベンチ削除${benchDel}, ベンチ名正規化${benchNorm}, スコア正規化${scoreNorm}, スコア異常削除${scoreDel}`);
 }
 
 // ── 確信度スペクトル: 日次 decay + stale 移行 + カスケード研究問い生成 ──────────
