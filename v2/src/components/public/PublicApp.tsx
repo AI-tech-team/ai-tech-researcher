@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -403,6 +403,10 @@ export function PublicApp() {
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <ScrollText size={14} className="text-slate-400" /> 利用規約
                     </a>
+                    <a href="/changelog"
+                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
+                      <History size={14} className="text-slate-400" /> 更新履歴
+                    </a>
                   </div>
                 </>
               )}
@@ -769,6 +773,8 @@ export function PublicApp() {
             <a href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</a>
             <span className="text-slate-700">·</span>
             <a href="/terms" className="hover:text-slate-300 transition-colors">利用規約</a>
+            <span className="text-slate-700">·</span>
+            <a href="/changelog" className="hover:text-slate-300 transition-colors">更新履歴</a>
             {feedbackAvailable && (
               <>
                 <span className="text-slate-700">·</span>
