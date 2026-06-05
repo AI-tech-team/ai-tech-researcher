@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { BrainCircuit, ArrowLeft } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
-import { CHANGELOG, LAUNCH_DATE, type ChangeCategory } from '@/lib/changelog';
+import { CHANGELOG, LAUNCH_DATE, RELEASE_STAGE, type ChangeCategory } from '@/lib/changelog';
 
 export const metadata: Metadata = {
   title: '更新履歴',
@@ -35,9 +35,15 @@ export default function ChangelogPage() {
       </header>
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
-        <h1 className="text-2xl font-bold text-white font-outfit">更新履歴</h1>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <h1 className="text-2xl font-bold text-white font-outfit">更新履歴</h1>
+          <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full border border-amber-500/30 text-amber-300 bg-amber-500/10">
+            {RELEASE_STAGE}
+          </span>
+        </div>
         <p className="text-sm text-slate-400 leading-relaxed mt-3">
-          {SITE_NAME} は毎日「育つ」サービスです。始動（{LAUNCH_DATE}）からの歩みと、主なアップデートをお知らせします。
+          {SITE_NAME} は現在{RELEASE_STAGE}として公開中です。機能は日々改善しており、表示や仕様が変わることがあります。
+          始動（{LAUNCH_DATE}）からの歩みと、主なアップデートをお知らせします。
         </p>
 
         <div className="mt-10 space-y-12">
@@ -65,6 +71,9 @@ export default function ChangelogPage() {
                       </span>
                     </div>
                     <p className="text-sm text-slate-300 leading-relaxed mt-1">{e.title}</p>
+                    {e.detail && (
+                      <p className="text-[13px] text-slate-500 leading-relaxed mt-1">{e.detail}</p>
+                    )}
                   </li>
                 ))}
               </ol>
