@@ -1,7 +1,7 @@
 'use server';
 
 import { db, client } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState, userProfiles, users } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, pipelineLogs, claims, userTopicWeights, benchmarks, relations, entities, alerts, readingEvents, userArticleState, userProfiles, users, chatMemory } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, lt, sql, like, or, isNotNull, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
@@ -649,9 +649,9 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
         const now = new Date().toISOString();
         for (const kw of kws) {
           await db.insert(userTopicWeights)
-            .values({ keyword: kw, weight: 0.3, updatedAt: now })
+            .values({ userId, keyword: kw, weight: 0.3, updatedAt: now })
             .onConflictDoUpdate({
-              target: userTopicWeights.keyword,
+              target: [userTopicWeights.userId, userTopicWeights.keyword],
               set: { weight: sql`${userTopicWeights.weight} + 0.3`, updatedAt: now },
             });
         }
@@ -728,9 +728,9 @@ export async function markAsRead(id: number, currentIsRead: boolean) {
       const now = new Date().toISOString();
       for (const kw of kws) {
         await db.insert(userTopicWeights)
-          .values({ keyword: kw, weight: 0.1, updatedAt: now })
+          .values({ userId, keyword: kw, weight: 0.1, updatedAt: now })
           .onConflictDoUpdate({
-            target: userTopicWeights.keyword,
+            target: [userTopicWeights.userId, userTopicWeights.keyword],
             set: { weight: sql`${userTopicWeights.weight} + 0.1`, updatedAt: now },
           });
       }
@@ -796,11 +796,12 @@ export async function getConflictingClaims(): Promise<ConflictingClaim[]> {
 }
 
 export async function getUserTopicWeights(): Promise<UserTopicWeight[]> {
-  // 上位トピック(キーワード)を露出するためオーナー限定（公開UIは未使用）
-  if (!(await isOwner())) return [];
+  const userId = await currentUserId();
+  if (!userId) return [];
   try {
     const rows = await db.select({ keyword: userTopicWeights.keyword, weight: userTopicWeights.weight })
       .from(userTopicWeights)
+      .where(eq(userTopicWeights.userId, userId))
       .orderBy(desc(userTopicWeights.weight))
       .limit(10);
     return rows.map(r => ({ keyword: r.keyword, weight: r.weight ?? 0 }));
@@ -1140,6 +1141,28 @@ export async function subscribeEmailDigest() {
   } catch (error) {
     console.error('subscribeEmailDigest failed:', error);
     return { success: false };
+  }
+}
+
+// v6: 退会（アカウントとユーザー個人データの削除）。個情法/GDPRの消去対応。
+// 共有コーパス(記事/知識グラフ)は残し、ユーザーに紐づく個人データのみ削除する。
+// セッションはJWTのため、削除後はクライアント側で signOut() すること。
+export async function deleteMyAccount(): Promise<{ success: boolean; needLogin?: boolean; message?: string }> {
+  try {
+    const userId = await currentUserId();
+    if (!userId) return { success: false, needLogin: true };
+    if (!memRateLimit('account', userId, 5, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
+    // 依存テーブル → users の順で、このユーザーの個人データを全削除する。
+    await db.delete(chatMemory).where(eq(chatMemory.userId, userId));
+    await db.delete(userArticleState).where(eq(userArticleState.userId, userId));
+    await db.delete(readingEvents).where(eq(readingEvents.userId, userId));
+    await db.delete(userTopicWeights).where(eq(userTopicWeights.userId, userId));
+    await db.delete(userProfiles).where(eq(userProfiles.userId, userId));
+    await db.delete(users).where(eq(users.id, userId));
+    return { success: true };
+  } catch (error) {
+    console.error('deleteMyAccount failed:', error);
+    return { success: false, message: '退会処理に失敗しました。時間をおいて再試行するか、お問い合わせください。' };
   }
 }
 

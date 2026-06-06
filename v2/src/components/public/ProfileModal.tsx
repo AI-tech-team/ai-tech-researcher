@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { X, Save } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getMyProfile, updateMyProfile } from '@/app/actions';
+import { signOut } from 'next-auth/react';
+import { getMyProfile, updateMyProfile, deleteMyAccount } from '@/app/actions';
 import { useToast } from '@/components/Toast';
 
 // 興味のプリセット（初心者向け：タップで追加でき、押すと大まかな説明が出る）
@@ -44,6 +45,7 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
   const [interests, setInterests] = useState('');
   const [goals, setGoals] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [hint, setHint] = useState('');
 
   // 開いたら最新のプロフィールを取得（setStateは全て.then内＝非同期、lintクリーン）
@@ -91,6 +93,32 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
       toast('保存に失敗しました', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // 退会（アカウントと個人データの削除）。確認 → 削除 → サインアウト。
+  const handleDelete = async () => {
+    if (deleting) return;
+    const ok = window.confirm(
+      '退会すると、あなたの個人データ（アカウント情報・お気に入り・後で読む・既読・興味/目標・チャット履歴）をサーバーから削除します。\nこの操作は取り消せません。続けますか？',
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      const r = await deleteMyAccount();
+      if (r.success) {
+        toast('退会しました。ご利用ありがとうございました。', 'success');
+        await signOut({ callbackUrl: '/' });
+      } else if (r.needLogin) {
+        toast('ログインが必要です', 'error');
+        setDeleting(false);
+      } else {
+        toast(r.message ?? '退会に失敗しました', 'error');
+        setDeleting(false);
+      }
+    } catch {
+      toast('退会に失敗しました', 'error');
+      setDeleting(false);
     }
   };
 
@@ -191,6 +219,18 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity disabled:opacity-50">
                   <Save size={14} className={saving ? 'animate-spin' : ''} />
                   {saving ? '保存中…' : '保存'}
+                </button>
+              </div>
+
+              {/* 退会（アカウントと個人データの削除）。個情法/GDPRの消去対応のセルフサービス導線。 */}
+              <div className="border-t border-white/5 pt-4">
+                <p className="text-[11px] font-bold text-rose-400/80 uppercase tracking-wider mb-1">アカウントの削除</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                  退会すると、アカウント情報・お気に入り・後で読む・既読・興味/目標・チャット履歴などの個人データをサーバーから削除します。共有の記事データは残ります。この操作は取り消せません。
+                </p>
+                <button onClick={handleDelete} disabled={deleting}
+                  className="text-xs font-bold text-rose-300 border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50">
+                  {deleting ? '退会処理中…' : '退会してデータを削除'}
                 </button>
               </div>
             </div>
