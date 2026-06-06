@@ -1134,13 +1134,13 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
       const items = ranked.map(a => `
         <div style="margin:0 0 12px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;">
           <div style="font-size:11px;color:#64748b;">${escapeHtml(a.category ?? '')} ・ ★${Number(a.imp ?? 0)}</div>
-          <a href="${safeMailHref(a.url)}" style="font-size:15px;font-weight:600;color:#0f172a;text-decoration:none;">${escapeHtml(a.titleJa || a.title || '無題')}</a>
+          <a href="${siteUrl}/articles/${a.id}" style="font-size:15px;font-weight:600;color:#0f172a;text-decoration:none;">${escapeHtml(a.titleJa || a.title || '無題')}</a>
           <div style="font-size:12px;color:#475569;margin-top:4px;line-height:1.55;">${escapeHtml(a.summary ?? '')}</div>
         </div>`).join('');
-      // ✨ あなたへのおすすめ（パーソナライズ・各タイトルが元記事リンク）
+      // ✨ あなたへのおすすめ（パーソナライズ・各タイトルはサイトの記事ページへ）
       const recsBlock = ranked.length > 0 ? `
         <h2 style="color:#0ea5e9;font-size:16px;margin:24px 0 4px;">✨ あなたへのおすすめ記事</h2>
-        <p style="font-size:13px;color:#64748b;margin:0 0 10px;">あなたの興味に近い新着 ${ranked.length}件です。タイトルを押すと記事が開きます。</p>
+        <p style="font-size:13px;color:#64748b;margin:0 0 10px;">あなたの興味に近い新着 ${ranked.length}件です。タイトルを押すとサイトで記事を開けます。</p>
         ${items}` : '';
       const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;margin:0 auto;color:#0f172a;padding:8px 4px;">
         <h1 style="font-size:20px;margin:0 0 2px;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日のダイジェスト</h1>
