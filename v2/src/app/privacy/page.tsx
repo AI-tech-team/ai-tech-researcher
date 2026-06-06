@@ -32,7 +32,7 @@ export default function PrivacyPage() {
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
         <h1 className="text-2xl font-bold text-white font-outfit">プライバシーポリシー</h1>
-        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年6月6日</p>
+        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年6月7日</p>
 
         <p className="text-sm text-slate-300 leading-relaxed mt-6">
           {SITE_NAME}（以下「本サービス」）における、利用者の情報の取り扱いについて定めます。
@@ -80,6 +80,13 @@ export default function PrivacyPage() {
           本サービスの運営に必要な範囲で外部サービス（ホスティング・データベース等）を利用する場合は、信頼できる事業者を選定し、適切に取り扱います。
         </p>
 
+        <H>データの保管と国外移転</H>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          本サービスは、ホスティング・データベース・ログイン認証に外部のクラウドサービス（Vercel・Turso・Google等）を利用しており、
+          これらのサーバーは日本国外（米国等）に置かれる場合があります。これらの事業者には必要最小限の範囲で取り扱いを委託し、
+          適切な保護措置のもとで管理します。
+        </p>
+
         <H>データの削除・退会</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           ログイン後、画面右上の「プロフィール」から、いつでも<span className="text-slate-200 font-bold">退会（アカウントと個人データの削除）</span>ができます。
@@ -89,7 +96,7 @@ export default function PrivacyPage() {
           あわせて、Googleアカウントとの連携解除は
           <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer"
             className="text-sky-400 hover:text-sky-300 underline underline-offset-2"> Googleアカウントのアクセス管理</a>
-          からも行えます。その他、削除に関するご要望は{CONTACT_EMAIL ? '下記の窓口' : '運営者'}までご連絡ください。
+          からも行えます。その他、保有する個人データの開示・訂正・利用停止・削除をご希望の場合は、{CONTACT_EMAIL ? '下記の窓口' : '運営者'}までご連絡ください。本人確認のうえ、法令に従って速やかに対応します。
         </p>
 
         <H>お問い合わせ</H>

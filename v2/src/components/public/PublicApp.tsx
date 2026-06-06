@@ -38,6 +38,16 @@ const CATEGORY_DESC: Record<string, string> = {
 
 const PAGE = 30;
 
+// ページ遷移(記事/規約/プライバシー等)→戻る でPublicAppが再マウントされても、直前の一覧を即座に
+// 復元してローディングのちらつき(=再読み込み感)を防ぐ、モジュールレベルの簡易スナップショット。
+// 同一ブラウザ内のみ・短時間TTL。ログイン/ログアウトはOAuthのフルリロードで自然にクリアされる。
+type PubSnapshot = {
+  items: CollectedItem[]; reports: Report[]; total: number | null;
+  offset: number; hasMore: boolean; stats: KnowledgeStats | null; at: number;
+};
+let pubSnapshot: PubSnapshot | null = null;
+const SNAP_TTL = 5 * 60_000;
+
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return '';
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -112,17 +122,18 @@ export function PublicApp() {
   const { data: session, status } = useSession();
   const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
 
-  const [collectedItems, setCollectedItems] = useState<CollectedItem[]>([]);
-  const [reportsList, setReportsList] = useState<Report[]>([]);
-  const [stats, setStats] = useState<KnowledgeStats | null>(null);
-  const [totalArticles, setTotalArticles] = useState<number | null>(null);
+  // 初期値はスナップショットから復元（あれば即表示・スケルトンを出さない＝戻る時のちらつき防止）
+  const [collectedItems, setCollectedItems] = useState<CollectedItem[]>(() => pubSnapshot?.items ?? []);
+  const [reportsList, setReportsList] = useState<Report[]>(() => pubSnapshot?.reports ?? []);
+  const [stats, setStats] = useState<KnowledgeStats | null>(() => pubSnapshot?.stats ?? null);
+  const [totalArticles, setTotalArticles] = useState<number | null>(() => pubSnapshot?.total ?? null);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [recommendations, setRecommendations] = useState<CollectedItem[]>([]);
   const [readLater, setReadLater] = useState<CollectedItem[]>([]);
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [offset, setOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !pubSnapshot);
+  const [offset, setOffset] = useState(() => pubSnapshot?.offset ?? 0);
+  const [hasMore, setHasMore] = useState(() => pubSnapshot?.hasMore ?? true);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [detailEntityName, setDetailEntityName] = useState<string | null>(null);
@@ -215,9 +226,12 @@ export function PublicApp() {
   }, [anyOverlayOpen]);
 
   useEffect(() => {
+    // スナップショットが新しければ再取得しない（戻る操作を即時化＝再読み込み感をなくす）。
+    // 初回／TTL切れ時のみ取得する。
+    if (pubSnapshot && Date.now() - pubSnapshot.at < SNAP_TTL) return;
     let cancelled = false;
     (async () => {
-      setIsLoading(true);
+      if (!pubSnapshot) setIsLoading(true); // 初回のみスケルトン。復元時はちらつかせない
       const statsPromise = getKnowledgeStats();
       const { data, reportsData, counts } = await getCoreData(PAGE);
       if (cancelled) return;
@@ -232,6 +246,12 @@ export function PublicApp() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // 表示状態をスナップショットへ同期（loadMoreで増えた件数・お気に入り等のトグルも、戻った時に復元する）。
+  useEffect(() => {
+    if (isLoading) return;
+    pubSnapshot = { items: collectedItems, reports: reportsList, total: totalArticles, offset, hasMore, stats, at: Date.now() };
+  }, [collectedItems, reportsList, totalArticles, offset, hasMore, stats, isLoading]);
 
   // ログインユーザー向けパーソナライズ（行動ベース推薦・後で読む・読書DNA）。
   // 未ログインでは何も出さない。手動の興味設定に依存しない getRecommendations を使う。
