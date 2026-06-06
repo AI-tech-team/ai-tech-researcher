@@ -117,12 +117,15 @@ function extractKeywords(title: string | null, category: string | null): string[
 
 // ─── データ取得 ───────────────────────────────────────────────────
 
+// 公開してよいレポート種別は daily/weekly/monthly のみ（ホワイトリスト/fail-closed）。
+// briefing/learning_recap/cross_insight/corpus_health 等の内部レポートは新種別が増えても既定で非公開。
+// （"use server" ファイルは async 関数しか export できないため定数化はせずクエリ内に直書きする）
 export async function getReportsData() {
   try {
-    // briefing/learning_recap/cross_insightはメール/インサイト専用なので調査レポート一覧からは除外。
+    // 公開対象(daily/weekly/monthly)のみ。内部レポートはホワイトリストから外れるので自動的に除外。
     // 全ユーザー共通かつ更新頻度が低いのでインスタンス内60秒キャッシュ（毎アクセスのTurso読みを削減）。
     return await cached('reportsData', 60_000, () => db.select().from(reports)
-      .where(sql`${reports.type} NOT IN ('briefing', 'learning_recap', 'cross_insight')`)
+      .where(sql`${reports.type} IN ('daily', 'weekly', 'monthly')`)
       .orderBy(desc(reports.createdAt)));
   } catch (error) {
     console.error("Failed to fetch reports:", error);
@@ -1527,15 +1530,16 @@ export async function searchArticles(query: string): Promise<CollectedItem[]> {
 }
 
 // 公開UIのディープリンク向け: レポートをIDで単体取得。
-// 内部限定(briefing/learning_recap/cross_insight)は公開ディープリンク/OGメタから除外する
-// （getReportsDataと同じ除外。Server Actionは直接POST可能なため、ここでtype制限しないとID総当たりで露出する）。
+// 公開種別(daily/weekly/monthly)のホワイトリストに限定する。
+// （getReportsDataと同じホワイトリスト。Server Actionは直接POST可能なため、ここで種別を絞らないと
+//   corpus_health等の内部レポートがID総当たりで露出する＝過去に corpus_health が漏れていた。）
 export async function getReportById(id: number): Promise<Report | null> {
   try {
     if (!Number.isFinite(id)) return null;
     const [r] = await db.select().from(reports)
       .where(and(
         eq(reports.id, id),
-        sql`${reports.type} NOT IN ('briefing', 'learning_recap', 'cross_insight')`,
+        sql`${reports.type} IN ('daily', 'weekly', 'monthly')`,
       ))
       .limit(1);
     return (r as Report) ?? null;
@@ -1737,9 +1741,12 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
 
     // 鮮度フィルタ: 直近30日の記事のみを候補に。
     // （重心が過去履歴で固定のため、新しさを考慮しないと履歴に似た“昔の記事”ばかり出て更新されなくなる問題への対策）
+    // top_kは800と広めに取る（重心が古い話題を指す場合でも、直近30日の候補が痩せて毎回ほぼ同じ8件に
+    //   固定されるのを防ぐ＝鮮度フィルタ後のプールを十分確保する）。created_atも取得し再ランクに使う。
     const recentCutoff = sqlTs(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
     const nn = await client.execute({
-      sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), 300) AS v
+      sql: `SELECT cd.id AS id, cd.created_at AS created_at
+            FROM vector_top_k('collected_embedding_idx', vector32(?), 800) AS v
             JOIN collected_data cd ON cd.rowid = v.id
             LEFT JOIN user_article_state uas ON uas.article_id = cd.id AND uas.user_id = ?
             WHERE COALESCE(uas.is_read, 0) = 0 AND COALESCE(uas.is_favorited, 0) = 0
@@ -1747,7 +1754,21 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
       args: [JSON.stringify(centroid), userId, recentCutoff],
     });
     const engagedSet = new Set(engagedIds);
-    const recIds = nn.rows.map(r => Number(r.id)).filter(id => !engagedSet.has(id)).slice(0, 8);
+    // 候補（意味的近さ順）。エンゲージ済みは除外
+    const cands = nn.rows
+      .map((r, i) => ({ id: Number(r.id), semRank: i, createdAt: String(r.created_at ?? '') }))
+      .filter(c => !engagedSet.has(c.id));
+    if (cands.length === 0) return [];
+    // 新しさ順位（created_at降順＝新しいほど0に近い）
+    const byRecency = [...cands].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const recRank = new Map(byRecency.map((c, i) => [c.id, i]));
+    // 意味的近さ7 : 新しさ3 でブレンド再ランク（小さいほど上位）。
+    // 意味の主役は保ちつつ、新着の関連記事を押し上げて“あなた向け”が日々回転するようにする。
+    const recIds = [...cands]
+      .sort((a, b) => (0.7 * a.semRank + 0.3 * (recRank.get(a.id) ?? 999))
+                    - (0.7 * b.semRank + 0.3 * (recRank.get(b.id) ?? 999)))
+      .slice(0, 8)
+      .map(c => c.id);
     if (recIds.length === 0) return [];
 
     const rows = await db.select(COLLECTED_SELECT)
