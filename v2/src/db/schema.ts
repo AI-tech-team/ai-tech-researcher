@@ -122,10 +122,11 @@ export const relations = sqliteTable("relations", {
 
 export const userTopicWeights = sqliteTable("user_topic_weights", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  keyword: text("keyword").notNull().unique(),
+  userId: integer("user_id").notNull(),
+  keyword: text("keyword").notNull(),
   weight: real("weight").default(0),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
-});
+}, (t) => [unique().on(t.userId, t.keyword)]);
 
 // v3: 夜間自律リサーチが自動生成した「問い」とその調査結果
 export const researchQuestions = sqliteTable("research_questions", {
