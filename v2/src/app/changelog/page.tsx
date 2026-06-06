@@ -46,40 +46,47 @@ export default function ChangelogPage() {
           始動（{LAUNCH_DATE}）からの歩みと、主なアップデートをお知らせします。
         </p>
 
-        <div className="mt-10 space-y-12">
-          {CHANGELOG.map((m) => (
-            <section key={m.era}>
-              {/* マイルストーン（世代）見出し */}
-              <div className="flex items-baseline gap-2.5 flex-wrap">
-                <h2 className="text-lg font-bold text-white font-outfit">{m.name}</h2>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-sky-500/25 text-sky-300/90 bg-sky-500/[0.06]">
-                  {m.era}
+        {/* タイムライン（左に縦線、各更新にバージョン番号付き） */}
+        <ol className="mt-10 border-l border-white/10 pl-6 space-y-7">
+          {CHANGELOG.map((e) => (
+            <li key={e.version} className="relative">
+              {/* ドット（節目は大きく光らせる） */}
+              <span
+                className={
+                  e.milestone
+                    ? 'absolute -left-[30px] top-1 w-3 h-3 rounded-full bg-sky-400 ring-4 ring-[#03060f] shadow-[0_0_10px_2px_rgba(56,189,248,0.5)]'
+                    : 'absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-slate-600 ring-4 ring-[#03060f]'
+                }
+              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className={
+                    e.milestone
+                      ? 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-sky-500/40 text-sky-200 bg-sky-500/15'
+                      : 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-white/10 text-slate-300 bg-white/[0.04]'
+                  }
+                >
+                  {e.version}
                 </span>
-                <span className="text-[11px] font-mono text-slate-600">{m.period}</span>
+                {e.stage && (
+                  <span className="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-full border border-amber-500/30 text-amber-300 bg-amber-500/10">
+                    {e.stage}
+                  </span>
+                )}
+                <time className="text-[11px] font-mono text-slate-500">{e.date}</time>
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${CATEGORY_STYLE[e.category]}`}>
+                  {e.category}
+                </span>
               </div>
-              <p className="text-[13px] text-slate-500 leading-relaxed mt-1.5">{m.note}</p>
-
-              {/* タイムライン（左に縦線、各エントリにドット） */}
-              <ol className="mt-5 border-l border-white/10 pl-5 space-y-4">
-                {m.entries.map((e, i) => (
-                  <li key={i} className="relative">
-                    <span className="absolute -left-[23px] top-1.5 w-2 h-2 rounded-full bg-slate-600 ring-4 ring-[#03060f]" />
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <time className="text-[11px] font-mono text-slate-500">{e.date}</time>
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${CATEGORY_STYLE[e.category]}`}>
-                        {e.category}
-                      </span>
-                    </div>
-                    <p className="text-sm text-slate-300 leading-relaxed mt-1">{e.title}</p>
-                    {e.detail && (
-                      <p className="text-[13px] text-slate-500 leading-relaxed mt-1">{e.detail}</p>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </section>
+              <p className={`leading-relaxed mt-1.5 ${e.milestone ? 'text-[15px] font-semibold text-white' : 'text-sm text-slate-300'}`}>
+                {e.title}
+              </p>
+              {e.detail && (
+                <p className="text-[13px] text-slate-500 leading-relaxed mt-1">{e.detail}</p>
+              )}
+            </li>
           ))}
-        </div>
+        </ol>
 
         <footer className="mt-14 pt-6 border-t border-white/5 flex items-center justify-between">
           <div className="flex items-center gap-3 text-xs text-slate-400">
