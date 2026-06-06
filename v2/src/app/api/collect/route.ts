@@ -284,8 +284,8 @@ export async function POST() {
       message: `新着記事は見つかりませんでした（${candidates.length}件のソースを確認）`,
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    // エラー詳細はサーバログのみ。クライアントには内部情報(DB/パス/スタック)を出さない。
     console.error('Collection error:', error);
-    return Response.json({ success: false, message: msg }, { status: 500 });
+    return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }

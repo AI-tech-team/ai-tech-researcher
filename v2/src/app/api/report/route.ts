@@ -181,8 +181,8 @@ export async function POST(req: Request) {
     if (!result) return Response.json({ success: false, message: 'レポートの元になる収集データがありません。' }, { status: 400 });
     return Response.json({ success: true, message: 'レポートの生成に成功しました。', data: result.inserted, emailSent: false });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    // エラー詳細はサーバログのみ。クライアントには内部情報(DB/パス/スタック)を出さない。
     console.error('Report generation error:', error);
-    return Response.json({ success: false, message: msg }, { status: 500 });
+    return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }

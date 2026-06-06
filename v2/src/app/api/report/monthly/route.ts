@@ -51,8 +51,9 @@ export async function POST() {
     }).returning();
 
     return Response.json({ success: true, message: '月次レポートを生成しました。', data: inserted });
-  } catch (error: any) {
+  } catch (error) {
+    // エラー詳細はサーバログのみ。クライアントには内部情報を出さない。
     console.error("Monthly report error:", error);
-    return Response.json({ success: false, message: error.message }, { status: 500 });
+    return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }
