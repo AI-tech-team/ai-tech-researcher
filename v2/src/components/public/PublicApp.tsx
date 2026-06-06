@@ -350,23 +350,23 @@ export function PublicApp() {
                   <div className="fixed inset-0 z-40" onClick={() => setInfoMenuOpen(false)} />
                   <div className="absolute right-0 mt-1.5 w-44 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
                     {feedbackAvailable && (
-                      <a href="/feedback" onClick={() => setInfoMenuOpen(false)}
+                      <Link href="/feedback" onClick={() => setInfoMenuOpen(false)}
                         className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                         <MessageSquare size={14} className="text-slate-400" /> フィードバック
-                      </a>
+                      </Link>
                     )}
-                    <a href="/privacy"
+                    <Link href="/privacy" onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <Shield size={14} className="text-slate-400" /> プライバシー
-                    </a>
-                    <a href="/terms"
+                    </Link>
+                    <Link href="/terms" onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <ScrollText size={14} className="text-slate-400" /> 利用規約
-                    </a>
-                    <a href="/changelog"
+                    </Link>
+                    <Link href="/changelog" onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <History size={14} className="text-slate-400" /> 更新履歴
-                    </a>
+                    </Link>
                   </div>
                 </>
               )}
@@ -454,7 +454,7 @@ export function PublicApp() {
             </div>
             <p className="text-[10px] text-slate-500 mt-2.5">
               続行すると Google アカウントでログインします。{' '}
-              <a href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシーポリシー</a>
+              <Link href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシーポリシー</Link>
             </p>
           </motion.div>
         )}
@@ -723,22 +723,22 @@ export function PublicApp() {
               </button>
             </div>
             <p className="text-[10px] text-slate-500">
-              続行＝Googleアカウントでログイン · <a href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシー</a>
+              続行＝Googleアカウントでログイン · <Link href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシー</Link>
             </p>
           </section>
         )}
 
         <footer className="pt-4 pb-2 text-center space-y-2">
           <div className="flex items-center justify-center gap-3 font-mono text-[10px] text-slate-600">
-            <a href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</a>
+            <Link href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</Link>
             <span className="text-slate-700">·</span>
-            <a href="/terms" className="hover:text-slate-300 transition-colors">利用規約</a>
+            <Link href="/terms" className="hover:text-slate-300 transition-colors">利用規約</Link>
             <span className="text-slate-700">·</span>
-            <a href="/changelog" className="hover:text-slate-300 transition-colors">更新履歴</a>
+            <Link href="/changelog" className="hover:text-slate-300 transition-colors">更新履歴</Link>
             {feedbackAvailable && (
               <>
                 <span className="text-slate-700">·</span>
-                <a href="/feedback" className="hover:text-slate-300 transition-colors">フィードバック</a>
+                <Link href="/feedback" className="hover:text-slate-300 transition-colors">フィードバック</Link>
               </>
             )}
           </div>
