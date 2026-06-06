@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getArticleById } from '@/app/actions';
 import { ArticleView } from '@/components/ArticleView';
-import { ArticleModalShell } from '@/components/ArticleModalShell';
+import { ModalShell } from '@/components/ModalShell';
 
 // 一覧から /articles/[id] へソフト遷移したときだけ発火するインターセプト。
 // 記事を全画面オーバーレイで表示し、裏のトップ(一覧)は保持＝戻っても再読み込みしない。
@@ -12,8 +12,8 @@ export default async function ArticleModal({ params }: { params: Promise<{ id: s
   if (!article) notFound();
 
   return (
-    <ArticleModalShell>
+    <ModalShell>
       <ArticleView article={article} />
-    </ArticleModalShell>
+    </ModalShell>
   );
 }
