@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import {
   BrainCircuit, ArrowLeft, ArrowRight, Newspaper, Sparkles, Network,
-  ShieldCheck, Languages, Clock, BookOpen,
+  ShieldCheck, Languages, Clock, BookOpen, ChevronDown,
 } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
 
@@ -40,6 +40,19 @@ function Feature({ icon, title, children }: { icon: React.ReactNode; title: stri
       </div>
       <p className="text-[13px] text-slate-400 leading-relaxed">{children}</p>
     </div>
+  );
+}
+
+// FAQ（ネイティブ<details>でJS不要の開閉）
+function Faq({ q, children }: { q: string; children: React.ReactNode }) {
+  return (
+    <details className="group rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 open:bg-white/[0.03] transition-colors">
+      <summary className="flex items-center justify-between gap-3 cursor-pointer list-none text-sm font-medium text-slate-200 [&::-webkit-details-marker]:hidden">
+        {q}
+        <ChevronDown size={16} className="shrink-0 text-slate-500 transition-transform group-open:rotate-180" />
+      </summary>
+      <p className="text-[13px] text-slate-400 leading-relaxed mt-2.5">{children}</p>
+    </details>
   );
 }
 
@@ -148,6 +161,29 @@ export default function AboutPage() {
           トップページを開くだけで、その日のAIニュースをすぐ読めます。<span className="text-slate-200">閲覧は無料</span>です。
           Googleでログインすると、「あなた向け」のおすすめ・「後で読む」保存・毎朝のダイジェストメール（任意）が使えます。
         </p>
+
+        {/* FAQ */}
+        <H>よくある質問</H>
+        <div className="space-y-2.5">
+          <Faq q="無料で使えますか？">
+            はい。閲覧はずっと無料です。Googleログインは任意で、ログインすると「あなた向け」のおすすめ・「後で読む」保存・毎朝のダイジェストメールが使えます。
+          </Faq>
+          <Faq q="ログインは必要ですか？">
+            不要です。ログインなしで、すべての記事とレポートを読めます。ログインは個人向けの機能（おすすめ・保存・メール）を使いたいときだけで構いません。
+          </Faq>
+          <Faq q="情報源はどこですか？">
+            公式ブログ・論文（arXiv）・技術コミュニティなど、信頼できる16以上のソースを自動で巡回しています。詳しく読みたいときは各記事から元記事（一次情報）へ辿れます。
+          </Faq>
+          <Faq q="内容は正確ですか？">
+            要約・分析はAIによる生成物のため、誤りを含む可能性があります。重要な判断の前には、必ず元記事や一次情報をご確認ください。
+          </Faq>
+          <Faq q="記事の全文はここで読めますか？">
+            本サービスは要約と分析を提供します。全文は権利者の元記事でお読みください（各記事からリンクしています）。
+          </Faq>
+          <Faq q="いつ更新されますか？">
+            毎朝6:00（JST）に自動更新します。あわせて、日次・週次・月次のまとめレポートも生成されます。
+          </Faq>
+        </div>
 
         {/* CTA */}
         <div className="mt-10 rounded-2xl border border-sky-500/15 bg-gradient-to-br from-sky-500/[0.08] to-indigo-500/[0.04] p-6 text-center space-y-3">
