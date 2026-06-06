@@ -7,6 +7,7 @@ import { eq, isNull, or, inArray } from 'drizzle-orm';
 import { withRetry } from '@/lib/llm';
 import { isOwner } from '@/lib/owner';
 import { checkRateLimit } from '@/lib/ratelimit';
+import { logError } from '@/lib/logError';
 
 export const maxDuration = 60;
 
@@ -62,8 +63,8 @@ ${items.map(i => `ID:${i.id} タイトル:${i.title ?? ''} 要約:${(i.summary ?
 
     return Response.json({ success: true, message: `${updated}件を再分類しました`, updated });
   } catch (error) {
-    // エラー詳細はサーバログのみ。クライアントには内部情報(DB/パス/スタック)を出さない。
-    console.error('[Recategorize] error:', error);
+    // エラー詳細はサーバログのみ＋owner通知。クライアントには内部情報(DB/パス/スタック)を出さない。
+    await logError('api/recategorize', error, { alert: true });
     return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }

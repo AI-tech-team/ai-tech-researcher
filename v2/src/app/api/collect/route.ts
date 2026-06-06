@@ -8,6 +8,7 @@ import { isOwner } from '@/lib/owner';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { isSafeFetchUrl } from '@/lib/safeUrl';
 import { isAllowedByRobots } from '@/lib/robots';
+import { logError } from '@/lib/logError';
 
 // 巡回・本文取得で名乗るUA（連絡先付き＝スクレイピングのマナー）。
 const UA = 'Mozilla/5.0 (compatible; AIResearcher/1.0; +https://ai-tech-researcher.vercel.app)';
@@ -289,8 +290,8 @@ export async function POST() {
       message: `新着記事は見つかりませんでした（${candidates.length}件のソースを確認）`,
     });
   } catch (error) {
-    // エラー詳細はサーバログのみ。クライアントには内部情報(DB/パス/スタック)を出さない。
-    console.error('Collection error:', error);
+    // エラー詳細はサーバログのみ＋owner通知。クライアントには内部情報(DB/パス/スタック)を出さない。
+    await logError('api/collect', error, { alert: true });
     return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }
