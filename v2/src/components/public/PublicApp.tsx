@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -369,21 +369,25 @@ export function PublicApp() {
                   {/* 外側クリックで閉じる */}
                   <div className="fixed inset-0 z-40" onClick={() => setInfoMenuOpen(false)} />
                   <div className="absolute right-0 mt-1.5 w-44 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
+                    <Link href="/about" scroll={false} onClick={() => setInfoMenuOpen(false)}
+                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
+                      <Info size={14} className="text-slate-400" /> このサービスについて
+                    </Link>
                     {feedbackAvailable && (
-                      <Link href="/feedback" onClick={() => setInfoMenuOpen(false)}
+                      <Link href="/feedback" scroll={false} onClick={() => setInfoMenuOpen(false)}
                         className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                         <MessageSquare size={14} className="text-slate-400" /> フィードバック
                       </Link>
                     )}
-                    <Link href="/privacy" onClick={() => setInfoMenuOpen(false)}
+                    <Link href="/privacy" scroll={false} onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <Shield size={14} className="text-slate-400" /> プライバシー
                     </Link>
-                    <Link href="/terms" onClick={() => setInfoMenuOpen(false)}
+                    <Link href="/terms" scroll={false} onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <ScrollText size={14} className="text-slate-400" /> 利用規約
                     </Link>
-                    <Link href="/changelog" onClick={() => setInfoMenuOpen(false)}
+                    <Link href="/changelog" scroll={false} onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <History size={14} className="text-slate-400" /> 更新履歴
                     </Link>
@@ -750,15 +754,17 @@ export function PublicApp() {
 
         <footer className="pt-4 pb-2 text-center space-y-2">
           <div className="flex items-center justify-center gap-3 font-mono text-[10px] text-slate-600">
-            <Link href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</Link>
+            <Link href="/about" scroll={false} className="hover:text-slate-300 transition-colors">このサービスについて</Link>
             <span className="text-slate-700">·</span>
-            <Link href="/terms" className="hover:text-slate-300 transition-colors">利用規約</Link>
+            <Link href="/privacy" scroll={false} className="hover:text-slate-300 transition-colors">プライバシー</Link>
             <span className="text-slate-700">·</span>
-            <Link href="/changelog" className="hover:text-slate-300 transition-colors">更新履歴</Link>
+            <Link href="/terms" scroll={false} className="hover:text-slate-300 transition-colors">利用規約</Link>
+            <span className="text-slate-700">·</span>
+            <Link href="/changelog" scroll={false} className="hover:text-slate-300 transition-colors">更新履歴</Link>
             {feedbackAvailable && (
               <>
                 <span className="text-slate-700">·</span>
-                <Link href="/feedback" className="hover:text-slate-300 transition-colors">フィードバック</Link>
+                <Link href="/feedback" scroll={false} className="hover:text-slate-300 transition-colors">フィードバック</Link>
               </>
             )}
           </div>
