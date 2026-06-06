@@ -200,8 +200,8 @@ ${contextText}`,
       stats: { promoted, demoted, reactivated, stopped: stoppedCount, newKeywords: newKeywordsCount, newDomains: newDomainsCount },
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    // エラー詳細はサーバログのみ。クライアントには内部情報(DB/パス/スタック)を出さない。
     console.error('[Evolve] error:', error);
-    return Response.json({ success: false, message: msg }, { status: 500 });
+    return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }

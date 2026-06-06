@@ -62,8 +62,8 @@ ${items.map(i => `ID:${i.id} タイトル:${i.title ?? ''} 要約:${(i.summary ?
 
     return Response.json({ success: true, message: `${updated}件を再分類しました`, updated });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    // エラー詳細はサーバログのみ。クライアントには内部情報(DB/パス/スタック)を出さない。
     console.error('[Recategorize] error:', error);
-    return Response.json({ success: false, message: msg }, { status: 500 });
+    return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }

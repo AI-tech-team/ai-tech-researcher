@@ -1157,7 +1157,8 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
       });
       sent++;
     } catch (e: any) {
-      console.warn(`[Brief] ${r.email} 送信失敗: ${(e.message ?? '').slice(0, 60)}`);
+      // ログにメール(PII)を残さない。識別は非PIIの uid を使う（匿名性方針）。
+      console.warn(`[Brief] uid=${r.uid} 送信失敗: ${(e.message ?? '').slice(0, 60)}`);
     }
   }
   console.log(`[Brief] パーソナライズbrief配信: ${sent}/${recipients.length}件`);
@@ -1174,7 +1175,8 @@ async function sendFailureEmail(error: Error) {
       from: user,
       to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
       subject: `🚨 AI Tech Researcher パイプライン失敗 ${today}`,
-      text: `デイリーパイプラインが失敗しました。\n\nエラー: ${error.message}\n\nスタックトレース:\n${error.stack ?? '(なし)'}`,
+      // スタックは原因特定に足る先頭6行のみ（フルダンプの機密情報をメールに残さない）。
+      text: `デイリーパイプラインが失敗しました。\n\nエラー: ${error.message}\n\nスタックトレース(先頭6行):\n${(error.stack ?? '(なし)').split('\n').slice(0, 6).join('\n')}`,
     });
     console.log('[Email] 失敗通知送信完了');
   } catch (e: any) {

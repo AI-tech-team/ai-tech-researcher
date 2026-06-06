@@ -199,7 +199,7 @@ export type ArticleDetail = CollectedItem & { rawContent?: string | null };
 export async function getArticleById(id: number): Promise<ArticleDetail | null> {
   try {
     if (!Number.isFinite(id)) return null;
-    const userId = await currentUserId();
+    const [userId, owner] = await Promise.all([currentUserId(), isOwner()]);
     const rows = await db.select({ ...COLLECTED_SELECT, rawContent: collectedData.rawContent })
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
@@ -208,7 +208,12 @@ export async function getArticleById(id: number): Promise<ArticleDetail | null> 
     if (rows.length === 0) return null;
     const items = parseCollectedRows(rows) as ArticleDetail[];
     await overlayUserState(items, userId);
-    return items[0] ?? null;
+    const item = items[0] ?? null;
+    // 著作権・各情報源ToSへの配慮: 元記事から抽出した本文(rawContent)は内部の情報解析用に保持するが、
+    // 一般公開では再表示しない(=公衆送信しない)。公開UIは「要約＋元記事リンク＋分析」に限定する
+    // (利用規約§5の表明とも一致)。運用者(オーナー)が内部確認する場合のみ本文を返す。
+    if (item && !owner) item.rawContent = null;
+    return item;
   } catch (error) {
     console.error('getArticleById failed:', error);
     return null;

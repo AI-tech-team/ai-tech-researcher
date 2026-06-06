@@ -6,6 +6,10 @@
 // フィードは非AIファイアホース(NYT/Business Insider等)を弾き、巡回トークンの浪費を防ぐ。
 
 import { isSafeFetchUrl } from './safeUrl';
+import { isAllowedByRobots } from './robots';
+
+// 巡回・本文取得で名乗るUA。連絡先を含めるのがスクレイピングのマナー（第三条・悪質性低減）。
+const UA = 'Mozilla/5.0 (compatible; AIResearcher/1.0; +https://ai-tech-researcher.vercel.app)';
 
 const FEED_LINK_RE = /<link\b[^>]*>/gi;
 // homepageに<link rel=alternate>が無いサイト向けの定番パス
@@ -26,7 +30,7 @@ async function fetchText(url: string, timeoutMs = 6000): Promise<string | null> 
   if (!isSafeFetchUrl(url)) return null; // SSRF対策: 内部/プライベート宛は弾く
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+      headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(timeoutMs),
       redirect: 'follow',
     });
@@ -103,9 +107,10 @@ export function extractMainText(html: string): string {
 // 記事URLから本文テキストを取得（HTML以外・抽出失敗時はnull）。maxCharsで上限。
 export async function fetchArticleText(url: string, maxChars = 6000): Promise<string | null> {
   if (!isSafeFetchUrl(url)) return null; // SSRF対策: 内部/プライベート宛は弾く
+  if (!(await isAllowedByRobots(url))) return null; // 第三条: robots.txtでDisallowされたパスは本文取得しない
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+      headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(12000),
       redirect: 'follow',
     });
