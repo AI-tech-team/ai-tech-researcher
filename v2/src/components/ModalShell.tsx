@@ -6,10 +6,10 @@ import Link from 'next/link';
 import { BrainCircuit, X } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
 
-// インターセプト経由(一覧からのソフト遷移)で記事を全画面オーバーレイ表示する殻。
-// 裏のトップ(一覧)は生きたままなので、閉じる(戻る)と再読み込みなしで一覧へ戻る。
-// 直リンク/リロード/共有では intercept されず、独立した /articles/[id] ページが表示される。
-export function ArticleModalShell({ children }: { children: React.ReactNode }) {
+// 一覧からのソフト遷移(intercept)で記事/レポートを全画面オーバーレイ表示する汎用シェル。
+// 裏のトップ(一覧)は保持されるので、閉じる(戻る)で再読み込みなし＝スクロール位置も維持。
+// 高さは 100dvh＋safe-area で、モバイルブラウザのツールバーと協調する（vhのように被らない）。
+export function ModalShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const close = () => router.back();
 
@@ -17,13 +17,13 @@ export function ArticleModalShell({ children }: { children: React.ReactNode }) {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') router.back(); };
     window.addEventListener('keydown', onKey);
     const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden'; // 背面のスクロールを止める
+    document.body.style.overflow = 'hidden';
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[70] overflow-y-auto bg-[#03060f]/95 backdrop-blur-sm" onClick={close}>
+    <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto bg-[#03060f]" onClick={close}>
       <div className="min-h-full" onClick={e => e.stopPropagation()}>
         <header className="sticky top-0 z-10 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
           <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
@@ -39,7 +39,7 @@ export function ArticleModalShell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </header>
-        <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8">
+        <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8 pb-[max(2rem,env(safe-area-inset-bottom))]">
           <article className="rounded-2xl border border-white/10 bg-[#070b16]">
             {children}
           </article>

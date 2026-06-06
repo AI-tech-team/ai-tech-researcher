@@ -8,13 +8,12 @@ import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Spa
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
-  getCoreData, getCollectedDataList, getReportById, getKnowledgeStats,
+  getCoreData, getCollectedDataList, getKnowledgeStats,
   getRecommendations, getMyReadLater, getReadingProfile,
   toggleFavorite, toggleReadLater,
   getMyProfile, subscribeEmailDigest,
 } from '@/app/actions';
 import { EntityPageModal } from '@/components/EntityPageModal';
-import { ReportModal } from '@/components/public/ReportModal';
 import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
@@ -127,7 +126,6 @@ export function PublicApp() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [detailEntityName, setDetailEntityName] = useState<string | null>(null);
-  const [openReport, setOpenReport] = useState<Report | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
@@ -136,29 +134,8 @@ export function PublicApp() {
   const [digestPromptOpen, setDigestPromptOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
-  // URL ↔ モーダル状態の同期（シェア用ディープリンク）
-  const updateUrl = (article: number | null, report: number | null) => {
-    if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
-    if (article) { url.searchParams.set('article', String(article)); url.searchParams.delete('report'); }
-    else if (report) { url.searchParams.set('report', String(report)); url.searchParams.delete('article'); }
-    else { url.searchParams.delete('article'); url.searchParams.delete('report'); }
-    window.history.replaceState({}, '', url.pathname + url.search);
-  };
-
   const openArticle = (id: number) => router.push(`/articles/${id}`);
-  const openReportObj = (r: Report) => { setOpenReport(r); updateUrl(null, r.id); };
-  const closeReport = () => { setOpenReport(null); updateUrl(null, null); };
-
-  // 初回マウント時にURLからモーダルを復元（シェアされたURLで直接開ける）
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const sp = new URLSearchParams(window.location.search);
-    const rid = Number(sp.get('report'));
-    if (Number.isFinite(rid) && rid > 0) {
-      getReportById(rid).then(r => { if (r) setOpenReport(r); }).catch(() => {});
-    }
-  }, []);
+  const openReportObj = (r: Report) => router.push(`/reports/${r.id}`);
 
   // パーソナライズの再取得（プロフィール保存後など）
   const reloadPersonalization = async () => {
@@ -223,7 +200,7 @@ export function PublicApp() {
 
   // モーダル表示中は背面(body/html)のスクロールを止める（スマホで背面がスクロールする問題の対策）
   const anyOverlayOpen =
-    openReport != null || searchOpen ||
+    searchOpen ||
     profileOpen || savedOpen || detailEntityName != null;
   useEffect(() => {
     if (!anyOverlayOpen) return;
@@ -775,11 +752,6 @@ export function PublicApp() {
         onClose={() => setDetailEntityName(null)}
         onOpenArticle={(id) => { setDetailEntityName(null); openArticle(id); }}
         onOpenEntity={(name) => setDetailEntityName(name)}
-      />
-      <ReportModal
-        report={openReport}
-        onClose={closeReport}
-        onArticleRef={(id) => { closeReport(); openArticle(id); }}
       />
       <SearchPalette
         open={searchOpen}
