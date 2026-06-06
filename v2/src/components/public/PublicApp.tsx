@@ -368,10 +368,10 @@ export function PublicApp() {
                 <>
                   {/* 外側クリックで閉じる */}
                   <div className="fixed inset-0 z-40" onClick={() => setInfoMenuOpen(false)} />
-                  <div className="absolute right-0 mt-1.5 w-44 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
+                  <div className="absolute right-0 mt-1.5 w-52 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
                     <Link href="/about" scroll={false} onClick={() => setInfoMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                      <Info size={14} className="text-slate-400" /> このサービスについて
+                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors whitespace-nowrap">
+                      <Info size={14} className="shrink-0 text-slate-400" /> このサービスについて
                     </Link>
                     {feedbackAvailable && (
                       <Link href="/feedback" scroll={false} onClick={() => setInfoMenuOpen(false)}
@@ -752,23 +752,42 @@ export function PublicApp() {
           </section>
         )}
 
-        <footer className="pt-4 pb-2 text-center space-y-2">
-          <div className="flex items-center justify-center gap-3 font-mono text-[10px] text-slate-600">
-            <Link href="/about" scroll={false} className="hover:text-slate-300 transition-colors">このサービスについて</Link>
-            <span className="text-slate-700">·</span>
-            <Link href="/privacy" scroll={false} className="hover:text-slate-300 transition-colors">プライバシー</Link>
-            <span className="text-slate-700">·</span>
-            <Link href="/terms" scroll={false} className="hover:text-slate-300 transition-colors">利用規約</Link>
-            <span className="text-slate-700">·</span>
-            <Link href="/changelog" scroll={false} className="hover:text-slate-300 transition-colors">更新履歴</Link>
+        <footer className="pt-8 border-t border-white/5">
+          {/* グループ化したフッター（サービス / 規約 / フィードバック）。横一列の窮屈さを解消 */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-7 max-w-2xl mx-auto">
+            <div>
+              <p className="text-[11px] font-bold text-slate-300 mb-2.5 font-outfit">サービス</p>
+              <ul className="space-y-1.5 text-[12px] text-slate-500">
+                <li><Link href="/about" scroll={false} className="hover:text-slate-300 transition-colors">このサービスについて</Link></li>
+                <li><Link href="/changelog" scroll={false} className="hover:text-slate-300 transition-colors">更新履歴</Link></li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold text-slate-300 mb-2.5 font-outfit">規約・プライバシー</p>
+              <ul className="space-y-1.5 text-[12px] text-slate-500">
+                <li><Link href="/privacy" scroll={false} className="hover:text-slate-300 transition-colors">プライバシーポリシー</Link></li>
+                <li><Link href="/terms" scroll={false} className="hover:text-slate-300 transition-colors">利用規約</Link></li>
+              </ul>
+            </div>
             {feedbackAvailable && (
-              <>
-                <span className="text-slate-700">·</span>
-                <Link href="/feedback" scroll={false} className="hover:text-slate-300 transition-colors">フィードバック</Link>
-              </>
+              <div>
+                <p className="text-[11px] font-bold text-slate-300 mb-2.5 font-outfit">フィードバック</p>
+                <ul className="space-y-1.5 text-[12px] text-slate-500">
+                  <li><Link href="/feedback" scroll={false} className="hover:text-slate-300 transition-colors">ご意見・不具合の報告</Link></li>
+                </ul>
+              </div>
             )}
           </div>
-          <p className="font-mono text-[10px] text-slate-700">AI Tech Researcher — 毎日「育つ」AIリサーチ</p>
+          {/* 最下部バー: ロゴ＋コピーライト */}
+          <div className="mt-8 pt-4 border-t border-white/5 max-w-2xl mx-auto flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-md bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center">
+                <BrainCircuit className="text-white" size={11} />
+              </div>
+              <span className="font-mono text-[10px] text-slate-500">AI Tech Researcher</span>
+            </div>
+            <p className="font-mono text-[10px] text-slate-700">毎日「育つ」AIリサーチ · © 2026</p>
+          </div>
         </footer>
       </main>
 
