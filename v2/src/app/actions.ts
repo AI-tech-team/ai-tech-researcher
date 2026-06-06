@@ -119,10 +119,11 @@ function extractKeywords(title: string | null, category: string | null): string[
 
 export async function getReportsData() {
   try {
-    // briefing/learning_recap/cross_insightはメール/インサイト専用なので調査レポート一覧からは除外
-    return await db.select().from(reports)
+    // briefing/learning_recap/cross_insightはメール/インサイト専用なので調査レポート一覧からは除外。
+    // 全ユーザー共通かつ更新頻度が低いのでインスタンス内60秒キャッシュ（毎アクセスのTurso読みを削減）。
+    return await cached('reportsData', 60_000, () => db.select().from(reports)
       .where(sql`${reports.type} NOT IN ('briefing', 'learning_recap', 'cross_insight')`)
-      .orderBy(desc(reports.createdAt));
+      .orderBy(desc(reports.createdAt)));
   } catch (error) {
     console.error("Failed to fetch reports:", error);
     return [];
@@ -149,44 +150,57 @@ function urlDomain(url: string | null): string | null {
 export async function getCollectedDataList(limit = 60, offset = 0): Promise<CollectedItem[]> {
   try {
     const userId = await currentUserId();
-    const rows = await db.select(COLLECTED_SELECT)
-      .from(collectedData)
-      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-      .orderBy(desc(collectedData.createdAt))
-      .limit(Math.min(Math.max(limit, 1), 200))
-      .offset(Math.max(offset, 0));
-    const items = parseCollectedRows(rows);
-    await overlayUserState(items, userId);
+    const lim = Math.min(Math.max(limit, 1), 200);
+    const off = Math.max(offset, 0);
 
-    // 複数媒体が報じたストーリーについて、媒体（ドメイン）一覧を付与
-    const multiStoryIds = [...new Set(
-      items.filter(i => (i.storyCount ?? 1) > 1 && i.storyId != null).map(i => i.storyId as number)
-    )];
-    if (multiStoryIds.length > 0) {
-      const members = await db.select({
-        storyId: collectedData.storyId,
-        url: collectedData.url,
-        sourceValue: sources.value,
-      })
+    // 全ユーザー共通の「コーパス部分」(記事行＋媒体一覧)はインスタンス内90秒キャッシュし、
+    // 毎アクセスでTursoを叩かない(読み取り課金・レイテンシ削減)。ユーザー別状態(お気に入り等)は
+    // キャッシュせず、下でコピーしてから上書きする。
+    const base = await cached(`corpus:${lim}:${off}`, 90_000, async () => {
+      const rows = await db.select(COLLECTED_SELECT)
         .from(collectedData)
         .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-        .where(inArray(collectedData.storyId, multiStoryIds));
+        .orderBy(desc(collectedData.createdAt))
+        .limit(lim)
+        .offset(off);
+      const list = parseCollectedRows(rows);
 
-      const outletMap = new Map<number, string[]>();
-      for (const m of members) {
-        if (m.storyId == null) continue;
-        const outlet = urlDomain(m.url) ?? m.sourceValue ?? null;
-        if (!outlet) continue;
-        const list = outletMap.get(m.storyId) ?? [];
-        if (!list.includes(outlet)) list.push(outlet);
-        outletMap.set(m.storyId, list);
-      }
-      for (const item of items) {
-        if (item.storyId != null && outletMap.has(item.storyId)) {
-          item.storyOutlets = outletMap.get(item.storyId);
+      // 複数媒体が報じたストーリーについて、媒体（ドメイン）一覧を付与（全ユーザー共通データ）
+      const multiStoryIds = [...new Set(
+        list.filter(i => (i.storyCount ?? 1) > 1 && i.storyId != null).map(i => i.storyId as number)
+      )];
+      if (multiStoryIds.length > 0) {
+        const members = await db.select({
+          storyId: collectedData.storyId,
+          url: collectedData.url,
+          sourceValue: sources.value,
+        })
+          .from(collectedData)
+          .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+          .where(inArray(collectedData.storyId, multiStoryIds));
+
+        const outletMap = new Map<number, string[]>();
+        for (const m of members) {
+          if (m.storyId == null) continue;
+          const outlet = urlDomain(m.url) ?? m.sourceValue ?? null;
+          if (!outlet) continue;
+          const arr = outletMap.get(m.storyId) ?? [];
+          if (!arr.includes(outlet)) arr.push(outlet);
+          outletMap.set(m.storyId, arr);
+        }
+        for (const item of list) {
+          if (item.storyId != null && outletMap.has(item.storyId)) {
+            item.storyOutlets = outletMap.get(item.storyId);
+          }
         }
       }
-    }
+      return list;
+    });
+
+    // ⚠️ cachedは共有参照を返すため、overlayUserStateで破壊的に書き換える前に各itemを浅くコピーする
+    // （しないと先に開いたユーザーのお気に入り状態がキャッシュに焼き付き、他ユーザーへ漏れる）。
+    const items = base.map(i => ({ ...i }));
+    await overlayUserState(items, userId);
     return items;
   } catch (error) {
     console.error("Failed to fetch collected data:", error);

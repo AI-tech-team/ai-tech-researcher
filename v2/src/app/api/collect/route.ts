@@ -7,6 +7,10 @@ import { withRetry, extractJson, resolveGroundingUrl } from '@/lib/llm';
 import { isOwner } from '@/lib/owner';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { isSafeFetchUrl } from '@/lib/safeUrl';
+import { isAllowedByRobots } from '@/lib/robots';
+
+// 巡回・本文取得で名乗るUA（連絡先付き＝スクレイピングのマナー）。
+const UA = 'Mozilla/5.0 (compatible; AIResearcher/1.0; +https://ai-tech-researcher.vercel.app)';
 
 export const maxDuration = 60;
 
@@ -42,7 +46,7 @@ function parseTechDripScore(scoreStr: string): number {
 async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, today: string) {
   if (!isSafeFetchUrl(targetSource.value)) throw new Error('安全でないソースURLのためスキップ'); // SSRF対策
   const res = await fetch(targetSource.value, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+    headers: { 'User-Agent': UA },
     signal: AbortSignal.timeout(15000),
   });
   const html = await res.text();
@@ -104,9 +108,10 @@ async function collectFromTechDrip(targetSource: typeof sources.$inferSelect, to
   // Phase 2: 高スコア記事の元URL から全文取得（最大3件）
   for (const url of deepFetchUrls.slice(0, 3)) {
     if (!isSafeFetchUrl(url)) continue; // SSRF対策
+    if (!(await isAllowedByRobots(url))) continue; // 第三条: robots.txtでDisallowされたパスは本文取得しない
     try {
       const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+        headers: { 'User-Agent': UA },
         signal: AbortSignal.timeout(8000),
       });
       const html = await res.text();
