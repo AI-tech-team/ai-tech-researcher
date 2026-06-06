@@ -5,6 +5,7 @@ import { collectedData, reports } from '@/db/schema';
 import { desc, gte, eq } from 'drizzle-orm';
 import { isOwner } from '@/lib/owner';
 import { checkRateLimit } from '@/lib/ratelimit';
+import { logError } from '@/lib/logError';
 
 export const maxDuration = 60;
 
@@ -64,8 +65,8 @@ export async function POST() {
 
     return Response.json({ success: true, message: '週次レポートを生成しました。', data: inserted });
   } catch (error) {
-    // エラー詳細はサーバログのみ。クライアントには内部情報を出さない。
-    console.error("Weekly report error:", error);
+    // エラー詳細はサーバログのみ＋owner通知。クライアントには内部情報を出さない。
+    await logError('api/report/weekly', error, { alert: true });
     return Response.json({ success: false, message: 'サーバー側でエラーが発生しました。時間をおいて再試行してください。' }, { status: 500 });
   }
 }
