@@ -46,6 +46,18 @@ export default function ChangelogPage() {
           始動（{LAUNCH_DATE}）からの歩みと、主なアップデートをお知らせします。
         </p>
 
+        {/* バージョンの読み方（番号の桁に意味を持たせている＝セマンティックバージョニング） */}
+        <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3">
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            バージョンは <span className="font-mono text-slate-300">メジャー.マイナー.パッチ</span> で表します。
+          </p>
+          <ul className="mt-1.5 space-y-0.5 text-[11px] text-slate-500">
+            <li><span className="font-mono text-sky-300">メジャー</span> … 世代の節目・大きな作り直し</li>
+            <li><span className="font-mono text-emerald-300">マイナー</span> … 新機能の追加</li>
+            <li><span className="font-mono text-slate-300">パッチ</span> … 改善・修正・規約やプライバシーの更新</li>
+          </ul>
+        </div>
+
         {/* タイムライン（左に縦線、各更新にバージョン番号付き） */}
         <ol className="mt-10 border-l border-white/10 pl-6 space-y-7">
           {CHANGELOG.map((e) => (
