@@ -116,24 +116,29 @@ function PubCard({ item, featured = false, lead = false }: {
   );
 }
 
-export function PublicApp() {
+// page.tsx(サーバ)がSSRで先に取得して渡す初期フィード。これがあれば初回/遷移直後に
+// Client Server Action(getCoreData)を叩かずに描画できる＝@modal遷移時のabortを踏まない。
+export type PublicInitial = { data: CollectedItem[]; reportsData: Report[]; counts: { total: number } };
+
+export function PublicApp({ initialData }: { initialData?: PublicInitial | null }) {
   const { toast } = useToast();
   const router = useRouter();
   const { data: session, status } = useSession();
   const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
 
-  // 初期値はスナップショットから復元（あれば即表示・スケルトンを出さない＝戻る時のちらつき防止）
-  const [collectedItems, setCollectedItems] = useState<CollectedItem[]>(() => pubSnapshot?.items ?? []);
-  const [reportsList, setReportsList] = useState<Report[]>(() => pubSnapshot?.reports ?? []);
+  // 初期値は スナップショット(戻り) → SSR初期データ → 空 の順で復元。
+  // いずれかがあれば即表示・スケルトンを出さない（戻りのちらつき＆遷移直後の空表示を防ぐ）。
+  const [collectedItems, setCollectedItems] = useState<CollectedItem[]>(() => pubSnapshot?.items ?? initialData?.data ?? []);
+  const [reportsList, setReportsList] = useState<Report[]>(() => pubSnapshot?.reports ?? initialData?.reportsData ?? []);
   const [stats, setStats] = useState<KnowledgeStats | null>(() => pubSnapshot?.stats ?? null);
-  const [totalArticles, setTotalArticles] = useState<number | null>(() => pubSnapshot?.total ?? null);
+  const [totalArticles, setTotalArticles] = useState<number | null>(() => pubSnapshot?.total ?? initialData?.counts?.total ?? null);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [recommendations, setRecommendations] = useState<CollectedItem[]>([]);
   const [readLater, setReadLater] = useState<CollectedItem[]>([]);
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(() => !pubSnapshot);
-  const [offset, setOffset] = useState(() => pubSnapshot?.offset ?? 0);
-  const [hasMore, setHasMore] = useState(() => pubSnapshot?.hasMore ?? true);
+  const [isLoading, setIsLoading] = useState(() => !pubSnapshot && !initialData);
+  const [offset, setOffset] = useState(() => pubSnapshot?.offset ?? initialData?.data.length ?? 0);
+  const [hasMore, setHasMore] = useState(() => pubSnapshot?.hasMore ?? (initialData ? initialData.data.length === PAGE : true));
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [detailEntityName, setDetailEntityName] = useState<string | null>(null);
@@ -226,16 +231,16 @@ export function PublicApp() {
   }, [anyOverlayOpen]);
 
   useEffect(() => {
-    // スナップショットが新しければ再取得しない（戻る操作を即時化＝再読み込み感をなくす）。
-    // 初回／TTL切れ時のみ取得する。
-    if (pubSnapshot && Date.now() - pubSnapshot.at < SNAP_TTL) return;
     let cancelled = false;
+    // フィードの初期データが既にある（戻りのスナップショット or SSRの初期データ）なら、
+    // Client Server Action(getCoreData)は叩かない＝@modal遷移直後のabortを踏まず即描画。
+    const haveFeed = (pubSnapshot && Date.now() - pubSnapshot.at < SNAP_TTL) || !!initialData;
+    // stats は初期データに含めていないので別途取得（軽量）。snapshotに無いときだけ。
+    if (!stats) getKnowledgeStats().then(s => { if (!cancelled) setStats(s as KnowledgeStats); }).catch(() => {});
+    if (haveFeed) return () => { cancelled = true; };
     (async () => {
-      if (!pubSnapshot) setIsLoading(true); // 初回のみスケルトン。復元時はちらつかせない
-      const statsPromise = getKnowledgeStats();
-      // /about 等の別ページから / へ遷移した直後は、Server Action(getCoreData)が
-      // ナビゲーション中断で abort されることがある。1回で諦めると無限スケルトンで
-      // 止まり「ホームに遷移しない」ように見えるため、最大3回まで短い間隔でリトライする。
+      setIsLoading(true); // 初期データが無い時だけスケルトン
+      // ナビゲーション中断でgetCoreDataがabortされても無限スケルトンで止まらないよう数回リトライ。
       for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
         try {
           const { data, reportsData, counts } = await getCoreData(PAGE);
@@ -247,16 +252,17 @@ export function PublicApp() {
           setReportsList(reportsData as Report[]);
           setTotalArticles((counts as { total: number }).total);
           setIsLoading(false);
-          statsPromise.then(s => { if (!cancelled) setStats(s as KnowledgeStats); }).catch(() => {});
           return;
         } catch {
           if (cancelled) return;
-          if (attempt === 2) setIsLoading(false); // 最終的に失敗したら空表示にして無限ローディングを避ける
-          else await new Promise(r => setTimeout(r, 400)); // 少し待って再試行（遷移が落ち着くのを待つ）
+          if (attempt === 2) setIsLoading(false);
+          else await new Promise(r => setTimeout(r, 400));
         }
       }
     })();
     return () => { cancelled = true; };
+    // 初回マウント時のみ実行（initialData/statsはマウント時点の値で判定する意図）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 表示状態をスナップショットへ同期（loadMoreで増えた件数・お気に入り等のトグルも、戻った時に復元する）。

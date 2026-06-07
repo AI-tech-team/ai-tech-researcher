@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import HomeClient from './HomeClient';
-import { getArticleById, getReportById } from './actions';
+import { getArticleById, getReportById, getCoreData, getOwnerStatus } from './actions';
+import type { PublicInitial } from '@/components/public/PublicApp';
 import { SITE_URL, SITE_NAME } from '@/lib/site';
 
 // シェア時のOG/Twitterカードを動的生成。?article=N または ?report=N が付いていれば
@@ -54,6 +55,25 @@ export async function generateMetadata(
   return {};
 }
 
-export default function Page() {
-  return <HomeClient />;
+export default async function Page() {
+  // 公開ホームの初期フィードをSSRで先に取得してRSCに載せる。これにより /about 等の
+  // intercept経由ページから / へ戻った直後に Client Server Action(getCoreData)へ依存せず
+  // 即描画でき、ナビゲーション中断によるabort（=空スケルトンで止まる）を回避する。
+  // オーナーは別UI(OwnerDashboard)が自前取得するためSSRしない（無駄な往復を避ける）。
+  // Vercel⇄Turso同リージョンでサーバ取得は速く、TTFB増は小さい。失敗時はnull（従来どおりClient取得）。
+  let initialPublic: PublicInitial | null = null;
+  try {
+    const { isOwner } = await getOwnerStatus();
+    if (!isOwner) {
+      const core = await getCoreData(30);
+      initialPublic = {
+        data: core.data as PublicInitial['data'],
+        reportsData: core.reportsData as PublicInitial['reportsData'],
+        counts: core.counts as PublicInitial['counts'],
+      };
+    }
+  } catch {
+    initialPublic = null;
+  }
+  return <HomeClient initialPublic={initialPublic} />;
 }

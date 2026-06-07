@@ -23,7 +23,7 @@ import { ProfileTab } from '@/components/tabs/ProfileTab';
 import { ArticleDetailModal } from '@/components/ArticleDetailModal';
 import { EntityPageModal } from '@/components/EntityPageModal';
 import { OnboardingTour } from '@/components/OnboardingTour';
-import { PublicApp } from '@/components/public/PublicApp';
+import { PublicApp, type PublicInitial } from '@/components/public/PublicApp';
 import {
   getCollectedDataList, getCoreData, getAnalyticsData,
   addSource, deleteSource, toggleFavorite, toggleReadLater, markAsRead,
@@ -81,7 +81,7 @@ const TOUR_STEPS: { title: string; body: string; tab: Tab; insightSub?: InsightS
   { title: 'ログインでもっと便利に', body: 'Googleログインすると、お気に入り保存やAIチャットが使えます（任意）。それでは始めましょう。', tab: 'overview' },
 ];
 
-export default function Home() {
+export default function Home({ initialPublic }: { initialPublic?: PublicInitial | null }) {
   const { data: session } = useSession();
   const sessionUserId = (session?.user as { id?: number } | undefined)?.id;
   const [ownerState, setOwnerState] = useState<{ isOwner: boolean } | null>(null);
@@ -90,8 +90,9 @@ export default function Home() {
   }, [sessionUserId]);
   // 一般ユーザー（未ログイン・非オーナーのログイン）には新しい公開UIを出す。
   // オーナー判定が未確定の間も公開UIを表示し、初見の体感速度を優先する。
+  // initialPublic = page.tsx(サーバ)がSSRで取得した初期フィード（非オーナー時のみ）。
   if (ownerState?.isOwner) return <OwnerDashboard />;
-  return <PublicApp />;
+  return <PublicApp initialData={initialPublic} />;
 }
 
 function OwnerDashboard() {
