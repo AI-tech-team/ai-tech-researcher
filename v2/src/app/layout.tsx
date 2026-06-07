@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Outfit } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
@@ -26,6 +26,13 @@ export const metadata: Metadata = {
     title: SITE_NAME,
     description: SITE_DESC,
   },
+};
+
+// タップ遅延を避けるためのviewport明示（width=device-width）。テーマ色も指定。
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#03060f',
 };
 
 export default function RootLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
