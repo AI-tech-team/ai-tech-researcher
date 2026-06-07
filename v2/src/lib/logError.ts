@@ -4,6 +4,7 @@
 // - 通知の失敗・未設定は握りつぶす（本処理を絶対に妨げない＝非致命）。
 // - メールに機密を盛らない（先頭6行のスタックのみ。エラーログにフルダンプを残さない＝第一条）。
 import * as nodemailer from 'nodemailer';
+import { maskPII } from './pii';
 
 const lastAlertAt = new Map<string, number>();
 const ALERT_COOLDOWN_MS = 30 * 60 * 1000;
@@ -23,8 +24,9 @@ export async function logError(context: string, error: unknown, opts?: { alert?:
 
   try {
     const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
-    const msg = error instanceof Error ? error.message : String(error);
-    const stack = error instanceof Error ? (error.stack ?? '').split('\n').slice(0, 6).join('\n') : '';
+    // 外部(受信箱)へ出る内容なので、紛れ込んだ明白なPIIは伏せる（多層防御）。
+    const msg = maskPII(error instanceof Error ? error.message : String(error));
+    const stack = maskPII(error instanceof Error ? (error.stack ?? '').split('\n').slice(0, 6).join('\n') : '');
     await transporter.sendMail({
       from: user,
       to,
