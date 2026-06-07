@@ -66,11 +66,17 @@ export default async function Page() {
     const { isOwner } = await getOwnerStatus();
     if (!isOwner) {
       const core = await getCoreData(30);
-      initialPublic = {
-        data: core.data as PublicInitial['data'],
-        reportsData: core.reportsData as PublicInitial['reportsData'],
-        counts: core.counts as PublicInitial['counts'],
-      };
+      // 空フィードは信用しない。getCoreData の内部サブ取得はDBエラーを握り潰して空配列を返すため、
+      // Turso瞬断などSSRの一過性失敗で initialData が「記事0件の成功」になり、クライアント再取得も
+      // スキップされて「記事がまだありません」で固定化する。空なら null にしてクライアント取得
+      // （リトライ付き）へフォールバックさせる。本番コーパスは非空なので空=ほぼ一過性失敗。
+      if (Array.isArray(core.data) && core.data.length > 0) {
+        initialPublic = {
+          data: core.data as PublicInitial['data'],
+          reportsData: core.reportsData as PublicInitial['reportsData'],
+          counts: core.counts as PublicInitial['counts'],
+        };
+      }
     }
   } catch {
     initialPublic = null;
