@@ -233,16 +233,28 @@ export function PublicApp() {
     (async () => {
       if (!pubSnapshot) setIsLoading(true); // 初回のみスケルトン。復元時はちらつかせない
       const statsPromise = getKnowledgeStats();
-      const { data, reportsData, counts } = await getCoreData(PAGE);
-      if (cancelled) return;
-      const first = data as CollectedItem[];
-      setCollectedItems(first);
-      setOffset(first.length);
-      setHasMore(first.length === PAGE);
-      setReportsList(reportsData as Report[]);
-      setTotalArticles((counts as { total: number }).total);
-      setIsLoading(false);
-      statsPromise.then(s => { if (!cancelled) setStats(s as KnowledgeStats); }).catch(() => {});
+      // /about 等の別ページから / へ遷移した直後は、Server Action(getCoreData)が
+      // ナビゲーション中断で abort されることがある。1回で諦めると無限スケルトンで
+      // 止まり「ホームに遷移しない」ように見えるため、最大3回まで短い間隔でリトライする。
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        try {
+          const { data, reportsData, counts } = await getCoreData(PAGE);
+          if (cancelled) return;
+          const first = data as CollectedItem[];
+          setCollectedItems(first);
+          setOffset(first.length);
+          setHasMore(first.length === PAGE);
+          setReportsList(reportsData as Report[]);
+          setTotalArticles((counts as { total: number }).total);
+          setIsLoading(false);
+          statsPromise.then(s => { if (!cancelled) setStats(s as KnowledgeStats); }).catch(() => {});
+          return;
+        } catch {
+          if (cancelled) return;
+          if (attempt === 2) setIsLoading(false); // 最終的に失敗したら空表示にして無限ローディングを避ける
+          else await new Promise(r => setTimeout(r, 400)); // 少し待って再試行（遷移が落ち着くのを待つ）
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, []);
