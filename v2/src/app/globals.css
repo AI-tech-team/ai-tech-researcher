@@ -36,6 +36,13 @@ h1, h2, h3, .font-outfit {
   font-family: var(--font-outfit), 'Outfit', sans-serif;
 }
 
+/* モバイルのタップ遅延(ダブルタップズーム判定の待ち)を無くし、灰色のタップハイライトも消す。
+   ボタン/リンクの「押してから反応するまで」の体感を改善する。 */
+button, a, [role="button"], summary {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* ── Glass card ──────────────────────────────────────────── */
 .glass-card {
   background: var(--card-bg);
