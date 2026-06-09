@@ -3,13 +3,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LayoutGrid, Globe, FileText, Settings,
-  BarChart3, BrainCircuit, Sparkles, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut, Radar, UserCircle, HelpCircle,
+  BarChart3, BrainCircuit, RefreshCw, Network, Telescope, Fingerprint, Layers, LogIn, LogOut, Radar, UserCircle, HelpCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { useToast } from '@/components/Toast';
-import { ChatPanel } from '@/components/ChatPanel';
-import { MobileChatModal } from '@/components/MobileChatModal';
 import { OverviewTab } from '@/components/tabs/OverviewTab';
 import { DataTab } from '@/components/tabs/DataTab';
 import { ReportsTab } from '@/components/tabs/ReportsTab';
@@ -128,7 +126,6 @@ function OwnerDashboard() {
   const loadingRef = useRef<Record<string, boolean>>({});
   const [isSyncing, setIsSyncing] = useState(false);
   const [interestTags, setInterestTags] = useState<string[]>([]);
-  const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [focusArticleId, setFocusArticleId] = useState<number | null>(null);
   const [detailArticleId, setDetailArticleId] = useState<number | null>(null);
   const [detailEntityName, setDetailEntityName] = useState<string | null>(null);
@@ -601,13 +598,6 @@ function OwnerDashboard() {
         </div>
       </main>
 
-      {/* ── Desktop Chat Panel（オーナー限定）── */}
-      {isOwner && (
-        <div className="hidden md:flex">
-          <ChatPanel onArticleRef={openArticle} />
-        </div>
-      )}
-
       {/* ── Mobile bottom navigation ── */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-white/10 flex safe-area-inset-bottom">
         {mobileNavItems.map(([tab, icon]) => {
@@ -632,21 +622,7 @@ function OwnerDashboard() {
         })}
       </nav>
 
-      {/* ── Mobile floating chat button（オーナー限定）── */}
-      {isOwner && (
-        <button
-          onClick={() => setMobileChatOpen(true)}
-          className="md:hidden fixed bottom-20 right-4 z-40 w-12 h-12 rounded-full bg-gradient-to-br from-sky-500 to-purple-500 flex items-center justify-center shadow-lg shadow-purple-500/30 active:scale-95 transition-transform"
-          aria-label="Geminiチャットを開く"
-        >
-          <Sparkles size={20} className="text-white" />
-        </button>
-      )}
-
-      {/* ── Mobile chat modal ── */}
-      {isOwner && <MobileChatModal isOpen={mobileChatOpen} onClose={() => setMobileChatOpen(false)} onArticleRef={openArticle} />}
-
-      {/* ── 記事詳細モーダル（おすすめ/知識グラフ/チャット[ID]等の共通ジャンプ先）── */}
+      {/* ── 記事詳細モーダル（おすすめ/知識グラフ等の共通ジャンプ先）── */}
       <ArticleDetailModal
         articleId={detailArticleId}
         onClose={() => setDetailArticleId(null)}
