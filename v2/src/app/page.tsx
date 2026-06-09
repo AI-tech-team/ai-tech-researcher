@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
-import HomeClient from './HomeClient';
-import { getArticleById, getReportById, getCoreData, getOwnerStatus } from './actions';
-import type { PublicInitial } from '@/components/public/PublicApp';
+import { getArticleById, getReportById, getCoreData } from './actions';
+import { PublicApp, type PublicInitial } from '@/components/public/PublicApp';
 import { SITE_URL, SITE_NAME } from '@/lib/site';
 
 // シェア時のOG/Twitterカードを動的生成。?article=N または ?report=N が付いていれば
@@ -59,27 +58,23 @@ export default async function Page() {
   // 公開ホームの初期フィードをSSRで先に取得してRSCに載せる。これにより /about 等の
   // intercept経由ページから / へ戻った直後に Client Server Action(getCoreData)へ依存せず
   // 即描画でき、ナビゲーション中断によるabort（=空スケルトンで止まる）を回避する。
-  // オーナーは別UI(OwnerDashboard)が自前取得するためSSRしない（無駄な往復を避ける）。
   // Vercel⇄Turso同リージョンでサーバ取得は速く、TTFB増は小さい。失敗時はnull（従来どおりClient取得）。
   let initialPublic: PublicInitial | null = null;
   try {
-    const { isOwner } = await getOwnerStatus();
-    if (!isOwner) {
-      const core = await getCoreData(30);
-      // 空フィードは信用しない。getCoreData の内部サブ取得はDBエラーを握り潰して空配列を返すため、
-      // Turso瞬断などSSRの一過性失敗で initialData が「記事0件の成功」になり、クライアント再取得も
-      // スキップされて「記事がまだありません」で固定化する。空なら null にしてクライアント取得
-      // （リトライ付き）へフォールバックさせる。本番コーパスは非空なので空=ほぼ一過性失敗。
-      if (Array.isArray(core.data) && core.data.length > 0) {
-        initialPublic = {
-          data: core.data as PublicInitial['data'],
-          reportsData: core.reportsData as PublicInitial['reportsData'],
-          counts: core.counts as PublicInitial['counts'],
-        };
-      }
+    const core = await getCoreData(30);
+    // 空フィードは信用しない。getCoreData の内部サブ取得はDBエラーを握り潰して空配列を返すため、
+    // Turso瞬断などSSRの一過性失敗で initialData が「記事0件の成功」になり、クライアント再取得も
+    // スキップされて「記事がまだありません」で固定化する。空なら null にしてクライアント取得
+    // （リトライ付き）へフォールバックさせる。本番コーパスは非空なので空=ほぼ一過性失敗。
+    if (Array.isArray(core.data) && core.data.length > 0) {
+      initialPublic = {
+        data: core.data as PublicInitial['data'],
+        reportsData: core.reportsData as PublicInitial['reportsData'],
+        counts: core.counts as PublicInitial['counts'],
+      };
     }
   } catch {
     initialPublic = null;
   }
-  return <HomeClient initialPublic={initialPublic} />;
+  return <PublicApp initialData={initialPublic} />;
 }
