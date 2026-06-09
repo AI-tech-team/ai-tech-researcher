@@ -141,6 +141,9 @@ async function buildDailyReport(): Promise<{ inserted: typeof reports.$inferSele
       prompt: `今日の日付: ${today}${trendText}${evidenceText}\n\n【収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
     }));
 
+    // LLMが空応答を返すことがある。空レポートを最新dailyとして保存すると購読者briefのダイジェストが消える＆オーナー宛メールも空になるため、保存せずnullを返す。
+    if (!text?.trim()) { console.warn('[Report] 空レポートのため保存をスキップ'); return null; }
+
     const reportDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
     const [inserted] = await db.insert(reports).values({ type: 'daily', content: text, reportDate }).returning();
 
