@@ -1,3 +1,5 @@
+
+
 # 設計判断ログ（Decision Log）
 
 「**決めたこと**」と「**やめた案とその理由**」を、機能完成時に1段落で追記する。
@@ -37,3 +39,20 @@
 - 決定: Turso に `ai-researcher-dev`（本番複製）を作り、ローカルの `.env.local` を dev に差し替え（本番は `.env.local.prod.bak` に退避、両方 gitignore）。
 - 理由: ローカルの検証スクリプト/dev操作が本番データを壊すリスク（VibeCoding 第四条）。
 - 影響: 本番をローカルで触る時だけ `.prod.bak` に戻す。Vercel/GitHub Actions の env は本番のまま。
+
+## 2026-06-10 オーナーUI(旧ダッシュボード)を撤去し全員を公開UIに統一
+- 決定: `page.tsx` を常に `PublicApp` を返す形にし、`HomeClient`(OwnerDashboard)とオーナー専用タブ/モーダル14点＋RAGチャット(`/api/chat`/ChatPanel/MobileChatModal)を削除（計3,233行減）。`isOwner()` はサーバ権限(公開UIの rawContent 制限・各API保護)として温存し、収集/レポートAPI(collect/evolve/recategorize/report*)も cron 用に残す。
+- 理由: 公開UI全面刷新方針(public-ui-overhaul)の発展で、オーナーも「読む」公開UIへ移行。運用トリガはcron委任で重複、チャットは個人用途のため廃止。dead な運用UIを一掃。
+- 不採用: 知識グラフ/シグナル/自律リサーチの「公開UIへ昇格」→ シグナルは中身が薄く初見に響かない、知識グラフはエンティティ正規化の品質が公開に耐えるか未検証で今やる優先度に見合わない。塩漬けより撤去し、品質が育ったら公開ビューを新規作成する方が健全と判断。
+- 影響: オーナーもログイン後は公開UIを見る(専用運用画面なし)。収集/レポート再生成は cron＋`CRON_SECRET` 直叩きで行う(UIワンクリックは廃止)。actions.ts の未使用オーナー専用アクションは下記で削除済。
+
+## 2026-06-10 dead Server Action 28個を削除（オーナーUI撤去の後片付け）
+- 決定: actions.ts から、オーナーUI撤去で呼び出し元が消えた28関数＋専用interface(SignalIntel/ProfileStats/EntityListItem)＋未使用importを削除（921行減）。
+- 理由: `"use server"` は直接POSTで叩けるため、未使用でも攻撃面＋混乱の元（最小権限）。dead code を残さない。
+- 不採用: 「UIだけ消してアクションは温存」→ 直POSTで叩ける面が残り、最小権限の原則に反する。
+- 影響: 生存関数(getCoreData/getRecommendations/getEntityKnowledgePage等)・公開UI・API・cronは不変。ビルドで全削除の未参照を機械的に保証。pipeline_logs/alerts テーブルは将来用に温存（コード参照のみ削除）。
+
+## 2026-06-10 Googleログインでアカウント選択を必須化
+- 決定: `auth.ts` の Google provider に `authorization.params.prompt = 'select_account'` を追加。
+- 理由: 未指定だと Google 側の既存セッションで選択画面を挟まず自動ログインし、別アカウントへ切り替えられない（ログアウト後の再ログインで意図せず別アカウントになる）。
+- 影響: ログインのたびにアカウント選択画面が出る（単一アカウント時は素通り）。
