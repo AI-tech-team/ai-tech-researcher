@@ -11,6 +11,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      // ログインのたびにGoogleアカウント選択を出す。未指定だとGoogle側の既存セッションで
+      // 選択を挟まず自動ログインし、別アカウントへ切り替えられない（共用環境で誤アカウントの恐れ）。
+      authorization: { params: { prompt: 'select_account' } },
     }),
   ],
   session: { strategy: 'jwt' },
