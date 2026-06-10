@@ -31,6 +31,7 @@
 - **テスト**: 純粋ロジックはユニットテスト（`npm test`＝node:test+tsx）。説明できないものはリリースしない。
 - **DRY**: 同一ロジックの2箇所コピーを避ける（例: markdownToHtmlは共通lib）。
 - 構成: Git必須・secretsは`.gitignore`・**dev/本番のDBは分離**（ローカルは別Turso/ブランチDBを使う）。
+- **本番スキーマ変更の罠**: 列追加等のmigrationは**push前に本番Tursoへ適用**する。未適用のままpushすると、全カラムselect（週次/月次/backup）や`ingestKnowledge`のUPDATEが**本番だけ**SQLエラーになる（ローカルは通るので気づけない）。詳細 [[reference-dev-env]]。
 
 ## 第五条 性能
 - ループ内DB問い合わせ(N+1)を避ける（バッチ/Promise.all）。大規模検索はindex前提（vector/FTS済）。
@@ -61,240 +62,46 @@ STRIDE / OWASP Top10 / ASVS / 最小権限 / Defense in Depth / IDOR・XSS・CSR
 
 ---
 
-# v3 実装計画
+# 現状サマリ（AI Tech Researcher）
 
-## 現状（v2）
-- Next.js 16 + Turso(libSQL) + Drizzle ORM + Gemini 2.5 Flash
-- Vercel デプロイ、GitHub Actions で1日3回パイプライン実行
-- RSS(16本)/HN/ArXiv/GitHub Trending/PwC/Gemini Grounding で収集
-- 重要度スコア＋パーセンタイル正規化、クレーム抽出・矛盾検出
-- ユーザー興味重み(user_topic_weights)、カバレッジギャップ補完
-- 日次/週次/月次レポートメール、チャット(Gemini)
+自走型AI技術情報収集・レポーティングシステム。個人利用＋公開マルチユーザー（Googleログイン）。
 
-## v3 実装対象（メール受信パイプライン以外すべて実装）
+- **スタック**: Next.js 16 + Turso(libSQL) + Drizzle ORM + Gemini 2.5 Flash Lite（メイン）/ Flash（重要レポート）。
+- **デプロイ/運用**: Vercel（Root Directory = `v2`、git push で自動）。GitHub Actions が毎日06:00 JSTに `daily_pipeline.ts` 実行（収集→知識抽出→レポート→夜間リサーチ）。
+- **埋め込み**: gemini-embedding-001 / 768次元 / 非対称（文書=RETRIEVAL_DOCUMENT・クエリ=RETRIEVAL_QUERY）。
+- **検索/RAG**: ハイブリッド3エンジン = vector + FTS5（CJK trigram）+ GraphRAG。チャンク(`content_chunks`)埋め込み＋RRF統合、`fetch_article`ドリルダウン。チャットも夜間リサーチも自前コーパスRAGで完結（外部検索はほぼ廃止）。
+- **収集**: 無料フィード巡回（RSS/HN/ArXiv/GitHub等）＋ドメイン→フィード自動発見＋フィード自己監視＋本文ディープ抽出（LLM不使用）。
+- **共有エンジン**: `src/lib/knowledge-ai.ts` の `askKnowledgeAI(task)` — 標準ツール付きDB接続AI。レポート/問い生成/横断洞察がここ経由。
+- **UI**: 公開UIに全員統一（旧オーナー専用UIは撤去）。記事/レポートは全画面ページ＋Intercepting Routes。`getCoreData`/`getAnalyticsData` でServer Actionをバンドル。
 
----
+詳細は memory の [[project-overview]] / [[reference-auth]] / [[reference-deploy]] / [[public-ui-overhaul]] / [[reference-dev-env]] を参照（v3/v4/v4.5の完了済み実装計画はそちらに集約）。
 
-### 🧠 知識・インテリジェンス系
+# 進行中の課題
 
-#### Living Knowledge Graph
-- エンティティ正規化: `GPT-4o` / `GPT4o` / `gpt-4 omni` を同一ノードに統合
-- 関係タイプ: `outperforms / competes_with / builds_on / acquired_by / cites / supersedes`
-- 時系列バージョニング: 全事実に日付、古い情報は "stale" に自動移行
-- 推論: A>B かつ B>C → A>C（推定）を自動生成
-- 既存の `claims` テーブルを拡張して実装
+現フェーズ = **「DBの状態がシステムの行動を決める」DB主導化＋DB精度の極大化**（精度＞コスト削減）。詳細・判断理由は [[current-phase-plan]]。
 
-#### ベンチマーク自動トラッキング
-- 数値クレームを構造化: `{ entity, benchmark_name, score, date, source, confidence }`
-- 同ベンチマークの時系列グラフを自動生成
-- 追跡中のモデルが抜かれたときにアラート
-- モデル横断リーダーボードを常時最新維持
-
-#### シグナルインテリジェンス
-- 求人変化: AI企業が特定職種を大量募集 → 次の製品ジャンルが見える
-- GitHub コミット速度の急増 → OSS ライブラリの次期リリース予兆
-- 論文投稿速度の変化 → 特定分野の研究活性度バロメーター
+- **DB精度**: A/B/C/D/E 完了。残=B任意（汎用表記ゆれを `normalizeEntityKey` の決定論alias `ENTITY_ALIAS_KEYS` に追加して再発防止）。**遡及補正は再抽出せず直接UPDATE**（再抽出は confidence_score を0.7にリセットする仕様のため）。
+- **DB主導化（未着手）**: ① Epistemic Pull Collection（DB状態が収集クエリ生成）/ ② 抽出深さをDB状態で決定 / ③ 夜間調査の戦略分岐（origin別）/ ④ 週次・月次・LearningRecap を knowledgeAI 移行。
+- **次テーマ**: ② コーパス精度（収集記事の質）/ ③ 読み込み速度（**ボトルネック計測から**・[[feedback-evolve-nplus1]]）。
+- **検索0%の最終スイッチ**: 無料フィードをCI数サイクル熟成 → `scripts/measure_v4.ts` 再計測で検索のユニーク貢献が無料に吸収されたか確認 → 吸収済なら keywordRounds=0（劣化させない順序）。
 
 ---
 
-### ⚡ 収集・データ系
+# リポジトリの .md と参照ガイド（こういう時だけ読む）
 
-#### ゼロレイテンシ収集（イベント駆動）
-- RSS の WebSub/PubSubHubbub 対応フィードは記事公開と同時にプッシュ通知
-- 非対応フィードは Cloudflare Workers（無料）で15分ポーリング
-- GitHub Actions cron から脱却、速報性をケタ違いに改善
+毎セッション読むのはこのファイルだけ。下記は**その作業をするときだけ**開く（常時ロードしない）。
 
-#### ディープコンテンツ抽出
-- Readability アルゴリズムで本文を完全抽出
-- コードスニペット / 数値テーブル / 図表 / 引用を個別に抽出
-- 複数ソースが同一記事を報じた場合は信頼スコアを加算
-- 「8媒体が報じた」バッジで一次情報と反響を区別
+## v2/（本体・Next.js 16アプリ）
+- **AGENTS.md** — 冒頭で`@import`済（常時有効）。Next.js 16は破壊的変更あり → **コードを書く前に** `node_modules/next/dist/docs/` の該当ガイドを読む。
+- **docs/decisions.md** — 設計判断ログ。**機能を完成させたら**「決定/理由/不採用/影響」を1段落追記。「なぜこうなってる？」を遡るときも読む。
+- **LINT_CLEANUP.md** — ESLint方針の記録（✅解決済・参考）。**lintで詰まったとき**だけ。
+- **READING_DNA_MODULE.md** — 読書DNA／スマートダイジェストの**未着手**モジュール仕様。**その機能に着手するとき**だけ。
+- **README.md** — create-next-appのデフォルト（中身なし・無視可）。
 
-#### クロスソース意味論的重複排除
-- ベクトル類似度で「同じストーリー」をグループ化（sqlite-vec 活用）
-- ストーリー単位で importance を合算 → 話題の大きさが可視化
+## ルート/その他
+- **README.md**（ルート）— 公開用README（特徴/セットアップ/env）。記述がやや古い（旧チャット等）→**公開文言を直すとき**に整合させる。
+- **skills/*.md**（collect-web / evolve-sources / report-daily）— 旧Antigravity時代の手書きスキル定義。現在は `daily_pipeline.ts` に統合済の**レガシー**。基本触らない。
+- **web/** — Vite+Reactテンプレの残骸（未使用の旧試作）。本体は v2/。
 
-#### ※ メール受信パイプライン（未実装）
-- Cloudflare Email Routing でシステム専用メールアドレスを用意
-- ニュースレターを転送するだけで自動取り込み
-- **今回は実装しない**
-
----
-
-### 🤖 エージェント・アシスタント系
-
-#### 夜間自律リサーチサイクル
-- 毎晩パイプラインが「問い」を自動生成して追加調査を実行
-- 「これの続きが気になる」「これは裏付けが足りない」を検知
-- 朝の briefing に「昨夜調べたこと」として追加
-
-#### 長期記憶つきチャット
-- 現在: 直近20件の記事をコンテキストに渡す
-- v3: 全知識グラフ + 会話履歴 + ユーザープロファイル
-- セッションをまたいだ文脈の継続
-
-#### オンデマンドリサーチブリーフ
-- 「RAG についてまとめて」→ 定義/現状/主要プレイヤー/直近動向/未解決課題/関連読書 を構造化出力
-- チャットの1問1答を超えた調査レポートの自動生成
-
-#### 先読みアラート（理由付き）
-- 閾値超えの機械的通知ではなく、「なぜ通知するか」を説明
-- 例: 「GPT-5を追跡中です。本日の記事でリリースが予想より早い可能性があります」
-
----
-
-### 📖 読書DNA
-
-#### 4軸プロファイリング
-- 深さ: 理論派 ↔ 実装派
-- 時制: 近未来志向 ↔ 長期トレンド志向
-- 視点: 研究者 ↔ エンジニア ↔ ビジネス
-- 広さ: 専門特化 ↔ 広範収集
-- 記事を開く/展開する/お気に入りにする行動ごとに重み付けを変えてプロファイルに反映
-
-#### 知的変化の記録
-- 「3ヶ月前はLLM推論を中心に読んでいたが、先月からエージェントへシフト」を可視化
-- 「最近読んでいない分野」を検知して意識的にカバーを促す
-
-#### サマリーのトーン適応
-- 実装派 → 「実際にどう使うか」「コードはどこにある」を前面に
-- 理論派 → 「どんな仮定か」「先行研究との違い」を前面に
-- ビジネス派 → 「市場への影響」「採用コスト」を前面に
-
----
-
-### ✉️ スマートダイジェスト（適応型メール）
-
-#### 5フォーマット配信
-| フォーマット | タイミング | 内容 |
-|---|---|---|
-| Morning Flash | 平日朝 | 重要5件、各1行。30秒で読める |
-| Deep Dive | 週末 | 2000字。今週の流れを物語として |
-| Topic Brief | オンデマンド | 特定テーマに絞った完全総括 |
-| Learning Recap | 毎週日曜 | 「今週あなたが学んだこと」の振り返り |
-| Prediction Brief | 月初 | 先月データから見える今月の展開予測 |
-
-#### 会話への誘導
-- メールの各記事に「この記事について話す」リンク
-- クリックするとAIが3つの問いを用意した状態でチャットが開く
-
----
-
-### 🗒️ Obsidian / Notion 自動同期
-
-#### 双方向同期
-- システム → Obsidian: 記事ノート、クレームノート、週次合成ノート
-- Obsidian → システム: アノテーション、追記が興味プロファイルに反映
-
-#### 自動ナレッジアーキテクチャ（Zettelkasten互換）
-- Fleeting Note: 記事ごと（要約・タグ・クレーム）
-- Literature Note: 同テーマの複数記事を束ねた概念ノート
-- MOC（Map of Content）: カテゴリごとの索引ノート、週次自動更新
-- Weekly Synthesis: その週の知識をつなぐ合成ノート
-
----
-
-### 🌐 ブラウザ拡張
-
-#### Ambient Intelligence（クリック不要）
-- 2分以上滞在したAI関連ページ → バックグラウンドで自動取り込み・処理
-- 初めて訪問したドメインでAIコンテンツを検知 → ソース候補として記録
-
-#### インライン拡張
-- 記事閲覧中のサイドバーに: 過去の関連記事 / 何媒体が報じているか / 数値クレームの裏付け状況
-- コンテキスト注入: GitHub リポジトリを開く → 「このライブラリに言及した記事が8件あります」
-
----
-
-### 🏗️ インフラ・スケール系
-
-#### イベント駆動アーキテクチャ
-```
-v2: cron → pipeline → DB
-v3: event → queue → parallel workers → DB → downstream triggers
-```
-- 新記事追加 → 評価 → 知識グラフ更新 → アラート判定 → Obsidian同期 が非同期に流れる
-- Upstash QStash または Cloudflare Queues
-
-#### ベクトルインフラ（sqlite-vec）
-- Turso の sqlite-vec 拡張で全記事に埋め込みベクトルを保存
-- セマンティック検索がAI呼び出しなしで即時応答
-- 意味的重複排除（同ストーリー検知）
-- トピッククラスタリング（カテゴリの自動発見）
-
-#### 分散コレクター
-- GitHub Actions → Cloudflare Workers に収集ワーカーを移行
-- 24時間常時稼働、並列実行、無料枠で対応
-- 各ソースタイプが独立したワーカー → 1つが落ちても他に影響しない
-
-#### 長期アーカイブ + 年次分析
-- 現在: 実質30日窓 → v3: 無期限保存、階層化ストレージ（hot/warm/cold）
-- 「1年前の今週と比較」「技術Xの盛り上がりの歴史」が追える
-- 自分専用のAI業界データベースとして育てる
-
----
-
-## v3 コンセプト
-
-> あなたの知的活動を観察し、先を読み、必要な知識を準備しておく — 頼む前に動くリサーチャー。
-
----
-
-# v4 実装計画（自己完結型ナレッジエンジン）
-
-## コンセプト
-> 外部の有料Web検索(Geminiグラウンディング)をゼロにし、無料ソースの巡回＋本文ディープ抽出だけで収集。
-> チャットも夜間リサーチも「外に検索」でなく自前コーパスへのRAGで完結させる。**検索0%・抽出100%**。
-
-## 設計原則（フェーズ0の計測で確定）
-- **検索は即廃止せず「卒業」する**: 計測で検索由来記事が35%・うち大半が無料ソース未捕捉と判明。
-  先に無料カバレッジを太らせ、検索の不要を再計測で確認してから切る（劣化させない）。
-- **検索＝偵察役**: 検索が見つけた高品質記事のドメインを無料フィードへ自動変換し、以後は無料巡回で代替。
-- **トークン最小化**: eval前にDB既収集URLを除外／本文は上限切詰め／RAGは文脈固定／flash-lite主体。
-
-## フェーズ進捗
-- ✅ **フェーズ0 計測**: ソース構成(検索35%/無料65%)、eval重複の浪費(1日600件評価→新規27件)、
-  FTS5利用可、検索由来70ドメインを確認。スクリプト: `scripts/measure_v4.ts` / `measure_domains.ts`。
-- ✅ **フェーズ1-A eval前dedup**: 全コレクタでLLM評価前にDB既収集URLを除外。冗長runのトークンを実質ゼロ化。
-- ✅ **フェーズ1-C カバレッジ拡充**: Zenn/Qiita/Reddit/Lobsters/Simon Willison の5フィード追加。
-  停止中フィード(Anthropic/Meta/Mistral)は404で正しく停止済と確認。
-- ✅ **フェーズ1-B ドメイン→フィード自動発見**: `src/lib/feeds.ts` discoverFeedUrl()。
-  homepageの`<link rel=alternate>`＋定番パスでRSS/Atom発見＋AI濃度ゲート(単語境界マッチ)で
-  ファイアホース除外。evolveが発見ドメインをrss型(active)で登録。遡及収穫で21フィード登録済。
-- ✅ **フェーズ1-D ディープ本文抽出**: `src/lib/feeds.ts` fetchArticleText()。<article>/<main>優先で
-  本文抽出(無料・LLM不使用・6000字上限)。`runDeepExtraction()`が高重要度(>=8)記事のrawContentを充填。
-  `PIPELINE_MODE=deep`で単体実行可。フルパイプラインに組込済。チャンク化はフェーズ3で。
-- 🔄 **フェーズ2**: ✅フィード自己監視(`monitorFeedHealth()`: 自動発見フィードが21日収量0なら
-  low-priorityへ降格＝無駄な巡回/評価を防ぐ安全網。必須/高価値score>3は対象外)。
-  残: 重要度合成(LLM＋corroboration＋権威。※エンゲージは計測でほぼ0のため当面除外)／
-  キーワードを検索トリガーでなく関連度ブースト＋発見シグナルへ転用。
-- 🔄 **フェーズ3 ハイブリッドRAG**: ✅FTS5(trigram・CJK対応)構築＋同期トリガ。
-  ✅`src/lib/retrieval.ts` hybridSearch(vector_top_k＋FTS5をRRF統合)。
-  ✅チャット刷新(直近20件固定→全コーパスRAG＋[ID]出典＋ハルシネーションガード)。#deepも自前コーパス化。
-  ✅夜間リサーチを自前コーパスRAGへ移行(Grounding廃止)。残るGroundingはキーワード収集のみ。
-  残: キーワードGrounding収集の停止 → **検索0%の最終スイッチ**（下記の再計測後に実施）。
-  ※スキーマ追加: `scripts/migrate_v4_fts.ts`（collected_fts・本番適用済）。
-
----
-
-# v4.5 実装計画（検索/RAGエンジンの超強化）
-
-ハイブリッド検索を **vector + FTS5 + GraphRAG の3エンジン** に。本文(rawContent)を活かし回答精度を底上げ。
-コスト最優先（LLMリランク不採用・RRF＋非対称埋め込みで品質確保・埋め込みは増分のみ）。
-
-- ✅ **A パッセージレベルRAG**: `content_chunks`テーブル＋`chunk_embedding_idx`。本文を~1500字チャンク化し
-  埋め込み(`runChunkEmbeddings`)。hybridSearchが記事＋チャンクの意味検索＋FTS5をRRF統合し、最良チャンクをsnippet化。
-- ✅ **C 非対称埋め込み**: 文書=`RETRIEVAL_DOCUMENT`/クエリ=`RETRIEVAL_QUERY`。全コーパス再埋め込み済。
-- ✅ **B GraphRAG（第3エンジン）**: `retrieval.ts` graphContext()。クエリ中の固有名詞→entities照合→
-  benchmarks/relations/claimsを構造化注入。チャットの文脈に「関連知識」として追加。
-- ✅ **D ドリルダウン**: チャットに `fetch_article(id)` ツール（本文全文を読む多段深掘り）。
-- ✅ **E 本文知識抽出**: `runKnowledgeExtraction` を summary→rawContent(3000字上限)ベースに。
-- バックフィル: 497記事再埋め込み / 177記事→361チャンク。`PIPELINE_MODE=reembed`/`chunks`、`migrate_v45_chunks.ts`(適用済)。
-
-## 残課題メモ
-- **検索0%の最終スイッチ手順**: 新フィード(26本＋自動発見)をCI数サイクル熟成 → `scripts/measure_v4.ts`で
-  再計測し「検索のユニーク貢献が無料に吸収されたか」を確認 → 吸収済なら collectData の
-  keywordRounds を 0 に（またはキーワード収集を停止）して検索0%達成。劣化させないための順序。
-- 自動発見の品質ゲートにborderline(benzinga/trullion等)が数件混入 → monitorFeedHealthで21日後に淘汰。
-- vertexaisearchの壊れURL(5件)は既存 `PIPELINE_MODE=fixurls` で掃除可（低優先）。
-- v4.5残: GraphRAGの夜間リサーチへの適用／nightlyにもgraphContext注入（任意・低優先）。
+## memory/（関連時に自動想起・索引=MEMORY.md）
+作業前に MEMORY.md で当たりをつけ、該当ファイルだけ開く。主要: [[project-overview]]（全体）/ [[current-phase-plan]]（現フェーズ全計画）/ [[reference-auth]]（認証）/ [[reference-deploy]]（デプロイ）/ [[reference-dev-env]]（ローカルdevの罠・DB識別）/ [[reference-data-and-cron]]（データ格納形式/cron）。
