@@ -81,7 +81,7 @@
 - 影響: 退会で個人データが完全消去される。バックアップから復旧できるのは共有資産のみ（個人状態は対象外）。併せて scratch スクリプト`scripts/_*.ts`をtsconfigの型チェック対象外に。
 
 ## 2026-06-10 アプリアイコンをバルブに刷新＋PWA化＋起動スプラッシュ
-- 決定: モチーフ＝**バルブ(ひらめき/AI)＋新芽(毎日「育つ」)**。`src/app/icon.png`(32)/`apple-icon.png`(180)＋`public/icon-192/512/512-maskable.png` の静的PNG一式に置換し、コード生成の `icon.tsx`/`apple-icon.tsx` は削除。`manifest.ts`(standalone・bg/theme `#03060f`)＋layoutに`manifest`/`appleWebApp`配線。起動スプラッシュ`SplashScreen`(濃紺＋ロゴのscale-in→fade-out)。
+- 決定: モチーフ＝**バルブ(ひらめき/AI)＋新芽(毎日「育つ」)**。`src/app/icon.png`(32)/`apple-icon.png`(180)＋`public/icon-192/512/512-maskable.png` の静的PNG一式に置換し、コード生成の `icon.tsx`/`apple-icon.tsx` は削除。`manifest.ts`(standalone・bg/theme `#03060f`)＋layoutに`manifest`/`appleWebApp`配線。起動スプラッシュ`SplashScreen`(濃紺＋「新芽が育つ」インラインSVGアニメ=茎が伸び→葉が開き→種が灯る→fade-out)。当初はPNGロゴのscale-inだったが、"毎日育つ"を直球で見せる新芽アニメに差し替え(ユーザー選択)。
 - 理由: モチーフ選定で星/スパークル/星座/Gemini系を一旦却下し（汎用的すぎる）、製品の芯「育つ知識」を直球で表すバルブ＋新芽に決定（ユーザー作成の1024 PNG採用）。PWA＝スマホでアプリ体験、スプラッシュ＝起動のブランド体験。
 - 不採用: アイコンをコード(SVG)再現→ユーザー提供PNGの質が高く一式揃っていたので静的採用。iOSネイティブ起動画像→端末別画像が大量で重く見送り（アプリ内スプラッシュで代替）。毎回抑制(sessionStorage)→SSRと相性悪く一瞬チラつくので入れず（フルロードは稀なため許容）。
 - 影響: 全サイズのアイコン＋PWA＋スプラッシュが本番反映（`/manifest.webmanifest`・各icon 200・head リンク確認済）。スプラッシュはJS無し/`prefers-reduced-motion`でも閉じ込めないフォールバック付き。`favicon.ico`は既に不在で一本化済。

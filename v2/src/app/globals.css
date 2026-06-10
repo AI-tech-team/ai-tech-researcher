@@ -185,13 +185,20 @@ button, a, [role="button"], summary {
   opacity: 0; visibility: hidden; pointer-events: none;
   transition: opacity 0.45s ease, visibility 0s linear 0.45s;
 }
-.splash__logo {
-  filter: drop-shadow(0 10px 34px rgba(34,211,238,0.22));
-  animation: splashLogoIn 0.7s cubic-bezier(0.2,0.7,0.3,1) both;
-}
-@keyframes splashLogoIn { from { opacity: 0; transform: scale(0.82); } to { opacity: 1; transform: scale(1); } }
+/* 新芽が育つ: 電球フェードイン → 茎が伸び → 葉が開き → 種が灯る（各パーツを順に1回だけ） */
+.splash svg { filter: drop-shadow(0 10px 34px rgba(34,211,238,0.18)); }
+.splash__bulb { animation: splashFadeIn 0.4s ease both; }
+.splash__bglow { transform-box: fill-box; transform-origin: center; animation: splashGlow 1.7s ease-out both; }
+.splash__stem { transform-box: fill-box; transform-origin: 50% 100%; animation: splashStem 0.55s cubic-bezier(0.2,0.7,0.3,1) 0.25s both; }
+.splash__leafL { transform-box: fill-box; transform-origin: 100% 70%; animation: splashLeaf 0.5s cubic-bezier(0.2,0.8,0.3,1) 0.6s both; }
+.splash__leafR { transform-box: fill-box; transform-origin: 0% 70%; animation: splashLeaf 0.5s cubic-bezier(0.2,0.8,0.3,1) 0.72s both; }
+.splash__seed { animation: splashFadeIn 0.4s ease 0.95s both; }
+@keyframes splashFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes splashStem { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes splashLeaf { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
+@keyframes splashGlow { 0% { opacity: 0.08; } 60% { opacity: 0.42; } 100% { opacity: 0.2; } }
 @keyframes splashAutoOut { to { opacity: 0; visibility: hidden; pointer-events: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .splash__logo { animation: none; }
-  .splash { animation-duration: 0.3s; animation-delay: 0.8s; }
+  .splash__bulb, .splash__bglow, .splash__stem, .splash__leafL, .splash__leafR, .splash__seed { animation: none; }
+  .splash { animation-delay: 1s; }
 }
