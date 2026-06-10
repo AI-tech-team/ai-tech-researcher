@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info, Rss } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -409,11 +409,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <History size={14} className="text-slate-400" /> 更新履歴
                     </Link>
-                    {/* RSSは外部XML(/feed.xml)なのでSPA遷移させず素のリンクで開く */}
-                    <a href="/feed.xml" target="_blank" rel="noopener noreferrer" onClick={() => setInfoMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                      <Rss size={14} className="text-slate-400" /> RSSフィード
-                    </a>
                   </div>
                 </>
               )}
