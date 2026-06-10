@@ -1303,7 +1303,7 @@ async function resolveEntity(rawName: string, type = 'model'): Promise<{ id: num
 }
 
 // 知識抽出プロンプト本体（同期・Batch共通）。出力形式の足場だけ呼び出し側で足す。
-function buildExtractionPrompt(article: { title: string | null; rawContent: string | null; summary: string | null }): string {
+function buildExtractionPrompt(article: { title: string | null; rawContent: string | null; summary: string | null }, context = ''): string {
   return `以下の記事から構造化された知識を抽出してください。該当がなければ空配列。
 
 【claims】検証可能な具体的主張を最大3つ。subject(主語:モデル/企業名はそのまま)+predicate(述語:指標を**日本語**で)+value(具体値を**日本語**で。固有名詞・数値は原語可)。「AIが進化」等の汎用主張は除外。
@@ -1317,8 +1317,59 @@ function buildExtractionPrompt(article: { title: string | null; rawContent: stri
 - 伝聞・噂・リーク・未確認情報: 「〜と噂される」「リークによれば」「報じられている」等の裏取りされていない記述
 - 第三者の主観的な意見・評価・コメント: 「画期的だ」「優れていると感じる」等（※企業/論文が公表した客観的なベンチ数値・事実は抽出してよい）
 - 絶対値を伴わない相対表現: 「Aより速い/高い」だけで具体的な数値・指標がないもの（数値の裏付けがある事実のみ）
-
+${context}
 記事: ${article.title ?? ''}\n${(article.rawContent ?? article.summary ?? '').slice(0, 3000)}`;
+}
+
+// ②(DB主導): 抽出前にDB状態から「重点ヒント」を組み立てる（精度向上方向・軽量化はしない）。
+// 記事タイトルに登場する既知エンティティ（=記事の主題である強いシグナル）の既存の主要クレームと
+// 90日以上更新のないベンチをプロンプトに足す。マッチなしなら空文字（＝通常抽出にフォールバック・劣化しない）。
+async function buildExtractionContext(
+  article: { title: string | null; summary: string | null },
+  knownEntities: { id: number; name: string; mention: number | null }[],
+): Promise<string> {
+  // タイトル一致に限定。本文末尾の付随言及（記事の主題でないエンティティ）で誤発火させない。
+  const title = (article.title ?? '').toLowerCase();
+  if (!title.trim()) return '';
+  // 短い名前の誤検出を避けるため4文字以上。knownEntities は言及数降順で渡す前提→主要な最大2件。
+  const hits = knownEntities
+    .filter(e => e.name.length >= 4 && title.includes(e.name.toLowerCase()))
+    .slice(0, 2);
+  if (hits.length === 0) return '';
+
+  const cutoff90 = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const lines: string[] = [];
+  for (const e of hits) {
+    const [clms, lastBench] = await Promise.all([
+      db.select({ p: schema.claims.predicate, v: schema.claims.value })
+        .from(schema.claims)
+        .where(and(
+          eq(schema.claims.entityId, e.id),
+          eq(schema.claims.status, 'active'),
+          gte(schema.claims.confidenceScore, 0.5), // 低確信度（decay済）は「既知」として提示しない
+        ))
+        .orderBy(desc(schema.claims.validFrom)).limit(4),
+      db.select({ b: schema.benchmarks.benchmarkName, d: schema.benchmarks.recordedDate })
+        .from(schema.benchmarks)
+        .where(eq(schema.benchmarks.entityId, e.id))
+        .orderBy(desc(schema.benchmarks.recordedDate)).limit(1).then(r => r[0] ?? null),
+    ]);
+    const parts: string[] = [];
+    // 同一 predicate=value の重複を除いて最大2件
+    const seen = new Set<string>();
+    const uniq: string[] = [];
+    for (const c of clms) {
+      const k = `${c.p}=${c.v}`;
+      if (seen.has(k)) continue;
+      seen.add(k); uniq.push(k);
+      if (uniq.length >= 2) break;
+    }
+    if (uniq.length) parts.push(`既知の主張: ${uniq.join(' / ')}`);
+    if (lastBench?.d && lastBench.d < cutoff90) parts.push(`ベンチ「${lastBench.b}」は${lastBench.d}以降更新なし`);
+    if (parts.length) lines.push(`- ${e.name}: ${parts.join('。')}`);
+  }
+  if (lines.length === 0) return '';
+  return `\n【このエンティティの既存知識（DB状態）。記事中に"更新・矛盾・新スコア"があれば必ず優先抽出。記事に書かれていなければ無視し、既存値を転記しないこと】\n${lines.join('\n')}`;
 }
 
 // 抽出結果(KnowledgeSchema)をDBへ反映（同期・Batch共通: 正規化/フィルタ/stale移行/裏付けブースト）。
@@ -1471,15 +1522,21 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
 
   if (targets.length === 0) { console.log('[Knowledge] 対象記事なし'); return; }
 
+  // ②(DB主導): 抽出深さの重点ヒント用に、主要エンティティ（言及数上位）を一度だけロード
+  const knownEntities = await db.select({
+    id: schema.entities.id, name: schema.entities.canonicalName, mention: schema.entities.mentionCount,
+  }).from(schema.entities).orderBy(desc(schema.entities.mentionCount)).limit(150);
+
   let claimCount = 0, benchCount = 0, relCount = 0, staleCount = 0;
 
   for (const article of targets) {
     const validFrom = (article.publishedAt ?? new Date().toISOString()).split('T')[0];
     try {
+      const context = await buildExtractionContext(article, knownEntities);
       const { object } = await withRetry(() => generateObject({
         model: google('gemini-2.5-flash-lite'),
         schema: KnowledgeSchema,
-        prompt: buildExtractionPrompt(article),
+        prompt: buildExtractionPrompt(article, context),
       }));
       const c = await ingestKnowledge(article, validFrom, object);
       claimCount += c.claims; benchCount += c.benchmarks; relCount += c.relations; staleCount += c.stale;
