@@ -38,6 +38,10 @@ export const metadata: Metadata = {
     title: SITE_NAME,
     description: SITE_DESC,
   },
+  alternates: {
+    // RSSリーダ/ブラウザがレポートフィードを自動検出できるように <link rel="alternate"> を出す
+    types: { 'application/rss+xml': `${SITE_URL}/feed.xml` },
+  },
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
