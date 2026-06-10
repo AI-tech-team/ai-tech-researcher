@@ -91,3 +91,10 @@
 - 理由: 公開前「配信・発見レイヤー」の土台。レポートは自前生成IPなのでArticle化、sitemapは記事のみで自前レポートが未収録だった穴を修正。
 - 不採用: `SearchAction`(sitelinks検索box)→`?q=`のURL検索が無いので省略。記事ページに`NewsArticle`→第三者記事を自作と誤表示するので付けない。
 - 影響: 本番でld+json妥当・sitemapの/reports/が0→37件を確認。次は②RSS/③per記事OG＋シェア(はてブ/X/コピー)/④メルマガCTA（計画はメモリ distribution-discovery-plan）。
+
+## 2026-06-11 配信②: レポート全文のRSS 2.0フィード(/feed.xml)
+- 決定: `app/feed.xml/route.ts`(Route Handler)で公開レポート(daily/weekly/monthly・最新50件)を `content:encoded` に全文配信。Markdownは**RSS向けの軽量セマンティックHTML断片**に変換（`[ID:N]`は`/articles/N`リンク化）。head に `rel=alternate`(metadata.alternates.types)、公開UIの「…」メニューにRSS導線。
+- 理由: メール購読と同じ中身を機械可読で一本化（合意Q1）。レポートは自前生成IPなので全文OK、記事(第三者著作)は混ぜない。
+- 不採用: メール用 `markdownToHtml`(api/report)の流用→暗色フルHTML文書でRSSリーダ(白背景)に不適。共通lib化も出力要件が別(暗色doc vs 白断片)なので見送り、フィード専用変換をルート内に持つ。記事をフィードに混在→著作権＆主役がぶれる。
+- 検証: 本番200・`application/rss+xml`・37件・content:encoded全文・atom self・CDATA・CDATA外の裸`&`=0・home headのalternate出力を確認。CDNサイドキャッシュ`s-maxage=1800`。
+- 影響: RSS購読が可能に。残=③per記事OG＋シェア/④メルマガCTA。
