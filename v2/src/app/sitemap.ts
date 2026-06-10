@@ -1,9 +1,9 @@
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
-import { getCollectedDataList } from '@/app/actions';
+import { getCollectedDataList, getReportsData } from '@/app/actions';
 
-// 公開ページのサイトマップ。入口ページに加え、全画面記事ページ(/articles/[id])の直近分を列挙する。
-// レポートは ?report= で開くモーダルのため個別URLを持たないが、記事は独立ページなのでクローラに知らせる。
+// 公開ページのサイトマップ。入口ページに加え、全画面ページの記事(/articles/[id])と
+// レポート(/reports/[id])の直近分を列挙してクローラに知らせる（どちらも独立URLを持つ）。
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
   const pages: MetadataRoute.Sitemap = [
@@ -30,5 +30,21 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // 取得失敗時は入口ページのみ返す（sitemap自体を落とさない）
   }
 
-  return [...pages, ...articles];
+  let reportPages: MetadataRoute.Sitemap = [];
+  try {
+    const reports = await getReportsData(); // 公開対象(daily/weekly/monthly)のみ
+    reportPages = reports.map(r => {
+      const d = r.reportDate ? new Date(r.reportDate) : (r.createdAt ? new Date(r.createdAt) : now);
+      return {
+        url: `${SITE_URL}/reports/${r.id}`,
+        lastModified: isNaN(d.getTime()) ? now : d,
+        changeFrequency: 'monthly' as const,
+        priority: 0.6, // 自前生成のレポートは記事より優先度を少し高く
+      };
+    });
+  } catch {
+    // 取得失敗時はレポートを除外（sitemap自体は落とさない）
+  }
+
+  return [...pages, ...reportPages, ...articles];
 }

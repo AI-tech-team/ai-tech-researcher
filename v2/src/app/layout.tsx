@@ -5,7 +5,18 @@ import "./globals.css";
 import { ToastProvider } from "@/components/Toast";
 import { Providers } from "@/components/Providers";
 import { SplashScreen } from "@/components/SplashScreen";
+import { JsonLd } from "@/components/JsonLd";
 import { SITE_URL, SITE_NAME, SITE_DESC } from "@/lib/site";
+
+// サイト全体の構造化データ（WebSite＋Organization）。検索ボックス(SearchAction)は
+// URLベースの検索結果(?q=)が無いため今は付けない。
+const siteJsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    { '@type': 'WebSite', '@id': `${SITE_URL}/#website`, url: SITE_URL, name: SITE_NAME, description: SITE_DESC, inLanguage: 'ja' },
+    { '@type': 'Organization', '@id': `${SITE_URL}/#org`, name: SITE_NAME, url: SITE_URL, logo: `${SITE_URL}/icon-512.png` },
+  ],
+};
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
@@ -55,6 +66,7 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
         </Providers>
         {/* Cookieレス・匿名のアクセス解析（PIIを集めない方針と両立）。Vercel側でWeb Analytics有効化が必要 */}
         <Analytics />
+        <JsonLd data={siteJsonLd} />
       </body>
     </html>
   );

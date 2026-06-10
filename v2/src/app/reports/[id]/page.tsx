@@ -2,9 +2,10 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { BrainCircuit, ArrowLeft } from 'lucide-react';
-import { SITE_NAME } from '@/lib/site';
+import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { getReportById } from '@/app/actions';
 import { ReportView } from '@/components/ReportView';
+import { JsonLd } from '@/components/JsonLd';
 
 const TYPE_LABEL: Record<string, string> = { daily: 'デイリーレポート', weekly: '週次レポート', monthly: '月次レポート' };
 
@@ -24,8 +25,24 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const report = await getReportById(Number(id));
   if (!report) notFound();
 
+  // レポートは自前生成のIP → Article として構造化（記事ページは第三者著作なので付けない）。
+  const label = TYPE_LABEL[report.type] ?? 'レポート';
+  const articleJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: `${label} ${report.reportDate ?? ''}`.trim(),
+    ...(report.reportDate ? { datePublished: report.reportDate, dateModified: report.reportDate } : {}),
+    inLanguage: 'ja',
+    author: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
+    publisher: { '@type': 'Organization', name: SITE_NAME, logo: { '@type': 'ImageObject', url: `${SITE_URL}/icon-512.png` } },
+    image: `${SITE_URL}/icon-512.png`,
+    description: `${SITE_NAME} の${label}（${report.reportDate ?? ''}）。`,
+    mainEntityOfPage: `${SITE_URL}/reports/${id}`,
+  };
+
   return (
     <div className="min-h-screen">
+      <JsonLd data={articleJsonLd} />
       <header className="sticky top-0 z-30 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
         <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
           <Link href="/" className="flex items-center gap-2.5">
