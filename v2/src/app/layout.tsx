@@ -4,6 +4,7 @@ import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { ToastProvider } from "@/components/Toast";
 import { Providers } from "@/components/Providers";
+import { SplashScreen } from "@/components/SplashScreen";
 import { SITE_URL, SITE_NAME, SITE_DESC } from "@/lib/site";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -26,6 +27,12 @@ export const metadata: Metadata = {
     title: SITE_NAME,
     description: SITE_DESC,
   },
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: SITE_NAME,
+  },
 };
 
 // タップ遅延を避けるためのviewport明示（width=device-width）。テーマ色も指定。
@@ -39,6 +46,7 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
   return (
     <html lang="ja" className={`${inter.variable} ${outfit.variable} h-full antialiased`}>
       <body className="min-h-full">
+        <SplashScreen />
         <Providers>
           <ToastProvider>
             {children}
