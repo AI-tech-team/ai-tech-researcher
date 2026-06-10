@@ -47,8 +47,9 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_TO: ${{ secrets.REPORT_TO }}
-          # 日次レポート/メールは外部cron→/api/report がJST06:00ちょうどに送るため、パイプライン側は送らない（二重送信防止）
-          SKIP_DAILY_REPORT_EMAIL: '1'
+          # 日次レポートの生成＋DB保存＋メール送信はこのパイプラインが行う。
+          # （以前は外部cron→/api/report に委ねてSKIPしていたが、その外部cronは存在せず＝レポートが生成されない不具合だった）
+          # 6:00ちょうどに送りたくなったら /api/report を外部cron(CRON_SECRET)で駆動する構成に移行する。
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Run Collection (midday/evening)
