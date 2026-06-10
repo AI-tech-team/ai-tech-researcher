@@ -85,3 +85,9 @@
 - 理由: モチーフ選定で星/スパークル/星座/Gemini系を一旦却下し（汎用的すぎる）、製品の芯「育つ知識」を直球で表すバルブ＋新芽に決定（ユーザー作成の1024 PNG採用）。PWA＝スマホでアプリ体験、スプラッシュ＝起動のブランド体験。
 - 不採用: アイコンをコード(SVG)再現→ユーザー提供PNGの質が高く一式揃っていたので静的採用。iOSネイティブ起動画像→端末別画像が大量で重く見送り（アプリ内スプラッシュで代替）。毎回抑制(sessionStorage)→SSRと相性悪く一瞬チラつくので入れず（フルロードは稀なため許容）。
 - 影響: 全サイズのアイコン＋PWA＋スプラッシュが本番反映（`/manifest.webmanifest`・各icon 200・head リンク確認済）。スプラッシュはJS無し/`prefers-reduced-motion`でも閉じ込めないフォールバック付き。`favicon.ico`は既に不在で一本化済。
+
+## 2026-06-10 SEO土台: JSON-LD構造化データ＋sitemapにレポートURL
+- 決定: `WebSite`+`Organization` をサイト全体(layout)、`/reports/[id]` に `Article` を付与（`JsonLd`コンポーネント=children方式で`dangerouslySetInnerHTML`不使用）。sitemapに `/reports/[id]` 直近分を追加。
+- 理由: 公開前「配信・発見レイヤー」の土台。レポートは自前生成IPなのでArticle化、sitemapは記事のみで自前レポートが未収録だった穴を修正。
+- 不採用: `SearchAction`(sitelinks検索box)→`?q=`のURL検索が無いので省略。記事ページに`NewsArticle`→第三者記事を自作と誤表示するので付けない。
+- 影響: 本番でld+json妥当・sitemapの/reports/が0→37件を確認。次は②RSS/③per記事OG＋シェア(はてブ/X/コピー)/④メルマガCTA（計画はメモリ distribution-discovery-plan）。
