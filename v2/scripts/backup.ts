@@ -18,9 +18,10 @@ async function backup() {
   const dir = join(process.cwd(), 'backups');
   mkdirSync(dir, { recursive: true });
 
-  // Drizzleで定義された全テーブルを網羅的にダンプ。
-  // 知識グラフ(claims/entities/benchmarks/relations)・マルチユーザー状態・長期記憶を含め、
-  // 事故/マイグレーション失敗時に復旧不能なデータを取りこぼさない。
+  // 共有コーパス・知識グラフなど「復旧不能で再構築コストが高い」非PIIデータのみをダンプする。
+  // ユーザー個人データ(users/userProfiles/userArticleState/readingEvents/userTopicWeights/chatMemory)は
+  // PIIを含むため意図的に除外する。退会時のハード削除(deleteMyAccount)を、git履歴に永久に残る
+  // バックアップが無効化してしまう事態を防ぐ（個情法の削除権／匿名性方針）。
   const tables: Record<string, any> = {
     sources: schema.sources,
     collectedData: schema.collectedData,
@@ -31,14 +32,8 @@ async function backup() {
     entities: schema.entities,
     benchmarks: schema.benchmarks,
     relations: schema.relations,
-    userTopicWeights: schema.userTopicWeights,
     researchQuestions: schema.researchQuestions,
-    readingEvents: schema.readingEvents,
-    userProfiles: schema.userProfiles,
-    userArticleState: schema.userArticleState,
     alerts: schema.alerts,
-    chatMemory: schema.chatMemory,
-    users: schema.users,
   };
 
   const out: Record<string, any> = {
