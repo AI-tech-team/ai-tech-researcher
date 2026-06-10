@@ -98,3 +98,9 @@
 - 不採用: メール用 `markdownToHtml`(api/report)の流用→暗色フルHTML文書でRSSリーダ(白背景)に不適。共通lib化も出力要件が別(暗色doc vs 白断片)なので見送り、フィード専用変換をルート内に持つ。記事をフィードに混在→著作権＆主役がぶれる。
 - 検証: 本番200・`application/rss+xml`・37件・content:encoded全文・atom self・CDATA・CDATA外の裸`&`=0・home headのalternate出力を確認。CDNサイドキャッシュ`s-maxage=1800`。
 - 影響: RSS購読が可能に。残=③per記事OG＋シェア/④メルマガCTA。
+
+## 2026-06-11 RSS導線はhead自動検出に一本化＋重複dailyレポートを整理
+- 決定: RSSの可視リンクを公開UIの「…」メニューから撤去し、head の `rel=alternate`(metadata.alternates)のみで配布（リーダ/拡張が自動検出）。本番の重複daily(同一report_date)6件を「最新生成1件残し」(方針A)で削除（紐づく adoption_logs 21件も先に削除）。daily 33→27。
+- 理由: `/feed.xml`はブラウザ直開きで生XML表示＝初見ユーザーに壊れて見える（newcomer-first）。重複は cron二重発火/手動再生成の名残で一覧が冗長だった。
+- 不採用: XSLでブラウザ整形ページ化→ChromeのXSLT廃止予告(2025)で非推奨。重複は「長い方を残す」案もあったが差は些少で最新版優先がシンプル。
+- 影響: 削除6件は `scripts/_deleted_reports_backup.json` に全文退避（＋週次git backup）。**再発防止(日次レポ生成をreport_dateでupsert化)は未対応**＝cron二重発火で将来また重複しうる。気になれば後対応。
