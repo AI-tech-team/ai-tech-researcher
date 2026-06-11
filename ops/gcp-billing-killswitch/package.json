@@ -1,0 +1,10 @@
+{
+  "name": "gcp-billing-killswitch",
+  "version": "1.0.0",
+  "description": "予算超過でプロジェクトの請求を無効化するCloud Function(gen2)",
+  "main": "index.js",
+  "dependencies": {
+    "@google-cloud/billing": "^4.1.0",
+    "@google-cloud/functions-framework": "^3.4.0"
+  }
+}

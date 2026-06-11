@@ -104,3 +104,10 @@
 - 理由: `/feed.xml`はブラウザ直開きで生XML表示＝初見ユーザーに壊れて見える（newcomer-first）。重複は cron二重発火/手動再生成の名残で一覧が冗長だった。
 - 不採用: XSLでブラウザ整形ページ化→ChromeのXSLT廃止予告(2025)で非推奨。重複は「長い方を残す」案もあったが差は些少で最新版優先がシンプル。
 - 影響: 削除6件は `scripts/_deleted_reports_backup.json` に全文退避（＋週次git backup）。**再発防止(日次レポ生成をreport_dateでupsert化)は未対応**＝cron二重発火で将来また重複しうる。気になれば後対応。
+
+## 2026-06-11 Gemini予算キルスイッチ(請求自動停止)を本番構築
+- 決定: 予算超過で**プロジェクトの請求を自動無効化**するCloud Function(gen2)を `ops/gcp-billing-killswitch/` に置き本番デプロイ。対象=課金が発生しうる唯一のproject `project-6f8c0b7f-7452-4e63-a48`(billing有効＋Gemini有効)。予算「Geminiキルスイッチ」¥2,000/月をこのproject限定で作成し `billing-stop` トピックに接続→関数が100%超過で `updateProjectBillingInfo(billingAccountName='')` を実行。
+- 理由: Google Cloudに「$Xで止める」標準機能が無く、予算アラートは通知のみ。ユーザー要望「自動で止めたい」に対する唯一の金額キャップ手段（公式パターン）。実支出は当月≈¥90で¥2,000は約1/20＝通常発火せず暴走時のみ停止。
+- 不採用: 方法1=APIクォータ(RPM/RPD)は即時だが金額でなく回数。今回は金額キャップ(方法2)を採用。両方併用が理想だがまずキルスイッチを構築。他の `gen-lang-*` projectは billing無効＝無料枠で課金不能のため対象外。
+- 落とし穴: gen2はCloud Run上で動き、Pub/Sub(Eventarc)トリガの実行SAに `run.invoker` が**自動で付かず**配信が403で弾かれ続けた→Run serviceにrun.invoker付与で解決(READMEに必須手順として明記)。実行SAには `billing.admin` も付与。
+- 影響: 公開前ブロッカーだった予算ガードが解消。発火すると**プロジェクト全体の請求OFF＝Gemini停止→日次パイプライン失敗**、復旧は手動で請求再リンク(READMEに手順)。予算データは数時間ラグ。既存¥300予算(全project/topic未接続)はアラート専用で温存。
