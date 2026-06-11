@@ -481,8 +481,8 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
               <X size={14} />
             </button>
             <p className="text-sm sm:text-base text-slate-100 leading-relaxed">
-              <span className="font-bold text-white">毎日朝、AI業界の最新ニュースを自動で集めて日本語で要約。</span>
-              <span className="text-slate-400"> サクッと読む / 保存 / 検索 を1ページで。</span>
+              <span className="font-bold text-white">毎朝、AI業界の最新ニュースを自動で集めて日本語で要約。</span>
+              <span className="text-slate-400"> サクッと読む / 保存 / 検索。ログインすれば<span className="text-sky-300 font-semibold">毎朝のダイジェストをメールでも</span>受け取れます。</span>
             </p>
             <div className="flex items-center gap-3 mt-3 flex-wrap">
               <button onClick={() => signIn('google')}
