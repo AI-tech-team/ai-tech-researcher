@@ -3,6 +3,8 @@
 import { Star, Bookmark, CheckCircle2, ExternalLink, ListTree, Newspaper } from 'lucide-react';
 import type { ArticleDetail } from '@/app/actions';
 import { safeHttpUrl } from '@/lib/safeUrl';
+import { ShareButtons } from '@/components/ShareButtons';
+import { SITE_URL } from '@/lib/site';
 
 // 記事本文の表示部。モーダル(ArticleDetailModal)と全画面ページ(/articles/[id])の両方で共用する。
 // 状態(fav/rl/read)とトグル操作は親が供給する（モーダルは楽観patch、ページはServer Action）。
@@ -109,6 +111,9 @@ export function ArticleDetailContent({
           {article.tags.slice(0, 6).map(t => <span key={t}>#{t}</span>)}
         </div>
       )}
+
+      {/* 共有 */}
+      <ShareButtons url={`${SITE_URL}/articles/${article.id}`} title={article.titleJa || article.title || '無題'} />
     </div>
   );
 }
