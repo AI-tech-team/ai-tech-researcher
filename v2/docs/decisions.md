@@ -118,3 +118,16 @@
 - 不採用: `twitter-image.tsx` 個別生成→X はog:imageにフォールバックするので重複ファイルを避け、レポにtwitter card type付与のみ(記事は既設)。`navigator.share`の有無は `useEffect`+setStateだとlint(set-state-in-effect)に触れる→`useSyncExternalStore`(server=false)でSSR非ミスマッチに読む。
 - 検証: dev(:3001)で `/reports/75`・`/articles/4004` のOGが200・image/png・日本語フォント描画、両ページにシェア行表示をPlaywrightで確認。`tsc`/`eslint`クリーン。公開ページは内容不変なので `revalidate=86400` でISRキャッシュ(毎クロールでDB/フォントを叩かない)。
 - 影響: 配信・発見章は ①SEO ②RSS ③OG/シェア 完了。残=④メルマガCTA。
+
+## 2026-06-11 配信④: ログアウト訪問者にメルマガ価値を訴求(ウェルカム帯に統合)
+- 決定: ④メルマガCTAは新規カードを足さず、既存のウェルカム帯(`welcomeOpen && !sessionUserId`・初回ログアウトのみ・一度きり)のコピーに「ログインすれば**毎朝のダイジェストをメールでも**受け取れます」を追記して訴求。ログイン後は既存の購読プロンプト(`subscribeEmailDigest`)が、設定は ProfileModal の購読トグルが担う。
+- 理由: 購読導線は実は大半が実装済み(ログイン後プロンプト＋設定トグル＋subscribeアクション)。唯一の穴=ログアウト層に価値が見えない点。同じ場所に2枚目のカードを重ねるとnewcomer-firstに反し冗長なので、最も変換率の高い「ログイン判断の瞬間」=ウェルカム帯にメール価値を織り込む最小変更にした。
+- 不採用: 独立した購読CTAカード(当初案)→既存ウェルカム帯と二重表示になり naggy。独立メルマガLP→計画どおり作らない(トップCTAのみ)。
+- 影響: 配信・発見章 ①SEO ②RSS ③OG/シェア ④メルマガCTA すべて完了。`getMyProfile`/`updateMyProfile`/`subscribeEmailDigest` は既存のまま流用。
+
+## 2026-06-11 PWAコールド起動のフリーズ修正(SSR初期取得をタイムアウト)
+- 症状: インストール版PWAを起動すると「スプラッシュ画像のまま十数〜20秒フリーズ→その後ロード」。
+- 原因: ルート `app/page.tsx` が `await getCoreData(30)` を**同期awaitしてからHTMLを返す**ため、コールド起動(Vercel関数ブート＋Turso初回接続)で最初の描画が丸ごとブロックされる。Service Workerも無く毎起動フルネットワーク。getCoreData自体は5クエリ並列なので遅いのはコールドスタートが主因。
+- 対処: SSRの初期フィード取得を `Promise.race([getCoreData(30).catch(()=>null), 2.5s timeout])` で**最大2.5秒で打ち切り**、時間切れなら initialData=null でシェルを先に描画→クライアントがリトライ取得で後追い。ウォーム時は従来どおり initialData 付き(戻り時abort回避の最適化を維持)。空フィード不信用ガードも維持。
+- 不採用(将来): Service Worker(app-shellキャッシュで再起動を即時化)＝依存追加とキャッシュ陳腐化リスクのため今回見送り。関数ウォームアップcronも保留。まずは描画ブロック解消を優先。
+- 影響: 「20秒フリーズ」→「数秒で操作可能なシェル＋スケルトン→データ後追い」。コールド起動の体感が大幅改善。実データ到着までの時間自体(バックエンドのコールド)は別途SW/ウォームアップで詰める余地あり。
