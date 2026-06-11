@@ -131,3 +131,10 @@
 - 対処: SSRの初期フィード取得を `Promise.race([getCoreData(30).catch(()=>null), 2.5s timeout])` で**最大2.5秒で打ち切り**、時間切れなら initialData=null でシェルを先に描画→クライアントがリトライ取得で後追い。ウォーム時は従来どおり initialData 付き(戻り時abort回避の最適化を維持)。空フィード不信用ガードも維持。
 - 不採用(将来): Service Worker(app-shellキャッシュで再起動を即時化)＝依存追加とキャッシュ陳腐化リスクのため今回見送り。関数ウォームアップcronも保留。まずは描画ブロック解消を優先。
 - 影響: 「20秒フリーズ」→「数秒で操作可能なシェル＋スケルトン→データ後追い」。コールド起動の体感が大幅改善。実データ到着までの時間自体(バックエンドのコールド)は別途SW/ウォームアップで詰める余地あり。
+
+## 2026-06-11 ロードマップ①速度/PWA: Service Worker導入＋アバター<img>適正化
+- 決定: 依存追加なしの手書き `public/sw.js` を導入し、`ServiceWorkerRegistrar`(本番のみ・load後登録)を layout に配線。戦略=**ハッシュ付き静的アセット(_next/static・アイコン・フォント)はcache-first / HTML・RSC・データ・APIはnetwork-first**(古い記事を絶対見せない)。skipWaiting+clients.claim+バージョン付きキャッシュ掃除。CSPに `worker-src 'self'` を追加。ヘッダのアバター`<img>`(Googleの24px外部画像)は寸法明示＋`referrerPolicy=no-referrer`＋理由付きeslint-disableに留めた。
+- 理由: PWAコールド起動の遅さ([[debug-pwa-cold-launch-freeze]])の続き。SWで2回目以降の起動時にJS/CSS/アイコンを再DLしない＝モバイル体感を改善。データはnetwork-first厳守で陳腐化を回避(ユーザー合意)。アバターをnext/imageに通すとVercel画像最適化課金が乗る割に24pxでは無益＝コスト原則によりスキップ。
+- 不採用: ナビゲーションHTMLのcache-first/SWR(=起動を完全に即時化)→キャッシュにSSR焼き込みの記事が残り陳腐化リスク。クライアント常時再取得はDB読取課金増。今回は安全側(静的のみcache-first)を採用。next-pwa/Serwist等の依存追加も見送り。
+- 検証: 本番`next build`成功(全ルートコンパイル)。`next start`で /sw.js=200(application/javascript)、SW active(scope /)、リロードでcontroller制御中、**オフラインでシェル表示**をPlaywrightで確認。tsc/eslint/`node --check`クリーン。
+- 影響: PWA再起動が高速化＋基本オフライン。残=Web Push(⑤)がこのSWを前提に乗せられる。次は②信頼/透明性。

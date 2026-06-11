@@ -5,6 +5,7 @@ import "./globals.css";
 import { ToastProvider } from "@/components/Toast";
 import { Providers } from "@/components/Providers";
 import { SplashScreen } from "@/components/SplashScreen";
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import { JsonLd } from "@/components/JsonLd";
 import { SITE_URL, SITE_NAME, SITE_DESC } from "@/lib/site";
 
@@ -62,6 +63,7 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
     <html lang="ja" className={`${inter.variable} ${outfit.variable} h-full antialiased`}>
       <body className="min-h-full">
         <SplashScreen />
+        <ServiceWorkerRegistrar />
         <Providers>
           <ToastProvider>
             {children}

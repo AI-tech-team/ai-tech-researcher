@@ -431,7 +431,10 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                 <button onClick={() => setMenuOpen(v => !v)} title="アカウント"
                   className="flex items-center gap-1.5 pl-1 pr-1.5 py-0.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors">
                   {session.user.image
-                    ? <img src={session.user.image} alt="" className="w-6 h-6 rounded-full" />
+                    /* Googleアバター(24px・外部画像)。next/imageに通すとVercel画像最適化課金が乗る割に
+                       効果が無いため<img>のまま。寸法明示＋no-referrerで安定描画。 */
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    ? <img src={session.user.image} alt="" width={24} height={24} loading="lazy" referrerPolicy="no-referrer" className="w-6 h-6 rounded-full" />
                     : <div className="w-6 h-6 rounded-full bg-sky-500/20 flex items-center justify-center text-sky-400 text-[10px] font-bold">{(session.user.name ?? '?').slice(0, 1)}</div>}
                   <span className="hidden sm:inline text-[11px] text-slate-300 font-medium max-w-[88px] truncate">{session.user.name ?? 'アカウント'}</span>
                   <ChevronDown size={12} className={`text-slate-500 transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
