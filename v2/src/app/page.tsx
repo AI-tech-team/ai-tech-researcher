@@ -61,12 +61,20 @@ export default async function Page() {
   // Vercel⇄Turso同リージョンでサーバ取得は速く、TTFB増は小さい。失敗時はnull（従来どおりClient取得）。
   let initialPublic: PublicInitial | null = null;
   try {
-    const core = await getCoreData(30);
+    // SSRの初期フィード取得は最大2.5秒で打ち切る。PWAのコールド起動（Vercel関数ブート＋Turso初回接続）で
+    // getCoreData が長引くと、ここでawaitしている最初のHTMLが丸ごとブロックされ、起動が
+    // 「スプラッシュ画像のまま十数秒フリーズ」する。時間切れなら null を返してシェルを先に描画し、
+    // クライアントがリトライ付き取得（PublicAppのuseEffect）でフィードを後追いさせる。
+    // ウォーム時はほぼ即返るので従来どおり initialData 付きで描画＝戻り時abort回避の最適化も維持。
+    const core = await Promise.race([
+      getCoreData(30).catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
     // 空フィードは信用しない。getCoreData の内部サブ取得はDBエラーを握り潰して空配列を返すため、
     // Turso瞬断などSSRの一過性失敗で initialData が「記事0件の成功」になり、クライアント再取得も
     // スキップされて「記事がまだありません」で固定化する。空なら null にしてクライアント取得
     // （リトライ付き）へフォールバックさせる。本番コーパスは非空なので空=ほぼ一過性失敗。
-    if (Array.isArray(core.data) && core.data.length > 0) {
+    if (core && Array.isArray(core.data) && core.data.length > 0) {
       initialPublic = {
         data: core.data as PublicInitial['data'],
         reportsData: core.reportsData as PublicInitial['reportsData'],
