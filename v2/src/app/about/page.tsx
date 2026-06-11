@@ -182,6 +182,9 @@ export default function AboutPage() {
           </Faq>
           <Faq q="いつ更新されますか？">
             毎朝6:00（JST）に自動更新します。あわせて、日次・週次・月次のまとめレポートも生成されます。
+            現在の稼働状況や収集規模は{' '}
+            <Link href="/status" scroll={false} className="text-sky-400 hover:text-sky-300 underline underline-offset-2">稼働状況ページ</Link>
+            で確認できます。
           </Faq>
         </div>
 
@@ -196,6 +199,8 @@ export default function AboutPage() {
 
         <footer className="mt-12 pt-6 border-t border-white/5 flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3 font-mono text-[11px] text-slate-500">
+            <Link href="/status" scroll={false} className="hover:text-slate-300 transition-colors">稼働状況</Link>
+            <span className="text-slate-700">·</span>
             <Link href="/privacy" className="hover:text-slate-300 transition-colors">プライバシー</Link>
             <span className="text-slate-700">·</span>
             <Link href="/terms" className="hover:text-slate-300 transition-colors">利用規約</Link>

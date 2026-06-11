@@ -437,6 +437,45 @@ export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   }
 }
 
+export interface SystemStatus {
+  lastCollectedAt: string | null;   // 最新記事の created_at（UTC・空白区切り）
+  reports: { daily: string | null; weekly: string | null; monthly: string | null }; // 各typeの最新 report_date
+  articles: number;
+  activeSources: number;
+  entities: number;
+  relations: number;
+}
+
+// 公開「稼働状況」ページ(/status)用の軽量集計（件数＋最新タイムスタンプ）。
+// 専用のパイプライン実行ログは無いため、最新レポート/最新収集の時刻から鮮度を導出する。
+export async function getSystemStatus(): Promise<SystemStatus> {
+  try {
+    const [art, src, lastArt, repRows, ks] = await Promise.all([
+      db.select({ c: count() }).from(collectedData),
+      db.select({ c: count() }).from(sources).where(eq(sources.status, 'active')),
+      db.select({ t: sql<string | null>`MAX(${collectedData.createdAt})` }).from(collectedData),
+      db.select({ type: reports.type, d: sql<string | null>`MAX(${reports.reportDate})` })
+        .from(reports)
+        .where(sql`${reports.type} IN ('daily','weekly','monthly')`)
+        .groupBy(reports.type),
+      getKnowledgeStats(),
+    ]);
+    const latest: Record<string, string | null> = {};
+    for (const r of repRows) latest[String(r.type)] = (r.d as string | null) ?? null;
+    return {
+      lastCollectedAt: (lastArt[0]?.t as string | null) ?? null,
+      reports: { daily: latest.daily ?? null, weekly: latest.weekly ?? null, monthly: latest.monthly ?? null },
+      articles: Number(art[0]?.c ?? 0),
+      activeSources: Number(src[0]?.c ?? 0),
+      entities: ks.entities,
+      relations: ks.relations,
+    };
+  } catch (error) {
+    console.error('getSystemStatus failed:', error);
+    return { lastCollectedAt: null, reports: { daily: null, weekly: null, monthly: null }, articles: 0, activeSources: 0, entities: 0, relations: 0 };
+  }
+}
+
 // ─── v6: ユーザープロフィール ─────────────────────────────────────────
 export interface MyProfile {
   email: string | null;

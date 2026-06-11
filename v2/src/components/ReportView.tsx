@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { FileText } from 'lucide-react';
 import { renderMarkdown } from '@/components/Markdown';
 import { ShareButtons } from '@/components/ShareButtons';
+import { AiBadge } from '@/components/AiBadge';
 import { SITE_URL } from '@/lib/site';
 import type { Report } from '@/types';
 
@@ -21,6 +22,7 @@ export function ReportView({ report }: { report: Report }) {
       <div className="flex items-center gap-2 flex-wrap pr-8 border-b border-white/5 pb-4">
         <FileText size={16} className="text-emerald-400" />
         <h1 className="text-base font-bold text-white">{label}</h1>
+        <AiBadge />
         <span className="ml-auto text-xs text-slate-400 bg-white/5 px-3 py-1 rounded-full">{report.reportDate}</span>
       </div>
       <div>{renderMarkdown(report.content ?? '', (id) => router.push(`/articles/${id}`))}</div>

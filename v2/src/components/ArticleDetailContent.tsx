@@ -4,6 +4,7 @@ import { Star, Bookmark, CheckCircle2, ExternalLink, ListTree, Newspaper } from 
 import type { ArticleDetail } from '@/app/actions';
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { ShareButtons } from '@/components/ShareButtons';
+import { AiBadge } from '@/components/AiBadge';
 import { SITE_URL } from '@/lib/site';
 
 // 記事本文の表示部。モーダル(ArticleDetailModal)と全画面ページ(/articles/[id])の両方で共用する。
@@ -92,9 +93,12 @@ export function ArticleDetailContent({
         )}
       </div>
 
-      {/* サマリー */}
+      {/* サマリー（AIによる要約） */}
       {article.summary && (
-        <p className="text-sm text-slate-300 leading-relaxed border-l-2 border-sky-500/30 pl-3">{article.summary}</p>
+        <div className="border-l-2 border-sky-500/30 pl-3">
+          <div className="mb-1"><AiBadge label="AI要約" /></div>
+          <p className="text-sm text-slate-300 leading-relaxed">{article.summary}</p>
+        </div>
       )}
 
       {/* 本文（抽出済みがあれば） */}
