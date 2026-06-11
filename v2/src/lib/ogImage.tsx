@@ -85,3 +85,66 @@ export async function renderOgImage(): Promise<ImageResponse> {
     },
   );
 }
+
+/** 個別ページ（レポート/記事）用の動的OG画像。タイトルとカテゴリ等の見出し(kicker)を描画する。
+ *  日本語フォント取得に失敗した場合でも画像生成は必ず成功させる（Latinは標準フォントで描画）。 */
+export async function renderEntityOgImage(opts: {
+  kicker: string;       // 上部の小見出し（例「デイリーレポート · 2026-06-11」「研究/論文」）
+  title: string;        // 主役の見出し（レポート見出し/記事タイトル）
+  accent?: string;      // kicker の色（カテゴリ色など）
+}): Promise<ImageResponse> {
+  const accent = opts.accent ?? '#7dd3fc';
+  // 長すぎる見出しは1行に収まらないので丸める（OGは2〜3行が読みやすい）
+  const title = opts.title.length > 84 ? opts.title.slice(0, 83).trimEnd() + '…' : opts.title;
+  const kicker = opts.kicker.length > 48 ? opts.kicker.slice(0, 47).trimEnd() + '…' : opts.kicker;
+  // 文字数で見出しサイズを調整（長文でもはみ出さない）
+  const titleSize = title.length > 46 ? 50 : title.length > 26 ? 60 : 70;
+
+  const subset = title + kicker + SITE_NAME + SITE_HOST + 'AI0123456789・·—…';
+  const jp = await loadJpFont(subset);
+  const fontFamily = jp ? 'NotoJP' : undefined;
+
+  return new ImageResponse(
+    (
+      <div
+        style={{
+          width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
+          justifyContent: 'space-between', padding: '72px 84px',
+          backgroundColor: '#03060f', color: '#f1f5f9', fontFamily,
+          backgroundImage:
+            'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.18), transparent 42%),' +
+            'radial-gradient(circle at 100% 100%, rgba(129,140,248,0.18), transparent 42%)',
+        }}
+      >
+        {/* ── ブランド＋kicker ── */}
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: 16, marginRight: 22,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            backgroundImage: 'linear-gradient(135deg, #0ea5e9, #4f46e5)',
+            color: 'white', fontSize: 28, fontWeight: 700,
+          }}>AI</div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: -0.5 }}>{SITE_NAME}</div>
+            <div style={{ fontSize: 21, color: accent, marginTop: 3 }}>{kicker}</div>
+          </div>
+        </div>
+
+        {/* ── タイトル ── */}
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ fontSize: titleSize, fontWeight: 700, lineHeight: 1.3, maxWidth: 1030 }}>{title}</div>
+        </div>
+
+        {/* ── フッター ── */}
+        <div style={{ display: 'flex', alignItems: 'center', fontSize: 22, color: '#64748b' }}>
+          <div style={{ width: 10, height: 10, borderRadius: 9999, backgroundColor: '#10b981', marginRight: 12 }} />
+          <div style={{ display: 'flex' }}>{SITE_HOST}</div>
+        </div>
+      </div>
+    ),
+    {
+      ...OG_SIZE,
+      fonts: jp ? [{ name: 'NotoJP', data: jp, weight: 700 as const, style: 'normal' as const }] : undefined,
+    },
+  );
+}

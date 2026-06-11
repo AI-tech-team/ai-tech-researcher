@@ -17,7 +17,11 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const label = TYPE_LABEL[report.type] ?? 'レポート';
   const title = `${label} ${report.reportDate}`;
   const description = `${SITE_NAME} の${label}（${report.reportDate}）。`;
-  return { title, description, openGraph: { title, description, type: 'article', url: `/reports/${id}` } };
+  return {
+    title, description,
+    openGraph: { title, description, type: 'article', url: `/reports/${id}` },
+    twitter: { card: 'summary_large_image', title, description },
+  };
 }
 
 export default async function ReportPage({ params }: { params: Promise<{ id: string }> }) {

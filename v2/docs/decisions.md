@@ -111,3 +111,10 @@
 - 不採用: 方法1=APIクォータ(RPM/RPD)は即時だが金額でなく回数。今回は金額キャップ(方法2)を採用。両方併用が理想だがまずキルスイッチを構築。他の `gen-lang-*` projectは billing無効＝無料枠で課金不能のため対象外。
 - 落とし穴: gen2はCloud Run上で動き、Pub/Sub(Eventarc)トリガの実行SAに `run.invoker` が**自動で付かず**配信が403で弾かれ続けた→Run serviceにrun.invoker付与で解決(READMEに必須手順として明記)。実行SAには `billing.admin` も付与。
 - 影響: 公開前ブロッカーだった予算ガードが解消。発火すると**プロジェクト全体の請求OFF＝Gemini停止→日次パイプライン失敗**、復旧は手動で請求再リンク(READMEに手順)。予算データは数時間ラグ。既存¥300予算(全project/topic未接続)はアラート専用で温存。
+
+## 2026-06-11 配信③: per記事/レポートの動的OG画像＋シェアボタン
+- 決定: `reports/[id]`・`articles/[id]` に `opengraph-image.tsx` を新設し、`lib/ogImage.tsx` の `renderEntityOgImage({kicker,title,accent})`（既存 `loadJpFont` のNoto Sans JPサブセット流用）でタイトル＋カテゴリ/日付を描いた動的OGを生成。レポ=見出し抽出(本文先頭 `#`)＋エメラルド、記事=titleJa/title＋カテゴリ色。`ShareButtons`(client)を `ReportView` と `ArticleDetailContent` の末尾に配線（モーダル＋全画面の両方に出る）＝はてブ(add確認)/X(intent)/リンクコピー/モバイルnavigator.share。
+- 理由: 合意Q3のシェア先(はてブ＋X＋コピー＋native)。OGはSNS/Slack/はてブのカード見栄えを決める拡散の要。レポートのOG/タイトルは自前IPなので全面OK、記事は**タイトル＋カテゴリのみ**(第三者rawContentは載せない=著作権配慮、一覧表示と同等の範囲)。
+- 不採用: `twitter-image.tsx` 個別生成→X はog:imageにフォールバックするので重複ファイルを避け、レポにtwitter card type付与のみ(記事は既設)。`navigator.share`の有無は `useEffect`+setStateだとlint(set-state-in-effect)に触れる→`useSyncExternalStore`(server=false)でSSR非ミスマッチに読む。
+- 検証: dev(:3001)で `/reports/75`・`/articles/4004` のOGが200・image/png・日本語フォント描画、両ページにシェア行表示をPlaywrightで確認。`tsc`/`eslint`クリーン。公開ページは内容不変なので `revalidate=86400` でISRキャッシュ(毎クロールでDB/フォントを叩かない)。
+- 影響: 配信・発見章は ①SEO ②RSS ③OG/シェア 完了。残=④メルマガCTA。
