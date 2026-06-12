@@ -48,6 +48,21 @@ function parseInline(text: string, onArticleRef?: ArticleRef): React.ReactNode {
   return parts.length === 1 ? parts[0] : <Fragment>{parts}</Fragment>;
 }
 
+// 見出しの素テキスト（インライン装飾を除去）
+function headingPlain(s: string): string {
+  return s.replace(/\*\*|\*|`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\[ID:\d+\]/g, '').trim();
+}
+
+// 目次用に見出し(# と ##)を抽出。idは行番号ベース＝renderMarkdownのアンカーidと必ず一致する。
+export function extractHeadings(content: string): { level: number; text: string; id: string }[] {
+  const out: { level: number; text: string; id: string }[] = [];
+  content.split('\n').forEach((line, i) => {
+    if (line.startsWith('# ')) out.push({ level: 1, text: headingPlain(line.slice(2)), id: `sec-${i}` });
+    else if (line.startsWith('## ')) out.push({ level: 2, text: headingPlain(line.slice(3)), id: `sec-${i}` });
+  });
+  return out.filter((h) => h.text.length > 0);
+}
+
 // MarkdownをJSX Nodeのリストに変換
 export function renderMarkdown(content: string, onArticleRef?: ArticleRef): React.ReactNode[] {
   const lines = content.split('\n');
@@ -70,13 +85,13 @@ export function renderMarkdown(content: string, onArticleRef?: ArticleRef): Reac
   lines.forEach((line, i) => {
     if (line.startsWith('### ')) {
       flushList();
-      nodes.push(<h4 key={i} className="text-base font-bold text-white mt-5 mb-2">{parseInline(line.slice(4), onArticleRef)}</h4>);
+      nodes.push(<h4 key={i} id={`sec-${i}`} className="text-base font-bold text-white mt-5 mb-2 scroll-mt-20">{parseInline(line.slice(4), onArticleRef)}</h4>);
     } else if (line.startsWith('## ')) {
       flushList();
-      nodes.push(<h3 key={i} className="text-lg font-bold text-sky-400 mt-7 mb-3">{parseInline(line.slice(3), onArticleRef)}</h3>);
+      nodes.push(<h3 key={i} id={`sec-${i}`} className="text-lg font-bold text-sky-400 mt-7 mb-3 scroll-mt-20">{parseInline(line.slice(3), onArticleRef)}</h3>);
     } else if (line.startsWith('# ')) {
       flushList();
-      nodes.push(<h2 key={i} className="text-xl font-bold text-emerald-400 mt-8 mb-4">{parseInline(line.slice(2), onArticleRef)}</h2>);
+      nodes.push(<h2 key={i} id={`sec-${i}`} className="text-xl font-bold text-emerald-400 mt-8 mb-4 scroll-mt-20">{parseInline(line.slice(2), onArticleRef)}</h2>);
     } else if (/^[-*] /.test(line)) {
       listType = 'ul';
       listItems.push(
