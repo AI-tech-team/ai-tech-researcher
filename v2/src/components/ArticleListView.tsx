@@ -10,7 +10,11 @@ const CATEGORY_COLORS: Record<string, string> = {
   'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#94a3b8',
 };
 
-export function ArticleListView({ kicker, title, articles }: { kicker: string; title: string; articles: CollectedItem[] }) {
+export function ArticleListView({ kicker, title, articles, topSlot, emptyText }: {
+  kicker: string; title: string; articles: CollectedItem[];
+  topSlot?: React.ReactNode;   // 見出し下に差し込む要素（検索ボックス等）
+  emptyText?: string;
+}) {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
@@ -34,21 +38,26 @@ export function ArticleListView({ kicker, title, articles }: { kicker: string; t
           <span className="text-slate-500 text-base font-normal font-sans ml-2">{articles.length}件</span>
         </h1>
 
+        {topSlot && <div className="mt-5">{topSlot}</div>}
+
         {articles.length === 0 ? (
-          <p className="text-sm text-slate-400 leading-relaxed mt-6">該当する記事がまだありません。</p>
+          <p className="text-sm text-slate-400 leading-relaxed mt-6">{emptyText ?? '該当する記事がまだありません。'}</p>
         ) : (
           <div className="mt-6 flex flex-col gap-2">
             {articles.map((a) => (
-              <Link key={a.id} href={`/articles/${a.id}`} scroll={false}
-                className="block rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] p-4 transition-colors group">
+              <div key={a.id} className="rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] p-4 transition-colors group relative">
                 <div className="flex items-center gap-2 mb-1 font-mono text-[10px]">
-                  {a.category && <span style={{ color: CATEGORY_COLORS[a.category] ?? '#94a3b8' }}>{a.category}</span>}
+                  {a.category && (
+                    <Link href={`/category/${encodeURIComponent(a.category)}`} scroll={false} className="relative z-10 hover:underline underline-offset-2" style={{ color: CATEGORY_COLORS[a.category] ?? '#94a3b8' }}>{a.category}</Link>
+                  )}
                   <span className="text-amber-400/80">★{a.importanceScore ?? 0}</span>
                   {a.sourceValue && <span className="text-slate-600 truncate">· {a.sourceValue}</span>}
                 </div>
+                {/* カード全体を記事へのリンクに（カテゴリリンクは上のz-10で優先） */}
+                <Link href={`/articles/${a.id}`} scroll={false} className="absolute inset-0" aria-label={a.titleJa || a.title || '記事'} />
                 <p className="text-sm font-bold text-slate-100 leading-snug group-hover:text-white transition-colors">{a.titleJa || a.title || '無題'}</p>
                 {a.summary && <p className="text-[12px] text-slate-400 leading-relaxed mt-1 line-clamp-2">{a.summary}</p>}
-              </Link>
+              </div>
             ))}
           </div>
         )}
