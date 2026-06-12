@@ -2,7 +2,7 @@
 
 import { db, client } from '@/db';
 import { sources, collectedData, reports, adoptionLogs, claims, userTopicWeights, benchmarks, relations, entities, readingEvents, userArticleState, userProfiles, users, chatMemory } from '@/db/schema';
-import { desc, eq, count, gte, sql, like, or, and, inArray } from 'drizzle-orm';
+import { desc, asc, eq, count, gte, sql, like, or, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
@@ -208,16 +208,17 @@ export async function getCollectedDataList(limit = 60, offset = 0): Promise<Coll
 
 // カテゴリ別の記事一覧（公開URLページ /category/[name] 用）。重要度→新着順。
 // 公開SEOページなのでユーザー別状態は載せず、5分キャッシュで読み取り課金を抑える。
-export async function getArticlesByCategory(category: string, limit = 80): Promise<CollectedItem[]> {
+export async function getArticlesByCategory(category: string, limit = 40, offset = 0): Promise<CollectedItem[]> {
   try {
     const lim = Math.min(Math.max(limit, 1), 100);
-    return await cached(`bycat:${category}:${lim}`, 300_000, async () => {
+    const off = Math.max(offset, 0);
+    return await cached(`bycat:${category}:${lim}:${off}`, 300_000, async () => {
       const rows = await db.select(COLLECTED_SELECT)
         .from(collectedData)
         .leftJoin(sources, eq(collectedData.sourceId, sources.id))
         .where(eq(collectedData.category, category))
         .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
-        .limit(lim);
+        .limit(lim).offset(off);
       return parseCollectedRows(rows);
     });
   } catch (error) {
@@ -227,23 +228,41 @@ export async function getArticlesByCategory(category: string, limit = 80): Promi
 }
 
 // タグ別の記事一覧（公開URLページ /tag/[name] 用）。tags は JSON配列文字列なので "tag" の含有で判定。
-export async function getArticlesByTag(tag: string, limit = 80): Promise<CollectedItem[]> {
+export async function getArticlesByTag(tag: string, limit = 40, offset = 0): Promise<CollectedItem[]> {
   try {
     const lim = Math.min(Math.max(limit, 1), 100);
+    const off = Math.max(offset, 0);
     // %_ はLIKEのワイルドカードなのでエスケープ（タグ名由来の意図しない広域マッチを防ぐ）
     const safe = tag.replace(/[\\%_]/g, (m) => `\\${m}`);
-    return await cached(`bytag:${tag}:${lim}`, 300_000, async () => {
+    return await cached(`bytag:${tag}:${lim}:${off}`, 300_000, async () => {
       const rows = await db.select(COLLECTED_SELECT)
         .from(collectedData)
         .leftJoin(sources, eq(collectedData.sourceId, sources.id))
         .where(sql`${collectedData.tags} LIKE ${'%"' + safe + '"%'} ESCAPE '\\'`)
         .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
-        .limit(lim);
+        .limit(lim).offset(off);
       return parseCollectedRows(rows);
     });
   } catch (error) {
     console.error('getArticlesByTag failed:', error);
     return [];
+  }
+}
+
+// レポートの前後ナビ用: 同タイプの隣接レポート(前=古い/次=新しい)をreport_dateで取得。
+export async function getAdjacentReports(type: string, reportDate: string): Promise<{ prev: { id: number; reportDate: string } | null; next: { id: number; reportDate: string } | null }> {
+  try {
+    if (!['daily', 'weekly', 'monthly'].includes(type)) return { prev: null, next: null };
+    const [prev] = await db.select({ id: reports.id, reportDate: reports.reportDate })
+      .from(reports).where(and(eq(reports.type, type), sql`${reports.reportDate} < ${reportDate}`))
+      .orderBy(desc(reports.reportDate)).limit(1);
+    const [next] = await db.select({ id: reports.id, reportDate: reports.reportDate })
+      .from(reports).where(and(eq(reports.type, type), sql`${reports.reportDate} > ${reportDate}`))
+      .orderBy(asc(reports.reportDate)).limit(1);
+    return { prev: prev ?? null, next: next ?? null };
+  } catch (error) {
+    console.error('getAdjacentReports failed:', error);
+    return { prev: null, next: null };
   }
 }
 

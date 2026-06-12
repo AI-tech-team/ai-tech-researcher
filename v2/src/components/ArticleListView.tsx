@@ -10,10 +10,11 @@ const CATEGORY_COLORS: Record<string, string> = {
   'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#94a3b8',
 };
 
-export function ArticleListView({ kicker, title, articles, topSlot, emptyText }: {
+export function ArticleListView({ kicker, title, articles, topSlot, emptyText, paginationSlot }: {
   kicker: string; title: string; articles: CollectedItem[];
-  topSlot?: React.ReactNode;   // 見出し下に差し込む要素（検索ボックス等）
+  topSlot?: React.ReactNode;        // 見出し下に差し込む要素（検索ボックス等）
   emptyText?: string;
+  paginationSlot?: React.ReactNode; // 一覧の下に差し込むページ送り
 }) {
   return (
     <div className="min-h-screen">
@@ -61,6 +62,8 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText }:
             ))}
           </div>
         )}
+
+        {paginationSlot}
 
         <div className="mt-8">
           <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">

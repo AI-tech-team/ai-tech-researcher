@@ -174,3 +174,10 @@
 - 掃除: 到達不能な死にコード `EntityPageModal`(知識グラフUI撤去で入口消失・/topicが代替)を削除＋PublicAppの配線除去(commit 249fe98)。
 - 検証: dev実機 /reports/75=200・読了時間/目次(5見出し)表示・目次リンクで#sec-4へアンカー遷移・tsc/eslintクリーン。
 - 影響: 長文レポート(週次/月次)の回遊性向上。残(④任意): テーマ切替(L)・記事側の読了時間。次は⑤通知 or ⑥多言語。
+
+## 2026-06-13 細かいギャップ補完: LINE/security.txt/skip-link/トップへ戻る/前後ナビ/ページネーション
+- LINEシェア(ShareButtons・JP最大の共有先)／`public/.well-known/security.txt`(責任ある開示)／skip-to-contentリンク(layout＋PublicApp main#main-content)／BackToTopボタン(window>600pxで表示・モーダルは別スクロールで非表示)。
+- レポート前後ナビ: `getAdjacentReports(type, reportDate)`で同種の前(古)/次(新)を取得→`/reports/[id]`全画面に「前の/次の{label}」リンク。
+- /category・/tag ページネーション: `getArticlesBy*`に`offset`追加(PAGE_SIZE=40)、`?page=`で前後ページ送り(共通`Pagination`)。**2ページ目以降はnoindex**(薄い/重複ページ回避)。ArticleListViewに`paginationSlot`。
+- 検証: dev実機で security.txt=200・LINEボタン・Tab先頭=skip・/reports/72前後ナビ・/category?page=2(前のページ/40件)。tsc/eslintクリーン。
+- 残(選択ギャップ): **メールのワンクリック配信停止(unsubscribe・中規模)**／読書プログレスバー。次=unsubscribe→トピック別メール(⑤)。
