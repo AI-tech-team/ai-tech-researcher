@@ -152,3 +152,12 @@
 - 不採用: 記事/レポと同じ ModalShell(中身のみ)ではなく、about/status と同じ OverlayShell(全ページ包む)を採用(/topicは独立した全画面ページなので)。
 - 検証: dev実機 `/topic/Google`=200・関係/事実/関連記事表示・関係先/topicリンク9個・tsc/eslintクリーン。
 - 残(③-A): ②`/category/[name]` ③`/tag/[name]` ④導線(エンティティchip/カテゴリ/タグを上記URLにリンク＝今はモーダルを開く実装)＋sitemap収録。導線が付くまで /topic は直リンク専用で孤立気味。
+
+## 2026-06-12 ロードマップ③-A(2): /category・/tag URLページ＋導線＋sitemap
+- 決定: `/category/[name]`・`/tag/[name]` の独立URLページ(＋@modal intercept)を追加。新規 `getArticlesByCategory`(category一致)・`getArticlesByTag`(tagsはJSON配列なので `LIKE '%"tag"%' ESCAPE` で含有判定)を5分キャッシュ・重要度→新着順。共通の `ArticleListView`(サーバ描画・記事カード→/articles/[id])で /category /tag を共用。BreadcrumbList＋ItemList JSON-LD付与・空はnoindex。
+- 導線: `ArticleDetailContent` のカテゴリバッジ→`/category/[cat]`、タグ→`/tag/[tag]` を本物リンク化(記事を開けばそこから絞り込みページへ辿れる)。
+- sitemap: 固定カテゴリ7種＋`getSitemapTopics`(関係を持つエンティティ最大300)を `/category` `/topic` として収録＝クローラ到達性を確保。
+- 理由: ③発見の土台。エンティティ(/topic)＋カテゴリ/タグの絞り込みを全てURL化＝共有・被リンク・SEOに乗る。tagsはソース/ドメイン由来が多い(hn等)が機能は同一。
+- 不採用: 記事カードの一覧UIはホームの既存コンポーネントを流用せず、SEOページ用に軽量な`ArticleListView`を新設(ユーザー状態・無限スクロール不要)。エンティティchip→/topic の在アプリ導線はPublicApp改修が要るため次段(今は記事のcategory/tag導線＋sitemap/相互リンクで到達性を確保)。
+- 検証: 本番build成功(/topic・/category・/tag=動的ルート生成)。dev実機で /topic/Google・/category/LLM推論(80件)・/tag/hn(80件)=200・記事リンク・見出し確認。tsc/eslintクリーン。
+- 残(③-A任意): エンティティchip→/topic の在アプリ導線。③-B: /search?q=＋ファセット。

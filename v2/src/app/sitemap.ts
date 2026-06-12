@@ -1,6 +1,9 @@
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
-import { getCollectedDataList, getReportsData } from '@/app/actions';
+import { getCollectedDataList, getReportsData, getSitemapTopics } from '@/app/actions';
+
+// 記事のカテゴリ（固定セット）。/category/[name] ランディング用。
+const CATEGORIES = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'];
 
 // 公開ページのサイトマップ。入口ページに加え、全画面ページの記事(/articles/[id])と
 // レポート(/reports/[id])の直近分を列挙してクローラに知らせる（どちらも独立URLを持つ）。
@@ -47,5 +50,23 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // 取得失敗時はレポートを除外（sitemap自体は落とさない）
   }
 
-  return [...pages, ...reportPages, ...articles];
+  // カテゴリのランディング（固定）
+  const categoryPages: MetadataRoute.Sitemap = CATEGORIES.map(c => ({
+    url: `${SITE_URL}/category/${encodeURIComponent(c)}`,
+    lastModified: now, changeFrequency: 'daily' as const, priority: 0.5,
+  }));
+
+  // 知識グラフの主要トピック（関係を持つ＝中身のあるエンティティ）
+  let topicPages: MetadataRoute.Sitemap = [];
+  try {
+    const topics = await getSitemapTopics(300);
+    topicPages = topics.map(t => ({
+      url: `${SITE_URL}/topic/${encodeURIComponent(t)}`,
+      lastModified: now, changeFrequency: 'weekly' as const, priority: 0.5,
+    }));
+  } catch {
+    // 取得失敗時はトピックを除外（sitemap自体は落とさない）
+  }
+
+  return [...pages, ...categoryPages, ...topicPages, ...reportPages, ...articles];
 }
