@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { searchArticles } from '@/app/actions';
@@ -136,6 +137,14 @@ export function SearchPalette({ open, onClose, onSelect }: {
                 </div>
               )}
             </div>
+
+            {/* 全画面の検索結果ページへ（共有/履歴可能なURL） */}
+            {q.trim().length >= 2 && (
+              <Link href={`/search?q=${encodeURIComponent(q.trim())}`} onClick={onClose}
+                className="block px-4 py-2.5 text-center text-[11px] font-medium text-sky-400 hover:text-sky-300 border-t border-white/5 hover:bg-white/[0.03] transition-colors">
+                「{q.trim()}」の検索結果を全画面で開く →
+              </Link>
+            )}
           </motion.div>
         </motion.div>
       )}

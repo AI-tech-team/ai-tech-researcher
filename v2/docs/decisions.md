@@ -161,3 +161,10 @@
 - 不採用: 記事カードの一覧UIはホームの既存コンポーネントを流用せず、SEOページ用に軽量な`ArticleListView`を新設(ユーザー状態・無限スクロール不要)。エンティティchip→/topic の在アプリ導線はPublicApp改修が要るため次段(今は記事のcategory/tag導線＋sitemap/相互リンクで到達性を確保)。
 - 検証: 本番build成功(/topic・/category・/tag=動的ルート生成)。dev実機で /topic/Google・/category/LLM推論(80件)・/tag/hn(80件)=200・記事リンク・見出し確認。tsc/eslintクリーン。
 - 残(③-A任意): エンティティchip→/topic の在アプリ導線。③-B: /search?q=＋ファセット。
+
+## 2026-06-13 ロードマップ③-B: 検索URLページ /search?q=
+- 決定: `/search?q=` のサーバ描画検索結果ページを新設。既存 `searchArticles`(title/titleJa/summary の LIKE・重要度→新着順・25件)を流用し `ArticleListView` で表示。検索入力は `SearchBox`(GETフォーム＝JS不要でサーバ再描画)。カテゴリバッジを `/category` リンク化＝簡易ファセット(クリックで絞り込み)。⌘Kの `SearchPalette` に「全画面で開く→/search?q=」導線を追加。
+- 理由: ③発見。クライアント専用の SearchPalette は共有/履歴/SEO/no-JSに乗らなかった→URL化で補完。検索結果ページは **noindex**(薄い/無限ページのindex回避＝SEO定石)だが URL共有は可能。
+- 不採用: ハイブリッドRAG(`hybridSearch`:vector+FTS+GraphRAG)はチャット/リサーチ用で重い→公開検索はLIKEで十分。期間/ソースの本格ファセットは見送り(カテゴリリンクで簡易代替)。/searchのintercept(モーダル)は付けず全画面遷移(検索は目的地ページ)。
+- 検証: dev実機 `/search?q=Claude`=200・検索ボックス・25件・カテゴリリンク・⌘K導線。tsc/eslintクリーン。
+- 影響: ③発見の土台は ③-A(topic/category/tag)＋③-B(search) が揃った。残=在アプリのエンティティ導線(知識グラフUI撤去で現状chip無し＝小機能新設)・期間/ソースfacet。次は④読む体験。
