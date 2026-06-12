@@ -13,7 +13,6 @@ import {
   toggleFavorite, toggleReadLater,
   getMyProfile, subscribeEmailDigest,
 } from '@/app/actions';
-import { EntityPageModal } from '@/components/EntityPageModal';
 import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
@@ -141,7 +140,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const [hasMore, setHasMore] = useState(() => pubSnapshot?.hasMore ?? (initialData ? initialData.data.length === PAGE : true));
   const [loadingMore, setLoadingMore] = useState(false);
 
-  const [detailEntityName, setDetailEntityName] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
@@ -217,7 +215,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   // モーダル表示中は背面(body/html)のスクロールを止める（スマホで背面がスクロールする問題の対策）
   const anyOverlayOpen =
     searchOpen ||
-    profileOpen || savedOpen || detailEntityName != null;
+    profileOpen || savedOpen;
   useEffect(() => {
     if (!anyOverlayOpen) return;
     const prevBody = document.body.style.overflow;
@@ -818,12 +816,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
       </main>
 
       {/* ── モーダル ── */}
-      <EntityPageModal
-        entityName={detailEntityName}
-        onClose={() => setDetailEntityName(null)}
-        onOpenArticle={(id) => { setDetailEntityName(null); openArticle(id); }}
-        onOpenEntity={(name) => setDetailEntityName(name)}
-      />
       <SearchPalette
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
