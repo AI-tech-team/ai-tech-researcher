@@ -17,6 +17,7 @@ export function ShareButtons({ url, title }: { url: string; title: string }) {
   const enc = encodeURIComponent;
   const hatena = `https://b.hatena.ne.jp/add?mode=confirm&url=${enc(url)}&title=${enc(title)}`;
   const x = `https://twitter.com/intent/tweet?text=${enc(title)}&url=${enc(url)}`;
+  const line = `https://social-plugins.line.me/lineit/share?url=${enc(url)}`;
 
   const copy = async () => {
     try {
@@ -40,6 +41,9 @@ export function ShareButtons({ url, title }: { url: string; title: string }) {
       </a>
       <a href={x} target="_blank" rel="noopener noreferrer" className={base}>
         <span className="font-bold">𝕏</span> ポスト
+      </a>
+      <a href={line} target="_blank" rel="noopener noreferrer" className={base}>
+        <span className="font-bold text-[#06C755]">LINE</span>
       </a>
       <button onClick={copy} className={base}>
         {copied ? <><Check size={13} className="text-emerald-400" /> コピー済み</> : <><Link2 size={13} /> リンク</>}
