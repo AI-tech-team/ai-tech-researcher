@@ -206,6 +206,63 @@ export async function getCollectedDataList(limit = 60, offset = 0): Promise<Coll
   }
 }
 
+// カテゴリ別の記事一覧（公開URLページ /category/[name] 用）。重要度→新着順。
+// 公開SEOページなのでユーザー別状態は載せず、5分キャッシュで読み取り課金を抑える。
+export async function getArticlesByCategory(category: string, limit = 80): Promise<CollectedItem[]> {
+  try {
+    const lim = Math.min(Math.max(limit, 1), 100);
+    return await cached(`bycat:${category}:${lim}`, 300_000, async () => {
+      const rows = await db.select(COLLECTED_SELECT)
+        .from(collectedData)
+        .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+        .where(eq(collectedData.category, category))
+        .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
+        .limit(lim);
+      return parseCollectedRows(rows);
+    });
+  } catch (error) {
+    console.error('getArticlesByCategory failed:', error);
+    return [];
+  }
+}
+
+// タグ別の記事一覧（公開URLページ /tag/[name] 用）。tags は JSON配列文字列なので "tag" の含有で判定。
+export async function getArticlesByTag(tag: string, limit = 80): Promise<CollectedItem[]> {
+  try {
+    const lim = Math.min(Math.max(limit, 1), 100);
+    // %_ はLIKEのワイルドカードなのでエスケープ（タグ名由来の意図しない広域マッチを防ぐ）
+    const safe = tag.replace(/[\\%_]/g, (m) => `\\${m}`);
+    return await cached(`bytag:${tag}:${lim}`, 300_000, async () => {
+      const rows = await db.select(COLLECTED_SELECT)
+        .from(collectedData)
+        .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+        .where(sql`${collectedData.tags} LIKE ${'%"' + safe + '"%'} ESCAPE '\\'`)
+        .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
+        .limit(lim);
+      return parseCollectedRows(rows);
+    });
+  } catch (error) {
+    console.error('getArticlesByTag failed:', error);
+    return [];
+  }
+}
+
+// sitemap用: 中身が充実したエンティティ名（関係を持つもの＝/topic が noindex にならない）を列挙。
+export async function getSitemapTopics(limit = 300): Promise<string[]> {
+  try {
+    const r = await client.execute(
+      `SELECT n FROM (
+         SELECT subject_name AS n FROM relations WHERE status != 'stale'
+         UNION SELECT object_name AS n FROM relations WHERE status != 'stale'
+       ) WHERE n IS NOT NULL AND n != '' LIMIT ${Math.min(Math.max(limit, 1), 1000)}`,
+    );
+    return r.rows.map((row) => String(row.n)).filter(Boolean);
+  } catch (error) {
+    console.error('getSitemapTopics failed:', error);
+    return [];
+  }
+}
+
 // 単一記事をID指定で取得（本文rawContent込み）。リスト読み込み範囲に依存しないジャンプ用
 export type ArticleDetail = CollectedItem & { rawContent?: string | null };
 export async function getArticleById(id: number): Promise<ArticleDetail | null> {

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from 'next/link';
 import { Star, Bookmark, CheckCircle2, ExternalLink, ListTree, Newspaper } from 'lucide-react';
 import type { ArticleDetail } from '@/app/actions';
 import { safeHttpUrl } from '@/lib/safeUrl';
@@ -36,7 +37,10 @@ export function ArticleDetailContent({
     <div className="p-5 sm:p-6 space-y-4">
       {/* メタ */}
       <div className="flex items-center gap-2 flex-wrap pr-8">
-        <span className="font-mono text-[10px] font-bold tracking-widest uppercase" style={{ color }}>{article.category ?? 'OTHER'}</span>
+        {article.category
+          ? <Link href={`/category/${encodeURIComponent(article.category)}`} scroll={false}
+              className="font-mono text-[10px] font-bold tracking-widest uppercase hover:underline underline-offset-2" style={{ color }}>{article.category}</Link>
+          : <span className="font-mono text-[10px] font-bold tracking-widest uppercase" style={{ color }}>OTHER</span>}
         <span title="重要度スコア（AIが判定した注目度。お気に入り数ではありません）"
           className="font-mono text-[10px] px-1.5 py-px rounded border font-bold"
           style={{ color: '#fb923c', borderColor: '#fb923c28', background: '#fb923c10' }}>重要度 ★{article.importanceScore ?? 0}</span>
@@ -112,7 +116,9 @@ export function ArticleDetailContent({
       {/* タグ */}
       {article.tags && article.tags.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap font-mono text-[10px] text-slate-600 pt-1">
-          {article.tags.slice(0, 6).map(t => <span key={t}>#{t}</span>)}
+          {article.tags.slice(0, 6).map(t => (
+            <Link key={t} href={`/tag/${encodeURIComponent(t)}`} scroll={false} className="hover:text-slate-300 transition-colors">#{t}</Link>
+          ))}
         </div>
       )}
 
