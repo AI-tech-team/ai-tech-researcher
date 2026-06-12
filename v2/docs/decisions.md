@@ -145,3 +145,10 @@
 - 不採用: 専用パイプライン実行ログテーブルの新設→既存の最新レポ/収集時刻で十分(差分最小)。`/how-it-works`新規ページ→/about重複。記事本文側のラベル→サマリーのみがAI生成物なのでサマリーに限定。
 - 検証: 本番`next build`成功(/status・(.)status=静的＋ISR30分で生成)。dev実機で /status=200・健全性ロジック動作(dev DBは最新日次06-07で「遅延」赤表示=正しい/本番は毎日更新で緑)・収集件数表示、レポに「AI生成」・記事に「AI要約」バッジ各1をPlaywright確認。tsc/eslintクリーン。
 - 影響: 信頼/透明性が公開ページに可視化。次は③発見の土台(URLページ化＋構造化＋検索facet)。
+
+## 2026-06-12 ロードマップ③-A(1): エンティティの独立URLページ /topic/[name]
+- 決定: 知識グラフのエンティティを独立URL `/topic/[name]`(＋`@modal/(.)topic`インターセプト)に。既存 `getEntityKnowledgePage` を流用(React `cache()`でmetadataと本体の二重実行防止)。関係先→`/topic/[other]`、関連記事→`/articles/[id]` を本物リンク化。BreadcrumbList JSON-LD付与。中身が空のエンティティは `robots noindex`(薄いページ量産を防ぐ)。
+- 理由: 今までエンティティ詳細はモーダル(EntityPageModal)だけ＝URL無しで被リンク/共有/SEOに乗らなかった。最ユニークなSEO資産(競合に無い知識グラフ)を独立URL化。
+- 不採用: 記事/レポと同じ ModalShell(中身のみ)ではなく、about/status と同じ OverlayShell(全ページ包む)を採用(/topicは独立した全画面ページなので)。
+- 検証: dev実機 `/topic/Google`=200・関係/事実/関連記事表示・関係先/topicリンク9個・tsc/eslintクリーン。
+- 残(③-A): ②`/category/[name]` ③`/tag/[name]` ④導線(エンティティchip/カテゴリ/タグを上記URLにリンク＝今はモーダルを開く実装)＋sitemap収録。導線が付くまで /topic は直リンク専用で孤立気味。
