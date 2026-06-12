@@ -473,7 +473,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-10">
+      <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-10 outline-none">
 
         {/* ── ウェルカム・ストリップ（未ログイン初訪問のみ） ── */}
         {welcomeOpen && !sessionUserId && (

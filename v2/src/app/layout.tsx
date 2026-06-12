@@ -6,6 +6,7 @@ import { ToastProvider } from "@/components/Toast";
 import { Providers } from "@/components/Providers";
 import { SplashScreen } from "@/components/SplashScreen";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
+import { BackToTop } from "@/components/BackToTop";
 import { JsonLd } from "@/components/JsonLd";
 import { SITE_URL, SITE_NAME, SITE_DESC } from "@/lib/site";
 
@@ -62,6 +63,10 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
   return (
     <html lang="ja" className={`${inter.variable} ${outfit.variable} h-full antialiased`}>
       <body className="min-h-full">
+        {/* アクセシビリティ: キーボード/スクリーンリーダー向けのスキップリンク（Tabで最初に当たる） */}
+        <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-sky-600 focus:text-white focus:text-sm focus:font-bold">
+          メインコンテンツへスキップ
+        </a>
         <SplashScreen />
         <ServiceWorkerRegistrar />
         <Providers>
@@ -70,6 +75,7 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
             {modal}
           </ToastProvider>
         </Providers>
+        <BackToTop />
         {/* Cookieレス・匿名のアクセス解析（PIIを集めない方針と両立）。Vercel側でWeb Analytics有効化が必要 */}
         <Analytics />
         <JsonLd data={siteJsonLd} />
