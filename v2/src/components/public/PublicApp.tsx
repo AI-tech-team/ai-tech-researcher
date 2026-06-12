@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -145,6 +145,20 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const [savedOpen, setSavedOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
+  // 「…」メニューはカーソルが離れたら閉じる（gap通過のチラつき防止に小遅延・再侵入でキャンセル）。
+  // 外側クリックは覆い被せ用divではなくdocumentリスナで判定（divで覆うとボタンを隠してhoverが壊れるため）。
+  const infoMenuRef = useRef<HTMLDivElement>(null);
+  const infoMenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelInfoClose = () => { if (infoMenuTimer.current) clearTimeout(infoMenuTimer.current); };
+  const scheduleInfoClose = () => { cancelInfoClose(); infoMenuTimer.current = setTimeout(() => setInfoMenuOpen(false), 180); };
+  useEffect(() => {
+    if (!infoMenuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (infoMenuRef.current && !infoMenuRef.current.contains(e.target as Node)) setInfoMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [infoMenuOpen]);
   const [digestPromptOpen, setDigestPromptOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
@@ -375,16 +389,13 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           </div>
           <div className="flex items-center gap-2">
             {/* … メニュー（フィードバック / プライバシー / 利用規約 を集約してヘッダーをスッキリ） */}
-            <div className="relative">
+            <div ref={infoMenuRef} className="relative" onMouseEnter={cancelInfoClose} onMouseLeave={scheduleInfoClose}>
               <button onClick={() => setInfoMenuOpen(v => !v)} title="メニュー" aria-label="メニュー"
                 className="flex items-center px-2 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 transition-colors">
                 <MoreHorizontal size={18} />
               </button>
               {infoMenuOpen && (
-                <>
-                  {/* 外側クリックで閉じる */}
-                  <div className="fixed inset-0 z-40" onClick={() => setInfoMenuOpen(false)} />
-                  <div className="absolute right-0 mt-1.5 w-52 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
+                <div className="absolute right-0 mt-1.5 w-52 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
                     <Link href="/about" scroll={false} onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors whitespace-nowrap">
                       <Info size={14} className="shrink-0 text-slate-400" /> このサービスについて
@@ -412,7 +423,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                       <Activity size={14} className="text-slate-400" /> 稼働状況
                     </Link>
                   </div>
-                </>
               )}
             </div>
             {/* 検索: デスクトップは⌘Kヒント付きピル、モバイルはアイコン */}
