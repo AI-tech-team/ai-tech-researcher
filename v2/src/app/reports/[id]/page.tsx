@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { BrainCircuit, ArrowLeft } from 'lucide-react';
+import { BrainCircuit, ArrowLeft, ArrowRight } from 'lucide-react';
 import { SITE_NAME, SITE_URL } from '@/lib/site';
-import { getReportById } from '@/app/actions';
+import { getReportById, getAdjacentReports } from '@/app/actions';
 import { ReportView } from '@/components/ReportView';
 import { JsonLd } from '@/components/JsonLd';
 
@@ -31,6 +31,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
   // レポートは自前生成のIP → Article として構造化（記事ページは第三者著作なので付けない）。
   const label = TYPE_LABEL[report.type] ?? 'レポート';
+  const adj = await getAdjacentReports(report.type, report.reportDate);
   const articleJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Article',
@@ -65,6 +66,33 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         <article className="rounded-2xl border border-white/10 bg-[#070b16]">
           <ReportView report={report} />
         </article>
+
+        {/* 前後の同種レポートへのナビ */}
+        {(adj.prev || adj.next) && (
+          <nav className="mt-5 flex items-stretch justify-between gap-3">
+            {adj.prev ? (
+              <Link href={`/reports/${adj.prev.id}`} scroll={false}
+                className="flex-1 flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-3.5 py-2.5 transition-colors group">
+                <ArrowLeft size={15} className="text-slate-500 group-hover:text-sky-400 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-[10px] text-slate-600">前の{label}</span>
+                  <span className="block text-xs font-bold text-slate-300 truncate">{adj.prev.reportDate}</span>
+                </span>
+              </Link>
+            ) : <span className="flex-1" />}
+            {adj.next ? (
+              <Link href={`/reports/${adj.next.id}`} scroll={false}
+                className="flex-1 flex items-center justify-end gap-2 rounded-xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-3.5 py-2.5 transition-colors group text-right">
+                <span className="min-w-0">
+                  <span className="block text-[10px] text-slate-600">次の{label}</span>
+                  <span className="block text-xs font-bold text-slate-300 truncate">{adj.next.reportDate}</span>
+                </span>
+                <ArrowRight size={15} className="text-slate-500 group-hover:text-sky-400 shrink-0" />
+              </Link>
+            ) : <span className="flex-1" />}
+          </nav>
+        )}
+
         <div className="mt-6">
           <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
             <ArrowLeft size={13} /> 一覧に戻る

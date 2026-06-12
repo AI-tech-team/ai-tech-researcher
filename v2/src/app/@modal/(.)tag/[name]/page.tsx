@@ -2,10 +2,10 @@ import TagPage from '@/app/tag/[name]/page';
 import { OverlayShell } from '@/components/OverlayShell';
 
 // 一覧/記事から /tag/[name] へソフト遷移したときだけ発火するインターセプト（戻る再読み込み防止）。
-export default function TagModalRoute({ params }: { params: Promise<{ name: string }> }) {
+export default function TagModalRoute({ params, searchParams }: { params: Promise<{ name: string }>; searchParams: Promise<{ page?: string }> }) {
   return (
     <OverlayShell>
-      <TagPage params={params} />
+      <TagPage params={params} searchParams={searchParams} />
     </OverlayShell>
   );
 }
