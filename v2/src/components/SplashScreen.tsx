@@ -7,8 +7,8 @@ import { useEffect, useState } from 'react';
 export function SplashScreen() {
   const [hide, setHide] = useState(false);
   useEffect(() => {
-    // 芽が育ち切る頃（約1.1s）＋少し余韻を見せてから消す
-    const t = setTimeout(() => setHide(true), 1400);
+    // 芽が育ち切る頃に素早く消す（体感ロードを短く。アニメは globals.css 側も短縮済）
+    const t = setTimeout(() => setHide(true), 850);
     return () => clearTimeout(t);
   }, []);
   return (
