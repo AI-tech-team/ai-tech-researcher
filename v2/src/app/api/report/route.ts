@@ -48,7 +48,7 @@ async function sendEmail(content: string, type = 'デイリー'): Promise<void> 
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
   await transporter.sendMail({
     from: user, to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
-    subject: `🤖 AI Tech Researcher ${type}レポート ${today}`,
+    subject: `🤖 Knowledge Tree ${type}レポート ${today}`,
     text: content,
     html: markdownToHtml(content),
   });

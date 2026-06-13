@@ -30,7 +30,7 @@ export async function logError(context: string, error: unknown, opts?: { alert?:
     await transporter.sendMail({
       from: user,
       to,
-      subject: `⚠️ AI Tech Researcher ランタイムエラー: ${context}`,
+      subject: `⚠️ Knowledge Tree ランタイムエラー: ${context}`,
       text: `箇所: ${context}\nエラー: ${msg}\n\nスタック(先頭6行):\n${stack}`,
     });
   } catch {

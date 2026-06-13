@@ -210,7 +210,7 @@ async function filterUnseenUrls<T>(items: T[], getUrl: (i: T) => string | null |
 async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenDaysAgo: string): Promise<number> {
   if (!isSafeFetchUrl(source.value)) return 0; // SSRF対策: 内部/プライベート宛フィードは弾く
   const res = await fetch(source.value, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -355,7 +355,7 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   const url = 'https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL&sortBy=submittedDate&sortOrder=descending&max_results=30';
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
     signal: AbortSignal.timeout(20000),
   });
   if (!res.ok) throw new Error(`ArXiv HTTP ${res.status}`);
@@ -427,7 +427,7 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
   const url = `https://api.github.com/search/repositories?q=llm+OR+ai-agent+OR+machine-learning+in:topics+stars:>200+pushed:>${sevenDaysAgo}&sort=stars&order=desc&per_page=15`;
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'AIResearcher/1.0', 'Accept': 'application/vnd.github+json' },
+    headers: { 'User-Agent': 'KnowledgeTree/1.0', 'Accept': 'application/vnd.github+json' },
     signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
@@ -482,7 +482,7 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
   const url = 'https://paperswithcode.com/api/v1/papers/?format=json&ordering=-date&has_code=true&page=1&items_per_page=30';
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`PwC API error: ${res.status}`);
@@ -552,7 +552,7 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
     if (!isSafeFetchUrl(target.value)) continue; // SSRF対策
     try {
       const res = await fetch(target.value, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AIResearcher/1.0)' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
         signal: AbortSignal.timeout(15000),
       });
       const html = await res.text();
@@ -1058,7 +1058,7 @@ async function sendEmail(reportContent: string, type: string = 'デイリー') {
     await transporter.sendMail({
       from: user,
       to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
-      subject: `🤖 AI Tech Researcher ${type}レポート ${today}`,
+      subject: `🤖 Knowledge Tree ${type}レポート ${today}`,
       text: reportContent,
       html: markdownToHtml(reportContent),
     });
@@ -1155,7 +1155,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
       </div>`;
 
       await transporter.sendMail({
-        from: `AI Tech Researcher <${user}>`, to: r.email,
+        from: `Knowledge Tree <${user}>`, to: r.email,
         subject: `☀️ 今日のダイジェスト ${today}`,
         html,
       });
@@ -1178,7 +1178,7 @@ async function sendFailureEmail(error: Error) {
     await transporter.sendMail({
       from: user,
       to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
-      subject: `🚨 AI Tech Researcher パイプライン失敗 ${today}`,
+      subject: `🚨 Knowledge Tree パイプライン失敗 ${today}`,
       // スタックは原因特定に足る先頭6行のみ（フルダンプの機密情報をメールに残さない）。
       text: `デイリーパイプラインが失敗しました。\n\nエラー: ${error.message}\n\nスタックトレース(先頭6行):\n${(error.stack ?? '(なし)').split('\n').slice(0, 6).join('\n')}`,
     });

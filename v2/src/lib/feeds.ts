@@ -9,7 +9,7 @@ import { isSafeFetchUrl } from './safeUrl';
 import { isAllowedByRobots } from './robots';
 
 // 巡回・本文取得で名乗るUA。連絡先を含めるのがスクレイピングのマナー（第三条・悪質性低減）。
-const UA = 'Mozilla/5.0 (compatible; AIResearcher/1.0; +https://ai-tech-researcher.vercel.app)';
+const UA = 'Mozilla/5.0 (compatible; KnowledgeTree/1.0; +https://ai-tech-researcher.vercel.app)';
 
 const FEED_LINK_RE = /<link\b[^>]*>/gi;
 // homepageに<link rel=alternate>が無いサイト向けの定番パス

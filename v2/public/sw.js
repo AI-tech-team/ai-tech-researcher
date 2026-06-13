@@ -1,4 +1,4 @@
-/* AI Tech Researcher Service Worker — 起動高速化＋基本オフライン。
+/* Knowledge Tree Service Worker — 起動高速化＋基本オフライン。
  *
  * 方針（鮮度を最優先・古い記事を絶対に見せない）:
  *   - ハッシュ付きの静的アセット(_next/static・アイコン・フォント等)= cache-first（中身不変なので安全）

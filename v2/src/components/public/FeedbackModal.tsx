@@ -115,7 +115,7 @@ export function FeedbackModal({ open, onClose }: Props) {
                   ご意見・ご要望をお寄せください。
                 </p>
                 {CONTACT_EMAIL ? (
-                  <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('AI Tech Researcher フィードバック')}`}
+                  <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Knowledge Tree フィードバック')}`}
                     className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
                     <Send size={14} /> メールで送る
                   </a>

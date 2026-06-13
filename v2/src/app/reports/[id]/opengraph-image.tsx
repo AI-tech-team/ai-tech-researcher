@@ -4,7 +4,7 @@ import { getReportById } from '@/app/actions';
 // レポート個別ページの動的OG画像（X/はてブ/Slack等のカード用）。
 // 公開済みレポートは内容不変なのでISRでキャッシュ（毎クロールでDB/フォントを叩かない）。
 export const revalidate = 86400;
-export const alt = 'AI Tech Researcher のレポート';
+export const alt = 'Knowledge Tree のレポート';
 export const size = OG_SIZE;
 export const contentType = 'image/png';
 
