@@ -3,7 +3,7 @@
 // originごとに6時間メモリキャッシュ（毎回robots.txtを叩かない）。取得失敗/不在は「制限なし」とみなす。
 import { isSafeFetchUrl } from './safeUrl';
 
-const UA_TOKEN = 'airesearcher'; // 自分のUA名（User-Agent: AIResearcher/1.0）
+const UA_TOKEN = 'airesearcher'; // 自分のUA名（User-Agent: KnowledgeTree/1.0）
 const TTL_MS = 6 * 60 * 60 * 1000;
 const cache = new Map<string, { rules: string[]; at: number }>();
 
@@ -49,7 +49,7 @@ export async function isAllowedByRobots(targetUrl: string): Promise<boolean> {
     if (isSafeFetchUrl(robotsUrl)) {
       try {
         const res = await fetch(robotsUrl, {
-          headers: { 'User-Agent': 'AIResearcher/1.0 (+https://ai-tech-researcher.vercel.app)' },
+          headers: { 'User-Agent': 'KnowledgeTree/1.0 (+https://ai-tech-researcher.vercel.app)' },
           signal: AbortSignal.timeout(5000),
           redirect: 'follow',
         });

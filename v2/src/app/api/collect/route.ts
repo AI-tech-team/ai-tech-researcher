@@ -11,7 +11,7 @@ import { isAllowedByRobots } from '@/lib/robots';
 import { logError } from '@/lib/logError';
 
 // 巡回・本文取得で名乗るUA（連絡先付き＝スクレイピングのマナー）。
-const UA = 'Mozilla/5.0 (compatible; AIResearcher/1.0; +https://ai-tech-researcher.vercel.app)';
+const UA = 'Mozilla/5.0 (compatible; KnowledgeTree/1.0; +https://ai-tech-researcher.vercel.app)';
 
 export const maxDuration = 60;
 

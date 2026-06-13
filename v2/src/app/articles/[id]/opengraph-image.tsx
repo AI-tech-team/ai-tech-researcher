@@ -4,7 +4,7 @@ import { getArticleById } from '@/app/actions';
 // 記事個別ページの動的OG画像。タイトル＋カテゴリ（自前生成のメタ）のみ描画する。
 // 著作権配慮: 第三者本文(rawContent)は載せない。ISRでキャッシュ。
 export const revalidate = 86400;
-export const alt = 'AI Tech Researcher が収集・要約したAI・技術ニュース';
+export const alt = 'Knowledge Tree が収集・要約したAI・技術ニュース';
 export const size = OG_SIZE;
 export const contentType = 'image/png';
 

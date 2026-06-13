@@ -181,3 +181,9 @@
 - /category・/tag ページネーション: `getArticlesBy*`に`offset`追加(PAGE_SIZE=40)、`?page=`で前後ページ送り(共通`Pagination`)。**2ページ目以降はnoindex**(薄い/重複ページ回避)。ArticleListViewに`paginationSlot`。
 - 検証: dev実機で security.txt=200・LINEボタン・Tab先頭=skip・/reports/72前後ナビ・/category?page=2(前のページ/40件)。tsc/eslintクリーン。
 - 残(選択ギャップ): **メールのワンクリック配信停止(unsubscribe・中規模)**／読書プログレスバー。次=unsubscribe→トピック別メール(⑤)。
+
+## 2026-06-13 改名: AI Tech Researcher → Knowledge Tree
+- 決定: プロダクト名を「Knowledge Tree」に改名（A方向＝「育つ知識」の世界観・新芽アイコンと一致）。`SITE_NAME`＋ハードコード全箇所（ヘッダ/OG・twitter alt/メール件名・送信者名/エラー通知/フィードバックmailto/knowledge-ai のsystem prompt/sw.jsコメント/CLAUDE.md/manifest short_name/crawler UA）を一括置換。SITE_TAGLINE「毎日「育つ」AIリサーチ」は継続（Knowledge Tree=育つ知識と整合）。
+- 不採用候補: きょうのAI/AIブリーフ/AIめぶき/そだつAI。ユーザーがKnowledge Treeを選択。
+- 保留: 独自ドメインは「最後」＝SITE_URL/UAの `ai-tech-researcher.vercel.app` は据え置き（ドメイン取得時に `NEXT_PUBLIC_SITE_URL` 更新＋OAuthリダイレクトURI追加）。
+- 検証: dev実機で OG画像「Knowledge Tree」・ヘッダ・`<title>` を確認。build成功・tscクリーン。残ブランド旧名0。

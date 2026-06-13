@@ -385,7 +385,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
               <BrainCircuit className="text-white" size={15} />
             </div>
-            <h1 className="font-bold text-sm font-outfit">AI Tech Researcher</h1>
+            <h1 className="font-bold text-sm font-outfit">Knowledge Tree</h1>
           </div>
           <div className="flex items-center gap-2">
             {/* … メニュー（フィードバック / プライバシー / 利用規約 を集約してヘッダーをスッキリ） */}
@@ -818,7 +818,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
               <div className="w-5 h-5 rounded-md bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center">
                 <BrainCircuit className="text-white" size={11} />
               </div>
-              <span className="font-mono text-[10px] text-slate-500">AI Tech Researcher</span>
+              <span className="font-mono text-[10px] text-slate-500">Knowledge Tree</span>
             </div>
             <p className="font-mono text-[10px] text-slate-700">毎日「育つ」AIリサーチ · © 2026</p>
           </div>

@@ -62,7 +62,7 @@ STRIDE / OWASP Top10 / ASVS / 最小権限 / Defense in Depth / IDOR・XSS・CSR
 
 ---
 
-# 現状サマリ（AI Tech Researcher）
+# 現状サマリ（Knowledge Tree）
 
 自走型AI技術情報収集・レポーティングシステム。個人利用＋公開マルチユーザー（Googleログイン）。
 
