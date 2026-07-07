@@ -187,3 +187,10 @@
 - 不採用候補: きょうのAI/AIブリーフ/AIめぶき/そだつAI。ユーザーがKnowledge Treeを選択。
 - 保留: 独自ドメインは「最後」＝SITE_URL/UAの `ai-tech-researcher.vercel.app` は据え置き（ドメイン取得時に `NEXT_PUBLIC_SITE_URL` 更新＋OAuthリダイレクトURI追加）。
 - 検証: dev実機で OG画像「Knowledge Tree」・ヘッダ・`<title>` を確認。build成功・tscクリーン。残ブランド旧名0。
+
+## 2026-07-07 レポート統一・私用レポート撤去・06:00ちょうど配信
+- 決定: 日次レポート生成を `src/lib/daily-report.ts` の `buildDailyReport()` に一本化（サイト掲載＝購読者メール＝オーナー手動再生成が同一実装）。対象記事を「前回daily以降の新着のみ」(20〜48hにクランプ)に限定し、前回レポートをプロンプトに渡して既報の焼き直しを禁止。旧実装(直近2〜7日を重要度順)は昨日の高スコア記事が再登場して新着を押し出す＝「毎日似たレポート・大事な新着が抜ける」の原因だった。
+- 決定: 私用（オーナー宛メール専用）機能を削除 = 夜間調査一式(detectAlerts/問い生成/runNightlyResearch/briefing)・LearningRecap・cross_insight・`knowledge-ai.ts`(唯一の利用元が旧generateReport)。alerts/research_questionsテーブルは履歴として残置（生成停止のみ）。オーナー専用sendEmail(REPORT_TO宛daily/weekly/monthly/recap)も廃止し、全員が同一の「今日のダイジェスト」(emailOptIn購読)を受信。週次・月次はサイト掲載のみ。失敗通知メールは運用系として存続。
+- 決定: 配信時刻の定時化。GitHub Actionsのschedule遅延(実測+40分〜1時間)対策として、フル実行を04:07 JSTに前倒し→同ジョブが21:00 UTC(06:00 JST)まで待機して `PIPELINE_MODE=report` を実行（リポジトリpublicでActions無料・外部cron不要）。フル実行失敗時も配信するalways()＋12:00の収集ランに「06:30以降で今日のdailyが無ければ生成・配信」の自己修復を追加。
+- 不採用: 外部cron(cron-job.org)＝アカウント追加の運用負担、Vercel Cron(Hobby)＝時刻保証なし。/api/reportのCRON_SECRET経路は不要になり削除（オーナー手動再生成のみ残す）。
+- 検証: tsc/next build/npm test(18件)クリーン。knowledge-ai残参照0。

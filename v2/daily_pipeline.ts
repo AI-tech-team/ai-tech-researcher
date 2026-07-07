@@ -1,10 +1,10 @@
 import { drizzle } from 'drizzle-orm/libsql';
 import { createClient } from '@libsql/client';
 import { google } from '@ai-sdk/google';
-import { generateText, generateObject, embedMany, tool, stepCountIs } from 'ai';
+import { generateText, generateObject, embedMany } from 'ai';
 import { GoogleGenAI, Type } from '@google/genai';
 import { z } from 'zod';
-import { eq, sql, desc, asc, count, and, gte, lt, isNull, inArray } from 'drizzle-orm';
+import { eq, sql, desc, count, and, gte, lt, isNull, inArray } from 'drizzle-orm';
 import { config } from 'dotenv';
 import * as nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
@@ -801,68 +801,15 @@ importanceは1〜10でAI技術的重要度を評価。tagsは3〜5個の短い�
   return { collected, failed };
 }
 
-async function generateReport(): Promise<string | null> {
-  console.log('[Report] レポート生成開始');
-
-  // データがあるか先にチェック
-  const since2d = sqlTs(new Date(Date.now() - 2 * 86_400_000));
-  const check = await db.select({ c: count() }).from(schema.collectedData)
-    .where(gte(schema.collectedData.createdAt, since2d));
-  if (Number(check[0].c) === 0) { console.log('[Report] データなし、スキップ'); return null; }
-
-  const todayJST = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
-  const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-
-  const { askKnowledgeAI } = await import('./src/lib/knowledge-ai');
-  const text = await withRetry(() => askKnowledgeAI(
-    `今日は${todayJST}です。AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
-
-以下のツールを順番に呼んで情報を揃えてから書いてください:
-1. get_recent_articles(days=2, limit=20, minImportance=6) で直近記事を取得
-2. get_statistics(days=7) でカテゴリ別トレンドを確認
-3. get_knowledge_graph_summary() で検証済みの数値・事実を取得
-4. get_reading_patterns(days=14) で読者の傾向を確認しトーンに反映
-5. get_previous_report('daily') で前回との変化点を把握
-
-【必須構成】
-## 🔥 今日のハイライト
-重要度8以上の記事を中心に3〜5点。「何が起きたか」「なぜ重要か」「実務への影響」を2〜3行で。
-
-## 🚀 急上昇トレンド
-今週急増しているカテゴリ・トピックを1段落で解説。
-
-## 📊 カテゴリ別トピック
-LLM推論/エージェント/ツール・フレームワーク/ハードウェア/ビジネス応用/研究・論文 ごとに整理。
-
-## 💡 エンジニアへの実践的インサイト
-実装・採用・評価のポイントを箇条書きで。
-
-【ルール】全体1500〜2000文字。具体的な数値・ベンチマークを含める。絵文字・箇条書きを活用。`,
-    { model: 'gemini-2.5-flash', maxSteps: 6 },
-  ));
-
-  // LLMが空応答を返すことがある。空レポートを最新dailyとして保存すると購読者briefのダイジェストが消えるため、保存せずnullを返す。
-  if (!text?.trim()) { console.warn('[Report] 空レポートのため保存をスキップ'); return null; }
-
-  const [insertedReport] = await db.insert(schema.reports).values({
-    type: 'daily', content: text, reportDate: reportDateJST,
-  }).returning({ id: schema.reports.id });
-
-  // adoptionLogs: 直近2日の高重要度記事のソースを採用済みとして記録
-  if (insertedReport?.id) {
-    const adopted = await db.select({ sourceId: schema.collectedData.sourceId })
-      .from(schema.collectedData)
-      .where(and(gte(schema.collectedData.createdAt, since2d), gte(schema.collectedData.importanceScore, 7)));
-    const sourceIds = [...new Set(adopted.map(d => d.sourceId).filter((id): id is number => id !== null))];
-    if (sourceIds.length > 0) {
-      await db.insert(schema.adoptionLogs).values(
-        sourceIds.map(sourceId => ({ reportId: insertedReport.id, sourceId, isAdopted: 1 as const }))
-      );
-    }
-  }
-
-  console.log('[Report] レポート生成完了');
-  return text;
+// 日次レポート生成＋全購読者へ同一ダイジェスト配信。生成本体は共通の buildDailyReport（サイト掲載と同一内容）。
+// 06:00 JST に PIPELINE_MODE=report で実行される。オーナー専用メールは廃止＝オーナーも emailOptIn で同じものを受け取る。
+async function runDailyReportAndDistribute(): Promise<void> {
+  // env ロード後に動的import（@/db クライアントが環境変数を参照するため）
+  const { buildDailyReport } = await import('./src/lib/daily-report');
+  const result = await buildDailyReport();
+  if (!result) { console.log('[Report] 新着データなし、レポート生成をスキップ'); return; }
+  console.log(`[Report] デイリーレポート生成完了 id=${result.inserted?.id}`);
+  await sendPersonalizedBriefs(result.text);
 }
 
 async function generateWeeklyReport(): Promise<string | null> {
@@ -998,27 +945,7 @@ function safeMailHref(u: string | null | undefined): string {
   return escapeHtml(u);
 }
 
-function markdownToHtml(md: string): string {
-  let html = md
-    .replace(/^## (.+)$/gm, '<h2 style="color:#38bdf8;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;margin-top:28px;margin-bottom:12px">$1</h2>')
-    .replace(/^### (.+)$/gm, '<h3 style="color:#818cf8;margin-top:16px;margin-bottom:8px">$1</h3>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:0.9em">$1</code>')
-    .replace(/^- (.+)$/gm, '<li style="margin:5px 0;line-height:1.6">$1</li>')
-    .replace(/\n\n+/g, '\n\n');
-
-  html = html.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => `<ul style="padding-left:20px;margin:8px 0">${m}</ul>`);
-  html = html.replace(/\n\n/g, '</p><p style="margin:10px 0;line-height:1.7">');
-  html = html.replace(/\n/g, '<br>');
-
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
-<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:700px;margin:0 auto;padding:24px;background:#0f172a;color:#e2e8f0">
-<p style="margin:10px 0;line-height:1.7">${html}</p>
-</body></html>`;
-}
-
 // 購読者メール（明るい背景）用：Markdown を本文フラグメントへ変換（<html>ラッパー無し）。
-// markdownToHtml（オーナー宛・ダーク）はそのまま温存し、こちらは白背景で読みやすい配色にする。
 function mdToLightHtml(md: string): string {
   let html = md
     .replace(/^## (.+)$/gm, '<h2 style="color:#0ea5e9;font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin:16px 0 8px">$1</h2>')
@@ -1036,37 +963,6 @@ function mdToLightHtml(md: string): string {
     .replace(/(<\/(?:h2|h3|ul|li)>)(?:\s*<br>)+/g, '$1')
     .replace(/<p[^>]*>(?:\s|<br>)*<\/p>/g, '');
   return `<p style="margin:5px 0;line-height:1.7;color:#334155">${html}</p>`;
-}
-
-async function sendEmail(reportContent: string, type: string = 'デイリー') {
-  const user = process.env.GMAIL_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD;
-
-  if (!user || !pass) {
-    console.log('[Email] GMAIL_USER/GMAIL_APP_PASSWORD未設定、スキップ');
-    return;
-  }
-
-  try {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user, pass },
-    });
-
-    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
-
-    await transporter.sendMail({
-      from: user,
-      to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
-      subject: `🤖 Knowledge Tree ${type}レポート ${today}`,
-      text: reportContent,
-      html: markdownToHtml(reportContent),
-    });
-
-    console.log(`[Email] ${type}レポート送信完了`);
-  } catch (e: any) {
-    console.error(`[Email] 送信失敗: ${e.message}`);
-  }
 }
 
 // v6: メール購読ユーザーへ「今日のあなた向け」パーソナライズbriefを配信（LLM不使用・低コスト）
@@ -1807,480 +1703,6 @@ async function runBatchFetch() {
   console.log(`[Batch] 完了: 反映${ingested}件 / 失敗${failed}件`);
 }
 
-// ── v3: 先読みアラート検知（理由付き。知識グラフを根拠に使う）──────────
-async function detectAlerts() {
-  console.log('[Alerts] アラート検知開始');
-  let created = 0;
-  const recent7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const since2dISO = sqlTs(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
-
-  const insertAlert = async (a: {
-    type: string; title: string; reason: string; entityName?: string | null;
-    severity?: string; relatedArticleId?: number | null; dedupeKey: string;
-  }) => {
-    const r = await db.insert(schema.alerts).values({
-      type: a.type, title: a.title, reason: a.reason,
-      entityName: a.entityName ?? null, severity: a.severity ?? 'watch',
-      relatedArticleId: a.relatedArticleId ?? null, dedupeKey: a.dedupeKey, status: 'active',
-    }).onConflictDoNothing();
-    if (r.rowsAffected > 0) created++;
-  };
-
-  // 1. ベンチマークのリーダー交代（直近7日に発生したもののみ）
-  try {
-    const rows = await db.select({
-      benchmarkName: schema.benchmarks.benchmarkName,
-      entityName: schema.benchmarks.entityName,
-      score: schema.benchmarks.score,
-      recordedDate: schema.benchmarks.recordedDate,
-    })
-      .from(schema.benchmarks)
-      .orderBy(asc(schema.benchmarks.benchmarkName), asc(schema.benchmarks.recordedDate), asc(schema.benchmarks.createdAt));
-
-    let curBench = '', maxScore = -Infinity, leader = '';
-    for (const r of rows) {
-      if (r.benchmarkName !== curBench) { curBench = r.benchmarkName; maxScore = -Infinity; leader = ''; }
-      if (r.score > maxScore) {
-        if (leader && r.entityName !== leader && (r.recordedDate ?? '') >= recent7) {
-          await insertAlert({
-            type: 'benchmark_lead_change',
-            title: `${r.benchmarkName}: ${r.entityName}が首位に`,
-            reason: `${r.entityName}が${r.benchmarkName}で${r.score}を記録し、これまで首位だった${leader}(${maxScore})を上回りました。追跡中の指標で順位が動いています。`,
-            entityName: r.entityName, severity: 'high',
-            dedupeKey: `bench:${r.benchmarkName}:${r.entityName}:${leader}`,
-          });
-        }
-        maxScore = r.score; leader = r.entityName;
-      }
-    }
-  } catch (e: any) { console.warn('  [Alerts] ベンチ検知失敗:', e.message?.slice(0, 60)); }
-
-  // 2. 直近に追加された競合/優位/置換の関係
-  try {
-    const rels = await db.select({
-      subjectName: schema.relations.subjectName,
-      relationType: schema.relations.relationType,
-      objectName: schema.relations.objectName,
-      articleId: schema.relations.articleId,
-    })
-      .from(schema.relations)
-      .where(and(
-        eq(schema.relations.status, 'active'),
-        gte(schema.relations.createdAt, since2dISO),
-        sql`${schema.relations.relationType} IN ('outperforms', 'supersedes', 'competes_with')`,
-      ))
-      .limit(8);
-
-    const relLabel: Record<string, string> = { outperforms: '性能で上回った', supersedes: '置き換えようとしている', competes_with: '競合関係にある' };
-    // 文の断片のようなエンティティ（長すぎ・カンマ含み）はアラートにしない
-    const looksLikeEntity = (s: string) => s.length <= 40 && !s.includes('、') && !/,\s/.test(s) && s.split(' ').length <= 5;
-    for (const r of rels) {
-      if (!looksLikeEntity(r.subjectName) || !looksLikeEntity(r.objectName)) continue;
-      const label = relLabel[r.relationType] ?? r.relationType;
-      const watchHint = r.relationType === 'supersedes'
-        ? '乗り換え・移行を検討する価値があります。'
-        : r.relationType === 'outperforms'
-          ? `${r.objectName}を使っている場合は${r.subjectName}の評価を推奨します。`
-          : '比較検討の候補になります。';
-      await insertAlert({
-        type: 'new_competitor',
-        title: `${r.subjectName} が ${r.objectName} を${label}`,
-        reason: `「${r.subjectName}」が「${r.objectName}」を${label}という情報が新たに観測されました。${watchHint}`,
-        entityName: r.subjectName, severity: 'watch',
-        relatedArticleId: r.articleId, dedupeKey: `rel:${r.subjectName}:${r.relationType}:${r.objectName}`,
-      });
-    }
-  } catch (e: any) { console.warn('  [Alerts] 関係検知失敗:', e.message?.slice(0, 60)); }
-
-  // 3. 注目の急増（言及の先読み）: claims.subjectの出現が先週比で急増したエンティティ
-  try {
-    const since7 = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-    const since14 = sqlTs(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
-    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    const [thisWeek, prevWeek] = await Promise.all([
-      db.select({ subject: schema.claims.subject, c: count() })
-        .from(schema.claims).where(gte(schema.claims.createdAt, since7)).groupBy(schema.claims.subject),
-      db.select({ subject: schema.claims.subject, c: count() })
-        .from(schema.claims).where(and(gte(schema.claims.createdAt, since14), lt(schema.claims.createdAt, since7))).groupBy(schema.claims.subject),
-    ]);
-    const prevMap = new Map(prevWeek.map(r => [r.subject, Number(r.c)]));
-    for (const t of thisWeek) {
-      const nowC = Number(t.c);
-      const prevC = prevMap.get(t.subject) ?? 0;
-      if (nowC >= 3 && nowC >= prevC * 2 && looksLikeEntity(t.subject)) {
-        await insertAlert({
-          type: 'trend_surge',
-          title: `${t.subject} への注目が急増`,
-          reason: `「${t.subject}」への言及が先週${prevC}件→今週${nowC}件に急増しています。近く重要な発表・動向がある可能性があり、先回りでの確認をおすすめします。`,
-          entityName: t.subject,
-          severity: nowC >= 5 ? 'high' : 'watch',
-          dedupeKey: `surge:${t.subject}:${today}`,
-        });
-      }
-    }
-  } catch (e: any) { console.warn('  [Alerts] 急増検知失敗:', e.message?.slice(0, 60)); }
-
-  console.log(`[Alerts] ${created}件の新規アラート`);
-}
-
-// ── DB連携エージェントによる問い生成（探索型。事前パッケージ不要）──────────
-// エージェントがツールでDBを自律探索し、文脈を理解した上で研究問いを生成する。
-// 事前にデータをまとめてLLMに渡す方式と違い、エージェントが「必要なものだけ」を取りにいく。
-async function generateResearchQuestionsAgent() {
-  console.log('[Research] エージェント問い生成開始');
-  const sevenDaysAgoISO = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-
-  const existing = await db.select({ q: schema.researchQuestions.question })
-    .from(schema.researchQuestions)
-    .where(gte(schema.researchQuestions.createdAt, sevenDaysAgoISO));
-  const existingSet = new Set(existing.map(e => e.q.trim().toLowerCase()));
-
-  try {
-    const { text } = await withRetry(() => generateText({
-      model: google('gemini-2.5-flash-lite'),
-      stopWhen: stepCountIs(7),
-      system: `あなたはAI技術コーパスのリサーチギャップ分析エージェントです。
-ツールでデータベースを自律的に探索し、今夜の追加調査に最も価値のある「問い」を最大4つ生成してください。
-
-【探索の優先度】
-1. 確信度が低下しているエンティティ（古くなった情報が残っている可能性 → get_stale_entities）
-2. 今週カバレッジが薄いカテゴリ（見落とし → get_topic_coverage）
-3. 最近のアラートが示す変化（裏取りが必要 → get_recent_alerts）
-4. 特定エンティティの詳細状態を確認したい場合 → get_entity_status
-5. トピックが既にコーパスで充分カバーされているか確認 → check_corpus_coverage
-
-【最終出力形式（ツール探索完了後）】
-以下のJSONのみを出力してください（コードブロック不要）:
-{"questions":[{"question":"...","origin":"gap|followup|tracking|contradiction","rationale":"..."}]}`,
-      prompt: `今日は${new Date().toISOString().slice(0, 10)}です。ツールでデータベースを探索し、今夜調査すべき問いを生成してください。`,
-      tools: {
-        get_stale_entities: tool({
-          description: '確信度が低下しているエンティティ（古くなった情報の持ち主）を一覧取得する',
-          inputSchema: z.object({ limit: z.number().int().min(1).max(15).default(8) }),
-          execute: async ({ limit }) => {
-            const rows = await client.execute({
-              sql: `SELECT e.canonical_name, AVG(COALESCE(c.confidence_score, 0.7)) AS avg_conf,
-                           COUNT(c.id) AS claim_count, MAX(c.valid_from) AS last_updated
-                    FROM entities e
-                    JOIN claims c ON c.entity_id = e.id AND c.status = 'active'
-                    GROUP BY e.id, e.canonical_name
-                    HAVING COUNT(c.id) >= 1
-                    ORDER BY avg_conf ASC LIMIT ?`,
-              args: [limit],
-            });
-            if ((rows.rows as any[]).length === 0) return '確信度低下エンティティなし';
-            return (rows.rows as any[]).map((r: any) =>
-              `${r.canonical_name}: 平均確信度${Number(r.avg_conf).toFixed(2)}, ${r.claim_count}クレーム, 最終更新${r.last_updated ?? '不明'}`
-            ).join('\n');
-          },
-        }),
-        get_entity_status: tool({
-          description: '特定エンティティの詳細状態（ベンチマーク・クレーム・関係）を取得する',
-          inputSchema: z.object({ entityName: z.string().max(80) }),
-          execute: async ({ entityName }) => {
-            const key = entityName.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
-            const ent = await db.select().from(schema.entities)
-              .where(eq(schema.entities.normalizedKey, key)).limit(1).then(r => r[0] ?? null);
-            if (!ent) return `エンティティ「${entityName}」は知識グラフ未登録`;
-            const [benches, claims, rels] = await Promise.all([
-              db.select({ b: schema.benchmarks.benchmarkName, s: schema.benchmarks.score, d: schema.benchmarks.recordedDate })
-                .from(schema.benchmarks).where(eq(schema.benchmarks.entityId, ent.id))
-                .orderBy(desc(schema.benchmarks.recordedDate)).limit(5),
-              db.select({ p: schema.claims.predicate, v: schema.claims.value, cs: schema.claims.confidenceScore, d: schema.claims.validFrom })
-                .from(schema.claims).where(and(eq(schema.claims.entityId, ent.id), eq(schema.claims.status, 'active')))
-                .orderBy(desc(schema.claims.validFrom)).limit(6),
-              db.select({ t: schema.relations.relationType, o: schema.relations.objectName })
-                .from(schema.relations).where(and(eq(schema.relations.subjectEntityId, ent.id), eq(schema.relations.status, 'active'))).limit(4),
-            ]);
-            let out = `■ ${ent.canonicalName} (${ent.type ?? 'model'}) | mention:${ent.mentionCount}`;
-            for (const b of benches) out += `\n  [bench] ${b.b}: ${b.s} (${b.d ?? '日付不明'})`;
-            for (const c of claims) out += `\n  [claim] ${c.p}: ${c.v} (確信度${Number(c.cs ?? 0.7).toFixed(2)}, ${c.d ?? '?'})`;
-            for (const r of rels) out += `\n  [rel] ${r.t} → ${r.o}`;
-            return out;
-          },
-        }),
-        get_topic_coverage: tool({
-          description: '今週のカテゴリ別カバレッジと先週比を取得する（薄いカテゴリを特定するため）',
-          inputSchema: z.object({}),
-          execute: async () => {
-            const oneWeekAgo = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-            const twoWeeksAgo = sqlTs(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000));
-            const [thisW, prevW] = await Promise.all([
-              db.select({ cat: schema.collectedData.category, c: count() })
-                .from(schema.collectedData).where(gte(schema.collectedData.createdAt, oneWeekAgo))
-                .groupBy(schema.collectedData.category),
-              db.select({ cat: schema.collectedData.category, c: count() })
-                .from(schema.collectedData).where(and(gte(schema.collectedData.createdAt, twoWeeksAgo), lt(schema.collectedData.createdAt, oneWeekAgo)))
-                .groupBy(schema.collectedData.category),
-            ]);
-            const prev = new Map(prevW.map(r => [r.cat, Number(r.c)]));
-            return thisW.map(r => {
-              const p = prev.get(r.cat) ?? 0;
-              const diff = p > 0 ? `(先週比${Number(r.c) > p ? '+' : ''}${Number(r.c) - p})` : '(先週なし)';
-              return `${r.cat ?? '未分類'}: ${r.c}件 ${diff}`;
-            }).join('\n') || 'データなし';
-          },
-        }),
-        get_recent_alerts: tool({
-          description: '最近のアクティブなアラートを取得する（追跡中の変化・裏取りが必要な情報）',
-          inputSchema: z.object({}),
-          execute: async () => {
-            const alerts = await db.select({ title: schema.alerts.title, type: schema.alerts.type, severity: schema.alerts.severity })
-              .from(schema.alerts).where(eq(schema.alerts.status, 'active'))
-              .orderBy(desc(schema.alerts.createdAt)).limit(8);
-            return alerts.map(a => `[${a.severity ?? 'watch'}/${a.type}] ${a.title}`).join('\n') || 'アクティブなアラートなし';
-          },
-        }),
-        check_corpus_coverage: tool({
-          description: 'あるトピックが収集コーパスで既に充分カバーされているかを確認する（問いを重複させないため）',
-          inputSchema: z.object({ topic: z.string().max(200) }),
-          execute: async ({ topic }) => {
-            const { hybridSearch } = await import('./src/lib/retrieval');
-            const docs = await hybridSearch(topic, 4);
-            if (docs.length === 0) return `「${topic}」: コーパスにほぼ情報なし → 調査価値高`;
-            const titles = docs.map(d => `  [重要度${d.importance}] ${d.titleJa || d.title}`).join('\n');
-            return `「${topic}」: ${docs.length}件の関連記事あり\n${titles}`;
-          },
-        }),
-      },
-    }));
-
-    const parsed = extractJson<{ questions: Array<{ question: string; origin: string; rationale: string }> }>(text);
-    if (!parsed?.questions?.length) {
-      console.log('[Research] エージェントが問いを生成しなかった');
-      return;
-    }
-
-    let generated = 0;
-    for (const q of parsed.questions) {
-      const norm = q.question.trim().toLowerCase();
-      if (!norm || existingSet.has(norm)) continue;
-      existingSet.add(norm);
-      await db.insert(schema.researchQuestions).values({
-        question: q.question.trim(),
-        origin: (q.origin ?? 'gap') as any,
-        originRef: (q.rationale ?? '').slice(0, 150),
-        status: 'pending',
-      });
-      generated++;
-    }
-    console.log(`[Research] エージェント問い生成: ${generated}件`);
-  } catch (e: any) {
-    console.warn('[Research] エージェント問い生成失敗(非クリティカル):', e.message?.slice(0, 80));
-  }
-}
-
-// ── v3: 夜間Grounding調査（保留中の問いを調べる。件数を上限化）────────
-async function runNightlyResearch(limit = 4) {
-  console.log('[Research] 夜間調査開始（自前コーパスRAG・外部検索なし）');
-  const pending = await db.select({ id: schema.researchQuestions.id, question: schema.researchQuestions.question })
-    .from(schema.researchQuestions)
-    .where(eq(schema.researchQuestions.status, 'pending'))
-    .orderBy(desc(schema.researchQuestions.createdAt))
-    .limit(limit);
-
-  if (pending.length === 0) { console.log('[Research] 調査対象なし'); return; }
-
-  // env ロード後に動的import（retrieval.ts内の@/dbクライアントが環境変数を参照するため）
-  const { hybridSearch } = await import('./src/lib/retrieval');
-  let investigated = 0;
-
-  for (const q of pending) {
-    try {
-      const docs = await hybridSearch(q.question, 8);
-      if (docs.length === 0) {
-        await db.update(schema.researchQuestions)
-          .set({ status: 'investigated', findings: '収集データには該当する情報が見つかりませんでした。', findingsUrl: null, investigatedAt: new Date().toISOString() })
-          .where(eq(schema.researchQuestions.id, q.id));
-        investigated++;
-        continue;
-      }
-      const ctx = docs.map(d => `[ID:${d.id}] ${d.titleJa || d.title || ''}: ${d.summary ?? ''}${d.snippet ? `\n抜粋: ${d.snippet}` : ''}`).join('\n\n');
-      const result = await withRetry(() => generateText({
-        model: google('gemini-2.5-flash-lite'),
-        system: `あなたはAI技術リサーチャーです。**以下の収集コーパスのみ**を根拠に、問いへ日本語250文字程度で簡潔に答えてください。
-コーパスに無い事実は推測で補わず「収集データには見当たらない」と述べること。`,
-        prompt: `問い: ${q.question}\n\n【収集コーパス】\n${ctx}`,
-      }));
-      const findings = result.text.trim().slice(0, 800);
-      await db.update(schema.researchQuestions)
-        .set({ status: 'investigated', findings, findingsUrl: docs[0].url ?? null, investigatedAt: new Date().toISOString() })
-        .where(eq(schema.researchQuestions.id, q.id));
-      investigated++;
-      console.log(`  調査完了: ${q.question.slice(0, 50)}`);
-    } catch (e: any) {
-      await db.update(schema.researchQuestions)
-        .set({ status: 'failed', investigatedAt: new Date().toISOString() })
-        .where(eq(schema.researchQuestions.id, q.id));
-      console.warn(`  調査失敗: ${q.question.slice(0, 40)} - ${e.message?.slice(0, 40)}`);
-    }
-  }
-  console.log(`[Research] ${investigated}件調査完了（コーパス根拠）`);
-}
-
-// ── v3: 朝のブリーフィング合成（昨夜調べたこと + アラート）──────────────
-async function generateBriefing(): Promise<string | null> {
-  try {
-    console.log('[Briefing] ブリーフィング合成開始');
-    const since1dISO = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-    const since2dISO = sqlTs(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
-    const [investigated, activeAlerts, flashItems] = await Promise.all([
-      db.select({
-        question: schema.researchQuestions.question,
-        findings: schema.researchQuestions.findings,
-        findingsUrl: schema.researchQuestions.findingsUrl,
-      })
-        .from(schema.researchQuestions)
-        .where(and(eq(schema.researchQuestions.status, 'investigated'), gte(schema.researchQuestions.investigatedAt, since1dISO)))
-        .limit(6),
-      db.select({ title: schema.alerts.title, reason: schema.alerts.reason, severity: schema.alerts.severity })
-        .from(schema.alerts)
-        .where(eq(schema.alerts.status, 'active'))
-        .orderBy(desc(schema.alerts.createdAt))
-        .limit(6),
-      // Morning Flash: 直近の重要記事トップ5（1行ずつ・30秒で読める）
-      db.select({
-        title: schema.collectedData.title,
-        titleJa: schema.collectedData.titleJa,
-        category: schema.collectedData.category,
-        importanceScore: schema.collectedData.importanceScore,
-      })
-        .from(schema.collectedData)
-        .where(gte(schema.collectedData.createdAt, since2dISO))
-        .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
-        .limit(5),
-    ]);
-
-    if (investigated.length === 0 && activeAlerts.length === 0 && flashItems.length === 0) {
-      console.log('[Briefing] 材料なし、スキップ');
-      return null;
-    }
-
-    const sevMark: Record<string, string> = { high: '🔴', watch: '🟡', info: '🔵' };
-    let md = '## 🌅 朝のブリーフィング\n\n';
-
-    // Morning Flash（重要5件・各1行）
-    if (flashItems.length > 0) {
-      md += '### ⚡ Morning Flash（今日の重要5件）\n';
-      for (const f of flashItems) {
-        md += `- [重要度${f.importanceScore ?? '-'}/${f.category ?? '—'}] ${f.titleJa || f.title}\n`;
-      }
-      md += '\n';
-    }
-
-    if (activeAlerts.length > 0) {
-      md += '### 🔔 先読みアラート\n';
-      for (const a of activeAlerts) {
-        md += `- ${sevMark[a.severity ?? 'watch'] ?? '🟡'} **${a.title}** — ${a.reason}\n`;
-      }
-      md += '\n';
-    }
-
-    if (investigated.length > 0) {
-      md += '### 🔬 昨夜調べたこと\n';
-      for (const r of investigated) {
-        md += `- **${r.question}**\n  ${(r.findings ?? '').replace(/\n+/g, ' ')}${r.findingsUrl ? `\n  → ${r.findingsUrl}` : ''}\n`;
-      }
-      md += '\n';
-    }
-
-    const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    await db.insert(schema.reports).values({ type: 'briefing', content: md, reportDate: reportDateJST });
-    console.log('[Briefing] ブリーフィング合成完了');
-    return md;
-  } catch (e: any) {
-    console.warn('[Briefing] 合成失敗(非クリティカル):', e.message?.slice(0, 60));
-    return null;
-  }
-}
-
-// ── v3.1 スマートダイジェスト: Learning Recap（今週の学びの振り返り・パーソナル）──
-async function generateLearningRecap(): Promise<string | null> {
-  try {
-    console.log('[Recap] 学びの振り返り生成開始');
-    const sevenAgo = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-    const recentEvents = await db.select({ articleId: schema.readingEvents.articleId })
-      .from(schema.readingEvents)
-      .where(gte(schema.readingEvents.createdAt, sevenAgo))
-      .limit(80);
-    const ids = [...new Set(recentEvents.map(e => e.articleId).filter((v): v is number => v != null))];
-    if (ids.length < 3) { console.log('[Recap] 今週のエンゲージメント不足、スキップ'); return null; }
-
-    const articles = await db.select({
-      title: schema.collectedData.title, titleJa: schema.collectedData.titleJa,
-      summary: schema.collectedData.summary, category: schema.collectedData.category,
-    }).from(schema.collectedData).where(inArray(schema.collectedData.id, ids)).limit(30);
-
-    const ctx = articles.map(a => `[${a.category ?? '—'}] ${a.titleJa || a.title}: ${(a.summary ?? '').slice(0, 120)}`).join('\n');
-    const { text } = await withRetry(() => generateText({
-      model: google('gemini-2.5-flash'),
-      system: `あなたはパーソナル学習コーチです。ユーザーが今週読んだ記事から「今週の学びの振り返り」をMarkdownで温かく簡潔に作成してください。
-【構成】
-## 📚 今週のあなたの学び
-今週触れたテーマの要点を2〜3段落で物語的に。
-## 🎯 押さえた重要ポイント
-箇条書き3〜5点。
-## 🌱 来週深めると良いこと
-読んだ傾向から、次に学ぶと視野が広がるテーマを2〜3点提案。
-【ルール】全体800〜1000字。専門用語は噛み砕く。`,
-      prompt: `今週ユーザーが読んだ記事（${articles.length}件）:\n${ctx}`,
-    }));
-
-    const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    await db.insert(schema.reports).values({ type: 'learning_recap', content: text, reportDate: reportDateJST });
-    console.log('[Recap] 学びの振り返り生成完了');
-    return text;
-  } catch (e: any) {
-    console.warn('[Recap] 生成失敗(非クリティカル):', e.message?.slice(0, 60));
-    return null;
-  }
-}
-
-// ── v3.2 横断インサイト: 知識グラフ×収集×行動を統合した週次考察 ──
-async function generateCrossInsight(): Promise<string | null> {
-  try {
-    console.log('[CrossInsight] 横断インサイト生成開始');
-
-    const since7 = sqlTs(new Date(Date.now() - 7 * 86_400_000));
-    const check = await db.select({ c: count() }).from(schema.collectedData).where(gte(schema.collectedData.createdAt, since7));
-    if (Number(check[0].c) < 3) { console.log('[CrossInsight] データ不足、スキップ'); return null; }
-
-    const { askKnowledgeAI } = await import('./src/lib/knowledge-ai');
-    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
-
-    const text = await withRetry(() => askKnowledgeAI(
-      `今日は${today}です。今週の収集データ・知識グラフ・アラート・読書パターンを横断的に分析し、以下の構成でMarkdownを書いてください。
-
-ツールの使い方:
-- get_recent_articles(days=7, minImportance=5) で今週の主要トピックを取得
-- get_knowledge_graph_summary() で知識グラフの関係・変化を取得
-- get_alerts() で先読みアラートを取得
-- get_reading_patterns(days=7) で読者の関心分野を把握しトーンに反映
-
-## 🔭 今週の構図
-業界全体で何が起きているかを俯瞰（2〜3段落）。トピック間のつながり・因果を読む。
-
-## 🎯 あなたにとっての意味
-読書パターンの関心分野を踏まえ、特に注目すべき点と理由。
-
-## ♟️ 次の一手
-来週意識すべきこと・確認すべきことを2〜3点。
-
-【ルール】1000〜1400字。表面的な要約でなく「つながり」と「示唆」を述べる。`,
-      { model: 'gemini-2.5-flash', maxSteps: 5 },
-    ));
-
-    const reportDateJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-    await db.insert(schema.reports).values({ type: 'cross_insight', content: text, reportDate: reportDateJST });
-    console.log('[CrossInsight] 生成完了');
-    return text;
-  } catch (e: any) {
-    console.warn('[CrossInsight] 失敗(非クリティカル):', e.message?.slice(0, 60));
-    return null;
-  }
-}
-
 async function evolveSources() {
   console.log('[Evolve] ソース進化開始');
 
@@ -2804,14 +2226,19 @@ const TitleTransSchema = z.object({
 
 async function translateTitles(limit = 80): Promise<number> {
   console.log('[Translate] タイトル翻訳開始');
-  const rows = await db.select({ id: schema.collectedData.id, title: schema.collectedData.title })
+  // title_ja が NULL、または「英語のまま残っている」もの（英語ソースのみ）を新しい順に対象化。
+  // 広めに取って JS 側で「要翻訳」だけ抽出する（英語のまま残ったtitleJaも再翻訳の対象にする）。
+  const rows = await db.select({ id: schema.collectedData.id, title: schema.collectedData.title, titleJa: schema.collectedData.titleJa })
     .from(schema.collectedData)
-    .where(and(isNull(schema.collectedData.titleJa), sql`${schema.collectedData.title} IS NOT NULL`))
+    .where(sql`${schema.collectedData.title} IS NOT NULL`)
     .orderBy(desc(schema.collectedData.createdAt))
-    .limit(limit);
+    .limit(limit * 4);
 
-  // 日本語文字を含まない＝翻訳対象（英語等）
-  const targets = rows.filter(r => r.title && !JA_CHAR.test(r.title));
+  const targets = rows.filter(r => {
+    const t = r.title ?? '';
+    if (!t || JA_CHAR.test(t)) return false;                 // 元から日本語のタイトル＝翻訳不要
+    return !r.titleJa || !JA_CHAR.test(r.titleJa);           // titleJa無し or 英語のまま残存
+  }).slice(0, limit);
   if (targets.length === 0) { console.log('[Translate] 対象なし'); return 0; }
 
   let translated = 0;
@@ -2822,12 +2249,12 @@ async function translateTitles(limit = 80): Promise<number> {
       const { object } = await withRetry(() => generateObject({
         model: google('gemini-2.5-flash-lite'),
         schema: TitleTransSchema,
-        prompt: `以下のタイトルを自然な日本語に訳してください。固有名詞・モデル名・製品名・略語は英語表記のまま残す。必ず全${chunk.length}件のitemsを返す。
+        prompt: `以下のタイトルを自然な日本語の見出しに訳してください。文構造（動詞・助詞）は必ず日本語にし、英語のタイトルをそのまま返さないこと。固有名詞・モデル名・製品名・略語のみ英語表記のまま残す。必ず全${chunk.length}件のitemsを返す。
 
 ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
       }));
       for (const it of object.items) {
-        if (!it.titleJa) continue;
+        if (!it.titleJa || !JA_CHAR.test(it.titleJa)) continue;   // 日本語が無い訳は書かない（英語のまま再保存しない）
         await db.update(schema.collectedData)
           .set({ titleJa: it.titleJa.slice(0, 300) })
           .where(eq(schema.collectedData.id, it.id));
@@ -3327,13 +2754,10 @@ async function main() {
       process.exit(0);
     }
 
-    // v3: 自律リサーチのみ実行（検証用）
-    if (pipelineMode === 'research') {
-      await detectAlerts();
-      await generateResearchQuestionsAgent();
-      await runNightlyResearch();
-      await generateBriefing();
-      console.log('=== Research mode 完了 ===');
+    // 日次レポート生成＋購読者全員へ配信（GitHub Actions が 06:00 JST ピッタリに実行する）
+    if (pipelineMode === 'report') {
+      await runDailyReportAndDistribute();
+      console.log('=== Report mode 完了 ===');
       process.exit(0);
     }
 
@@ -3344,10 +2768,29 @@ async function main() {
       console.warn('[Pipeline] ensureSources失敗(継続):', e?.message ?? e);
     }
     // コスト最適化: 収集のみ実行(12:00/18:00)はキーワードGrounding(Google検索)を回さず
-    // 無料ソース(RSS/HN/ArXiv/GitHub)の巡回のみ。キーワード検索＋夜間リサーチはフル実行(06:00)で実施。
+    // 無料ソース(RSS/HN/ArXiv/GitHub)の巡回のみ。キーワード検索はフル実行(04:07 JST)で実施。
     // 同一キーワードの日中再検索は新着がほぼ無く重複ばかりで、品質を落とさずGrounding費用を約6割削減できる。
     const keywordRounds = pipelineMode === 'collect' ? 0 : 10;
     const { collected, failed } = await collectData(keywordRounds);
+
+    // 自己修復: 06:00 JST の report 実行がスキップされた日（Actionsの取りこぼし等）は、
+    // 昼の収集ランが 06:30 JST 以降に「今日のdailyが無い」ことを検知して生成＋配信する。
+    if (pipelineMode === 'collect') {
+      try {
+        const jstNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+        const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+        if (jstNow.getHours() * 60 + jstNow.getMinutes() >= 390) { // 06:30以降
+          const [existing] = await db.select({ id: schema.reports.id }).from(schema.reports)
+            .where(and(eq(schema.reports.type, 'daily'), eq(schema.reports.reportDate, todayJST))).limit(1);
+          if (!existing) {
+            console.log('[Report] 自己修復: 今日のdailyが未生成のため生成・配信する');
+            await runDailyReportAndDistribute();
+          }
+        }
+      } catch (e: any) {
+        console.warn('[Report] 自己修復失敗(非クリティカル):', e?.message ?? e);
+      }
+    }
 
     if (pipelineMode !== 'collect') {
       // v4: 本文ディープ抽出（無料・高重要度記事のrawContentを充填）。非クリティカル
@@ -3378,35 +2821,9 @@ async function main() {
         console.warn('[Pipeline] Decay/Health失敗(非クリティカル):', e.message);
       }
 
-      // v3: 自律リサーチ（アラート検知→問い生成→夜間調査→ブリーフ）。非クリティカル
-      let briefingContent: string | null = null;
-      try {
-        await detectAlerts();
-        await generateResearchQuestionsAgent();
-        await runNightlyResearch();
-        briefingContent = await generateBriefing();
-      } catch (e: any) {
-        console.warn('[Pipeline] 自律リサーチ失敗(非クリティカル):', e.message);
-      }
-
-      // GitHub Actions の scheduled cron は数時間遅延するため、デイリーレポート＋メールは
-      // 外部cron→/api/report に集約してJST 06:00 ピッタリ駆動する。
-      // SKIP_DAILY_REPORT_EMAIL=1 のときはここでの生成・送信をスキップ（briefingContentは生成済なのでDBには残る）。
-      const skipDailyReportEmail = process.env.SKIP_DAILY_REPORT_EMAIL === '1';
-      let dailyReportContent: string | null = null; // 購読者メールへ使い回す（再生成しない）
-      if (!skipDailyReportEmail) {
-        dailyReportContent = await generateReport();
-        if (dailyReportContent) {
-          // ブリーフィングを朝のメール冒頭に統合
-          const emailBody = briefingContent ? `${briefingContent}\n\n---\n\n${dailyReportContent}` : dailyReportContent;
-          await sendEmail(emailBody);
-        }
-      } else {
-        console.log('[Pipeline] SKIP_DAILY_REPORT_EMAIL=1: デイリーレポート/メールはスキップ（/api/report 側で生成）');
-      }
-
-      // v6: メール購読ユーザーへパーソナライズbriefを配信（非クリティカル）
-      try { await sendPersonalizedBriefs(dailyReportContent); } catch (e: any) { console.warn('[Brief] 配信失敗(非クリティカル):', e.message); }
+      // デイリーレポートの生成＋配信はここでは行わない。
+      // フル実行は 04:07 JST に収集〜知識抽出まで済ませ、06:00 JST ピッタリに
+      // PIPELINE_MODE=report が生成＋全購読者へ同一ダイジェストを配信する（run.yml参照）。
 
       // JST の曜日・日付を確実に取得（toLocaleStringの文字列分割は環境依存なので使わない）
       const jstDateStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
@@ -3414,23 +2831,17 @@ async function main() {
       const dayOfWeek = jstNow.getDay();   // 0 = Sunday
       const dayOfMonth = jstNow.getDate();
 
-      // 週次/月次/recap/横断インサイト/evolve/フィード監視は非クリティカル。
-      // ここで例外が出ても収集・知識抽出・デイリーメールは既に成功しているので、
+      // 週次/月次/evolve/フィード監視は非クリティカル。
+      // ここで例外が出ても収集・知識抽出は既に成功しているので、
       // パイプライン全体を失敗扱いにせず、logPipeline(下)を確実に実行する。
+      // 週次・月次はサイト掲載のみ（メール配信はデイリーダイジェストに統一）。
       try {
         if (dayOfWeek === 0) {
-          const weeklyContent = await generateWeeklyReport();
-          if (weeklyContent) await sendEmail(weeklyContent, '週次');
-          // 日曜: 学びの振り返り（パーソナルダイジェスト）
-          const recap = await generateLearningRecap();
-          if (recap) await sendEmail(recap, '学びの振り返り');
-          // 日曜: 横断インサイト（アプリ内表示用・メールはしない）
-          await generateCrossInsight();
+          await generateWeeklyReport();
         }
 
         if (dayOfMonth === 1) {
-          const monthlyContent = await generateMonthlyReport();
-          if (monthlyContent) await sendEmail(monthlyContent, '月次');
+          await generateMonthlyReport();
         }
 
         await evolveSources();
