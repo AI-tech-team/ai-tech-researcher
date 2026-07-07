@@ -67,11 +67,11 @@ STRIDE / OWASP Top10 / ASVS / 最小権限 / Defense in Depth / IDOR・XSS・CSR
 自走型AI技術情報収集・レポーティングシステム。個人利用＋公開マルチユーザー（Googleログイン）。
 
 - **スタック**: Next.js 16 + Turso(libSQL) + Drizzle ORM + Gemini 2.5 Flash Lite（メイン）/ Flash（重要レポート）。
-- **デプロイ/運用**: Vercel（Root Directory = `v2`、git push で自動）。GitHub Actions が毎日06:00 JSTに `daily_pipeline.ts` 実行（収集→知識抽出→レポート→夜間リサーチ）。
+- **デプロイ/運用**: Vercel（Root Directory = `v2`、git push で自動）。GitHub Actions が毎日04:07 JSTにフル実行（収集→知識抽出）→同ジョブが06:00 JSTちょうどに日次レポート生成＋全購読者へ同一ダイジェスト配信（`PIPELINE_MODE=report`）。12:00の収集ランに自己修復あり。
 - **埋め込み**: gemini-embedding-001 / 768次元 / 非対称（文書=RETRIEVAL_DOCUMENT・クエリ=RETRIEVAL_QUERY）。
 - **検索/RAG**: ハイブリッド3エンジン = vector + FTS5（CJK trigram）+ GraphRAG。チャンク(`content_chunks`)埋め込み＋RRF統合、`fetch_article`ドリルダウン。チャットも夜間リサーチも自前コーパスRAGで完結（外部検索はほぼ廃止）。
 - **収集**: 無料フィード巡回（RSS/HN/ArXiv/GitHub等）＋ドメイン→フィード自動発見＋フィード自己監視＋本文ディープ抽出（LLM不使用）。
-- **共有エンジン**: `src/lib/knowledge-ai.ts` の `askKnowledgeAI(task)` — 標準ツール付きDB接続AI。レポート/問い生成/横断洞察がここ経由。
+- **日次レポート**: `src/lib/daily-report.ts` の `buildDailyReport()` が単一実装（サイト掲載＝メール＝手動再生成）。対象は前回daily以降の新着のみ＋前回レポート参照で焼き直し禁止。（旧 `knowledge-ai.ts` と夜間調査/recap/cross_insight は2026-07-07撤去）
 - **UI**: 公開UIに全員統一（旧オーナー専用UIは撤去）。記事/レポートは全画面ページ＋Intercepting Routes。`getCoreData`/`getAnalyticsData` でServer Actionをバンドル。
 
 詳細は memory の [[project-overview]] / [[reference-auth]] / [[reference-deploy]] / [[public-ui-overhaul]] / [[reference-dev-env]] を参照（v3/v4/v4.5の完了済み実装計画はそちらに集約）。
@@ -81,7 +81,7 @@ STRIDE / OWASP Top10 / ASVS / 最小権限 / Defense in Depth / IDOR・XSS・CSR
 現フェーズ = **「DBの状態がシステムの行動を決める」DB主導化＋DB精度の極大化**（精度＞コスト削減）。詳細・判断理由は [[current-phase-plan]]。
 
 - **DB精度**: A/B/C/D/E 完了。残=B任意（汎用表記ゆれを `normalizeEntityKey` の決定論alias `ENTITY_ALIAS_KEYS` に追加して再発防止）。**遡及補正は再抽出せず直接UPDATE**（再抽出は confidence_score を0.7にリセットする仕様のため）。
-- **DB主導化（未着手）**: ① Epistemic Pull Collection（DB状態が収集クエリ生成）/ ② 抽出深さをDB状態で決定 / ③ 夜間調査の戦略分岐（origin別）/ ④ 週次・月次・LearningRecap を knowledgeAI 移行。
+- **DB主導化（未着手）**: ① Epistemic Pull Collection（DB状態が収集クエリ生成）/ ② 抽出深さをDB状態で決定。（旧③夜間調査の戦略分岐・④knowledgeAI移行は2026-07-07の私用レポート撤去で対象消滅）
 - **次テーマ**: ② コーパス精度（収集記事の質）/ ③ 読み込み速度（**ボトルネック計測から**・[[feedback-evolve-nplus1]]）。
 - **検索0%の最終スイッチ**: 無料フィードをCI数サイクル熟成 → `scripts/measure_v4.ts` 再計測で検索のユニーク貢献が無料に吸収されたか確認 → 吸収済なら keywordRounds=0（劣化させない順序）。
 
