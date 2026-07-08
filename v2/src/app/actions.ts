@@ -115,13 +115,26 @@ function extractKeywords(title: string | null, category: string | null): string[
 // 公開してよいレポート種別は daily/weekly/monthly のみ（ホワイトリスト/fail-closed）。
 // briefing/learning_recap/cross_insight/corpus_health 等の内部レポートは新種別が増えても既定で非公開。
 // （"use server" ファイルは async 関数しか export できないため定数化はせずクエリ内に直書きする）
-export async function getReportsData() {
+// limit/contentChars: 旧実装は全レポートを本文込みで返しており、ホームSSRのペイロードが
+// レポート蓄積に比例して肥大（TTFB/FCP悪化の主因）。UIが使うのはリード文(最大260字)なので
+// 既定は直近40件×本文800字に絞る。全文が要る呼び出し(feed.xml)は contentChars=0 を指定。
+export async function getReportsData(limit = 40, contentChars = 800) {
   try {
+    // 公開Server Actionは引数もクライアント供給になり得るため上限をサーバ側で強制（行動原則6）
+    const lim = Math.min(Math.max(limit, 1), 1000);
+    const chars = Math.min(Math.max(contentChars, 0), 100_000);
     // 公開対象(daily/weekly/monthly)のみ。内部レポートはホワイトリストから外れるので自動的に除外。
     // 全ユーザー共通かつ更新頻度が低いのでインスタンス内60秒キャッシュ（毎アクセスのTurso読みを削減）。
-    return await cached('reportsData', 60_000, () => db.select().from(reports)
+    return await cached(`reportsData:${lim}:${chars}`, 60_000, () => db.select({
+      id: reports.id,
+      type: reports.type,
+      reportDate: reports.reportDate,
+      createdAt: reports.createdAt,
+      content: chars > 0 ? sql<string | null>`substr(${reports.content}, 1, ${chars})` : reports.content,
+    }).from(reports)
       .where(sql`${reports.type} IN ('daily', 'weekly', 'monthly')`)
-      .orderBy(desc(reports.createdAt)));
+      .orderBy(desc(reports.createdAt))
+      .limit(lim));
   } catch (error) {
     console.error("Failed to fetch reports:", error);
     return [];
@@ -363,12 +376,18 @@ export async function getActivityData() {
 
 // ─── データ操作 ───────────────────────────────────────────────────
 
-export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
+// 行動原則6「フロントは信用しない」: 現在状態はクライアントに申告させずDBから読んで反転する。
+// （旧実装はクライアント申告の反転だったため、同じ値の連投で情報源スコア/興味学習を無限に加算できた）
+// 副次効果(スコア/学習)はON/OFFで対称にし、トグル往復で正味0＝連打しても積み上がらない。
+export async function toggleFavorite(id: number) {
   try {
+    if (!Number.isFinite(id)) return { success: false };
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
     if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
-    const newValue = currentlyFavorited ? 0 : 1;
+    const [cur] = await db.select({ v: userArticleState.isFavorited }).from(userArticleState)
+      .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
+    const newValue = (cur?.v ?? 0) === 1 ? 0 : 1;
     // 核心: お気に入りフラグの保存。これが成功すればユーザー操作は「成功」とする
     await db.insert(userArticleState)
       .values({ userId, articleId: id, isFavorited: newValue })
@@ -386,42 +405,44 @@ export async function toggleFavorite(id: number, currentlyFavorited: boolean) {
       }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
       if (item?.sourceId) {
         await db.insert(adoptionLogs).values({ sourceId: item.sourceId, isAdopted: newValue });
-        const delta = newValue === 1 ? 2.0 : -1.0;
+        const delta = newValue === 1 ? 2.0 : -2.0;
         await db.update(sources)
           .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
           .where(eq(sources.id, item.sourceId));
       }
-      // お気に入り = 強いシグナル
-      if (newValue === 1) {
-        await logReadingEvent(id, 'favorite', 3, item?.category ?? null, userId);
-        const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
-        const now = new Date().toISOString();
-        for (const kw of kws) {
-          await db.insert(userTopicWeights)
-            .values({ userId, keyword: kw, weight: 0.3, updatedAt: now })
-            .onConflictDoUpdate({
-              target: [userTopicWeights.userId, userTopicWeights.keyword],
-              set: { weight: sql`${userTopicWeights.weight} + 0.3`, updatedAt: now },
-            });
-        }
+      // お気に入り = 強いシグナル。解除時は逆符号で打ち消す（往復での積み上げ防止）
+      await logReadingEvent(id, newValue === 1 ? 'favorite' : 'unfavorite', newValue === 1 ? 3 : -3, item?.category ?? null, userId);
+      const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
+      const kwDelta = newValue === 1 ? 0.3 : -0.3;
+      const now = new Date().toISOString();
+      for (const kw of kws) {
+        await db.insert(userTopicWeights)
+          .values({ userId, keyword: kw, weight: Math.max(0, kwDelta), updatedAt: now })
+          .onConflictDoUpdate({
+            target: [userTopicWeights.userId, userTopicWeights.keyword],
+            set: { weight: sql`MAX(0.0, ${userTopicWeights.weight} + ${kwDelta})`, updatedAt: now },
+          });
       }
     } catch (sideErr) {
       console.warn('[favorite] 副次処理をスキップ（お気に入り自体は保存済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
     }
     revalidatePath('/');
-    return { success: true };
+    return { success: true, value: newValue === 1 };
   } catch (error) {
     console.error("Failed to toggle favorite:", error);
     return { success: false };
   }
 }
 
-export async function toggleReadLater(id: number, current: boolean) {
+export async function toggleReadLater(id: number) {
   try {
+    if (!Number.isFinite(id)) return { success: false };
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
     if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
-    const newValue = current ? 0 : 1;
+    const [cur] = await db.select({ v: userArticleState.isReadLater }).from(userArticleState)
+      .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
+    const newValue = (cur?.v ?? 0) === 1 ? 0 : 1;
     // 核心: 後で読むフラグの保存
     await db.insert(userArticleState)
       .values({ userId, articleId: id, isReadLater: newValue })
@@ -429,62 +450,68 @@ export async function toggleReadLater(id: number, current: boolean) {
         target: [userArticleState.userId, userArticleState.articleId],
         set: { isReadLater: newValue, updatedAt: new Date().toISOString() },
       });
-    // 行動ログは分析用。失敗しても保存は成功扱い
+    // 行動ログは分析用。失敗しても保存は成功扱い。解除時は逆符号で打ち消す
     try {
-      if (!current) {
-        const [item] = await db.select({ category: collectedData.category })
-          .from(collectedData).where(eq(collectedData.id, id)).limit(1);
-        await logReadingEvent(id, 'readlater', 1, item?.category ?? null, userId);
-      }
+      const [item] = await db.select({ category: collectedData.category })
+        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+      await logReadingEvent(id, newValue === 1 ? 'readlater' : 'unreadlater', newValue === 1 ? 1 : -1, item?.category ?? null, userId);
     } catch (sideErr) {
       console.warn('[readlater] 副次処理をスキップ（保存は成功済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
     }
     revalidatePath('/');
-    return { success: true };
+    return { success: true, value: newValue === 1 };
   } catch (error) {
     console.error("Failed to toggle read later:", error);
     return { success: false };
   }
 }
 
-export async function markAsRead(id: number, currentIsRead: boolean) {
+export async function markAsRead(id: number) {
   try {
+    if (!Number.isFinite(id)) return { success: false };
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
     if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
-    const newValue = currentIsRead ? 0 : 1;
+    const [cur] = await db.select({ v: userArticleState.isRead }).from(userArticleState)
+      .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
+    const newValue = (cur?.v ?? 0) === 1 ? 0 : 1;
     await db.insert(userArticleState)
       .values({ userId, articleId: id, isRead: newValue })
       .onConflictDoUpdate({
         target: [userArticleState.userId, userArticleState.articleId],
         set: { isRead: newValue, updatedAt: new Date().toISOString() },
       });
-    if (!currentIsRead) {
+    // 副次処理はON/OFFで対称（往復での積み上げ防止）。失敗しても保存は成功扱い
+    try {
       const [item] = await db.select({
         sourceId: collectedData.sourceId,
         title: collectedData.title,
         category: collectedData.category,
       }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
 
+      const delta = newValue === 1 ? 0.3 : -0.3;
       if (item?.sourceId) {
         await db.update(sources)
-          .set({ score: sql`COALESCE(${sources.score}, 0.0) + 0.3` })
+          .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
           .where(eq(sources.id, item.sourceId));
       }
-      await logReadingEvent(id, 'read', 2, item?.category ?? null, userId);
-      // トピック重みを加算（読了 = 弱いシグナル）
+      await logReadingEvent(id, newValue === 1 ? 'read' : 'unread', newValue === 1 ? 2 : -2, item?.category ?? null, userId);
+      // トピック重み（読了 = 弱いシグナル）
       const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
+      const kwDelta = newValue === 1 ? 0.1 : -0.1;
       const now = new Date().toISOString();
       for (const kw of kws) {
         await db.insert(userTopicWeights)
-          .values({ userId, keyword: kw, weight: 0.1, updatedAt: now })
+          .values({ userId, keyword: kw, weight: Math.max(0, kwDelta), updatedAt: now })
           .onConflictDoUpdate({
             target: [userTopicWeights.userId, userTopicWeights.keyword],
-            set: { weight: sql`${userTopicWeights.weight} + 0.1`, updatedAt: now },
+            set: { weight: sql`MAX(0.0, ${userTopicWeights.weight} + ${kwDelta})`, updatedAt: now },
           });
       }
+    } catch (sideErr) {
+      console.warn('[read] 副次処理をスキップ（既読自体は保存済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
     }
-    return { success: true };
+    return { success: true, value: newValue === 1 };
   } catch (error) {
     console.error("Failed to mark as read:", error);
     return { success: false };
@@ -510,45 +537,6 @@ export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   } catch (error) {
     console.error('Failed to fetch knowledge stats:', error);
     return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
-  }
-}
-
-export interface SystemStatus {
-  lastCollectedAt: string | null;   // 最新記事の created_at（UTC・空白区切り）
-  reports: { daily: string | null; weekly: string | null; monthly: string | null }; // 各typeの最新 report_date
-  articles: number;
-  activeSources: number;
-  entities: number;
-  relations: number;
-}
-
-// 公開「稼働状況」ページ(/status)用の軽量集計（件数＋最新タイムスタンプ）。
-// 専用のパイプライン実行ログは無いため、最新レポート/最新収集の時刻から鮮度を導出する。
-export async function getSystemStatus(): Promise<SystemStatus> {
-  try {
-    const [art, src, lastArt, repRows, ks] = await Promise.all([
-      db.select({ c: count() }).from(collectedData),
-      db.select({ c: count() }).from(sources).where(eq(sources.status, 'active')),
-      db.select({ t: sql<string | null>`MAX(${collectedData.createdAt})` }).from(collectedData),
-      db.select({ type: reports.type, d: sql<string | null>`MAX(${reports.reportDate})` })
-        .from(reports)
-        .where(sql`${reports.type} IN ('daily','weekly','monthly')`)
-        .groupBy(reports.type),
-      getKnowledgeStats(),
-    ]);
-    const latest: Record<string, string | null> = {};
-    for (const r of repRows) latest[String(r.type)] = (r.d as string | null) ?? null;
-    return {
-      lastCollectedAt: (lastArt[0]?.t as string | null) ?? null,
-      reports: { daily: latest.daily ?? null, weekly: latest.weekly ?? null, monthly: latest.monthly ?? null },
-      articles: Number(art[0]?.c ?? 0),
-      activeSources: Number(src[0]?.c ?? 0),
-      entities: ks.entities,
-      relations: ks.relations,
-    };
-  } catch (error) {
-    console.error('getSystemStatus failed:', error);
-    return { lastCollectedAt: null, reports: { daily: null, weekly: null, monthly: null }, articles: 0, activeSources: 0, entities: 0, relations: 0 };
   }
 }
 
@@ -807,13 +795,15 @@ export async function searchArticles(query: string): Promise<CollectedItem[]> {
   if (q.length < 2) return [];
   try {
     const userId = await currentUserId();
+    // %_ はLIKEのワイルドカードなのでエスケープ（getArticlesByTagと同方針）
+    const safe = q.replace(/[\\%_]/g, (m) => `\\${m}`);
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
       .where(or(
-        like(collectedData.title, `%${q}%`),
-        like(collectedData.titleJa, `%${q}%`),
-        like(collectedData.summary, `%${q}%`),
+        sql`${collectedData.title} LIKE ${'%' + safe + '%'} ESCAPE '\\'`,
+        sql`${collectedData.titleJa} LIKE ${'%' + safe + '%'} ESCAPE '\\'`,
+        sql`${collectedData.summary} LIKE ${'%' + safe + '%'} ESCAPE '\\'`,
       ))
       .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
       .limit(25);

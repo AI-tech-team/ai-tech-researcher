@@ -2,9 +2,9 @@ name: Research Pipeline
 
 on:
   schedule:
-    # GitHub Actions の schedule は数十分〜1時間程度遅延するため、フル実行は早朝に前倒しし、
-    # レポート生成＋メール配信は同ジョブ内で 21:00 UTC (06:00 JST) まで待機してから実行する。
-    - cron: '7 19 * * *'      # 毎日 04:07 JST 起動 (full: 収集〜知識抽出 → 06:00 JST にレポート生成＋配信)
+    # GitHub Actions の schedule は大幅に遅延する（2026-07-08 実測+1h49m）ため、フル実行は
+    # 深夜に前倒しし、レポート生成＋メール配信は同ジョブ内で 21:00 UTC (06:00 JST) まで待機してから実行する。
+    - cron: '7 18 * * *'      # 毎日 03:07 JST 起動 (full: 収集〜知識抽出 → 06:00 JST にレポート生成＋配信)
     - cron: '0 3 * * *'       # 毎日 12:00 JST (collect-only＋レポート自己修復)
     - cron: '0 9 * * *'       # 毎日 18:00 JST (collect-only)
     - cron: '0 20 * * 0'      # 毎週日曜 05:00 JST (週次バックアップ)
@@ -37,7 +37,7 @@ jobs:
       # 日次フルパイプライン: 収集・ベクトル化・知識抽出・(日曜/月初は週次/月次レポート生成)。
       # デイリーレポートの生成＋メールはここでは行わず、下の Report ステップが 06:00 JST に実行する。
       - name: Run Daily Pipeline (full)
-        if: github.event.schedule == '7 19 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily')
+        if: github.event.schedule == '7 18 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily')
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -47,11 +47,11 @@ jobs:
           REPORT_TO: ${{ secrets.REPORT_TO }}   # 失敗通知メールの宛先
         run: cd v2 && npx tsx daily_pipeline.ts
 
-      # 06:00 JST (21:00 UTC) ちょうどまで待機。起動遅延があっても 04:07 JST 起動＋約2時間の余裕で吸収する。
+      # 06:00 JST (21:00 UTC) ちょうどまで待機。起動遅延があっても 03:07 JST 起動＋約3時間の余裕で吸収する。
       # 万一 06:00 を過ぎて起動した場合は待たずに即レポートを生成する（遅れてでも届ける）。
       # always(): フル実行が失敗した日でも 06:00 のレポート配信は止めない（自己修復と二重の保険）
       - name: Wait until 06:00 JST
-        if: always() && github.event.schedule == '7 19 * * *'
+        if: always() && github.event.schedule == '7 18 * * *'
         run: |
           target=$(date -u -d 'today 21:00' +%s)
           now=$(date -u +%s)
@@ -64,7 +64,7 @@ jobs:
 
       # デイリーレポート生成＋購読者全員へ同一ダイジェスト配信（06:00 JST ピッタリ）
       - name: Generate & Send Daily Report (06:00 JST)
-        if: always() && (github.event.schedule == '7 19 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'report'))
+        if: always() && (github.event.schedule == '7 18 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'report'))
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}

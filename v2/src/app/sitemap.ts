@@ -12,7 +12,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const pages: MetadataRoute.Sitemap = [
     { url: SITE_URL, lastModified: now, changeFrequency: 'daily', priority: 1 },
     { url: `${SITE_URL}/about`, lastModified: now, changeFrequency: 'monthly', priority: 0.6 },
-    { url: `${SITE_URL}/status`, lastModified: now, changeFrequency: 'daily', priority: 0.4 },
     { url: `${SITE_URL}/changelog`, lastModified: now, changeFrequency: 'weekly', priority: 0.4 },
     { url: `${SITE_URL}/privacy`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
     { url: `${SITE_URL}/terms`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
@@ -36,7 +35,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   let reportPages: MetadataRoute.Sitemap = [];
   try {
-    const reports = await getReportsData(); // 公開対象(daily/weekly/monthly)のみ
+    const reports = await getReportsData(1000, 1); // 公開対象のみ。URL列挙用なので本文は取らない
     reportPages = reports.map(r => {
       const d = r.reportDate ? new Date(r.reportDate) : (r.createdAt ? new Date(r.createdAt) : now);
       return {

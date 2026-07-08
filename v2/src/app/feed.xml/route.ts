@@ -102,7 +102,8 @@ function rfc822(createdAt: string | null, reportDate: string): string {
 }
 
 export async function GET() {
-  const reports = (await getReportsData()).slice(0, MAX_ITEMS);
+  // RSSは <content:encoded> に全文を載せるため contentChars=0（全文）で取得
+  const reports = (await getReportsData(MAX_ITEMS, 0)).slice(0, MAX_ITEMS);
 
   const items = reports.map(r => {
     const label = TYPE_LABEL[r.type] ?? 'レポート';
