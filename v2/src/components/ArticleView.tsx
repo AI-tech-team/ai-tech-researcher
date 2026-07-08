@@ -14,12 +14,13 @@ export function ArticleView({ article }: { article: ArticleDetail }) {
   const [rl, setRl] = useState(!!article.isReadLater);
   const [read, setRead] = useState(!!article.isRead);
 
+  // トグルの確定値はサーバが決める（フロントは信用しない・行動原則6）。楽観更新→サーバ値で補正
   const onToggleFav = async () => {
     if (status === 'loading') return; // セッション解決中は無視
     if (!uid) { signIn('google'); return; }
     const cur = fav;
     setFav(!cur); // 楽観更新（失敗時はロールバック）
-    try { const r = await toggleFavorite(article.id, cur); if (!r?.success) setFav(cur); }
+    try { const r = await toggleFavorite(article.id); if (!r?.success) setFav(cur); else if (typeof r.value === 'boolean') setFav(r.value); }
     catch { setFav(cur); }
   };
   const onToggleRl = async () => {
@@ -27,7 +28,7 @@ export function ArticleView({ article }: { article: ArticleDetail }) {
     if (!uid) { signIn('google'); return; }
     const cur = rl;
     setRl(!cur);
-    try { const r = await toggleReadLater(article.id, cur); if (!r?.success) setRl(cur); }
+    try { const r = await toggleReadLater(article.id); if (!r?.success) setRl(cur); else if (typeof r.value === 'boolean') setRl(r.value); }
     catch { setRl(cur); }
   };
   const onToggleRead = async () => {
@@ -35,7 +36,7 @@ export function ArticleView({ article }: { article: ArticleDetail }) {
     if (!uid) return; // 未ログインは静かに無視（閲覧は自由）
     const cur = read;
     setRead(!cur);
-    try { const r = await markAsRead(article.id, cur); if (!r?.success) setRead(cur); }
+    try { const r = await markAsRead(article.id); if (!r?.success) setRead(cur); else if (typeof r.value === 'boolean') setRead(r.value); }
     catch { setRead(cur); }
   };
 

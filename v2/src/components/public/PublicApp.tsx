@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info, Activity } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -328,8 +328,10 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
       toast('保存に失敗しました。少し時間をおいて再度お試しください', 'error');
     };
     try {
-      const r = await toggleFavorite(id, current);
+      const r = await toggleFavorite(id);
       if (!r?.success) rollback();
+      // サーバの確定値で補正（多タブ等で楽観更新とズレた場合の整合）
+      else if (typeof r.value === 'boolean') setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isFavorited: r.value ? 1 : 0 } : i));
     } catch {
       rollback();
     }
@@ -351,8 +353,16 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
       toast('保存に失敗しました。少し時間をおいて再度お試しください', 'error');
     };
     try {
-      const r = await toggleReadLater(id, current);
+      const r = await toggleReadLater(id);
       if (!r?.success) rollback();
+      // サーバの確定値で補正（フラグと「後で読む」一覧の両方を同期）
+      else if (typeof r.value === 'boolean') {
+        const v = r.value;
+        setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isReadLater: v ? 1 : 0 } : i));
+        setReadLater(prev => v
+          ? (item && !prev.some(i => i.id === id) ? [{ ...item, isReadLater: 1 }, ...prev] : prev)
+          : prev.filter(i => i.id !== id));
+      }
     } catch {
       rollback();
     }
@@ -417,10 +427,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                     <Link href="/changelog" scroll={false} onClick={() => setInfoMenuOpen(false)}
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <History size={14} className="text-slate-400" /> 更新履歴
-                    </Link>
-                    <Link href="/status" scroll={false} onClick={() => setInfoMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                      <Activity size={14} className="text-slate-400" /> 稼働状況
                     </Link>
                   </div>
               )}
@@ -792,7 +798,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
               <p className="text-[11px] font-bold text-slate-300 mb-2.5 font-outfit">サービス</p>
               <ul className="space-y-1.5 text-[12px] text-slate-500">
                 <li><Link href="/about" scroll={false} className="hover:text-slate-300 transition-colors">このサービスについて</Link></li>
-                <li><Link href="/status" scroll={false} className="hover:text-slate-300 transition-colors">稼働状況</Link></li>
                 <li><Link href="/changelog" scroll={false} className="hover:text-slate-300 transition-colors">更新履歴</Link></li>
               </ul>
             </div>

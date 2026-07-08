@@ -2773,6 +2773,16 @@ async function main() {
     const keywordRounds = pipelineMode === 'collect' ? 0 : 10;
     const { collected, failed } = await collectData(keywordRounds);
 
+    // 昼の収集ランでもタイトル翻訳だけは回す（収集直後の英語タイトルが翌朝まで
+    // サイトに残るのを防ぐ。flash-liteのバッチ処理でコストは軽微）。
+    if (pipelineMode === 'collect') {
+      try {
+        await translateTitles(150);
+      } catch (e: any) {
+        console.warn('[Translate] 昼ラン翻訳失敗(非クリティカル):', e?.message ?? e);
+      }
+    }
+
     // 自己修復: 06:00 JST の report 実行がスキップされた日（Actionsの取りこぼし等）は、
     // 昼の収集ランが 06:30 JST 以降に「今日のdailyが無い」ことを検知して生成＋配信する。
     if (pipelineMode === 'collect') {
@@ -2805,7 +2815,8 @@ async function main() {
         await runEmbeddings();
         await runChunkEmbeddings(); // v4.5: パッセージレベル埋め込み
         await runStoryGrouping();
-        await translateTitles();
+        // 翻訳は1日の英語記事流入(50〜100件)を確実に上回る量を処理する（80/日では滞留が増え続けた）
+        await translateTitles(200);
         await translateClaims();
       } catch (e: any) {
         console.warn('[Pipeline] ベクトル/翻訳処理失敗(非クリティカル):', e.message);

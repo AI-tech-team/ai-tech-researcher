@@ -194,3 +194,12 @@
 - 決定: 配信時刻の定時化。GitHub Actionsのschedule遅延(実測+40分〜1時間)対策として、フル実行を04:07 JSTに前倒し→同ジョブが21:00 UTC(06:00 JST)まで待機して `PIPELINE_MODE=report` を実行（リポジトリpublicでActions無料・外部cron不要）。フル実行失敗時も配信するalways()＋12:00の収集ランに「06:30以降で今日のdailyが無ければ生成・配信」の自己修復を追加。
 - 不採用: 外部cron(cron-job.org)＝アカウント追加の運用負担、Vercel Cron(Hobby)＝時刻保証なし。/api/reportのCRON_SECRET経路は不要になり削除（オーナー手動再生成のみ残す）。
 - 検証: tsc/next build/npm test(18件)クリーン。knowledge-ai残参照0。
+
+## 2026-07-08 DB分裂の解消・原則6制定・スプラッシュ/速度/翻訳の改善
+- **DB分裂(最重要)**: サイトが6/19で停止して見えた根因＝6月中旬の未記録DB移行でGH Actionsは新Tursoへ、Vercelは旧Tursoのまま（TURSO envが52日前から未更新）。ユーザー系テーブルの差分はゼロを確認（同期不要）→ Vercel本番envのTURSO_*を新DBへ更新し再デプロイで解消。/reports/176とホーム(8,742件)で実機確認済。教訓: DB移行はGH secrets/Vercel env/ローカル.envをセットで切替えdecisions.mdに記録。
+- **原則6制定**: 「フロントは信用しない、バックエンドで全て検証」を行動原則に追加。違反していたトグル3Action(toggleFavorite/toggleReadLater/markAsRead)を修正: クライアントの現在状態申告を廃止しDBから読んで反転、副次効果(情報源スコア/興味学習/行動ログ)はON/OFF対称化＝連打での加点汚染を根絶。呼び出し側はサーバ確定値で楽観更新を補正。searchArticlesのLIKEワイルドカードエスケープ、id検証も追加。
+- **スプラッシュ再設計**: 旧実装はJSタイマー＋visibility付きCSSで消す＝どちらもメインスレッド依存で、ハイドレーション中(実測3.5秒以上)凍結して居座った。サーバー描画div＋opacityのみのCSSフェード(コンポジタ駆動・0.8-1.15sで確実に消える)＋pointer-events:none常時＋sessionStorageゲート(同一セッション2回目は非表示・インラインscript)に変更。SplashScreen.tsx削除。※インラインscriptは静的定数のみでdangerouslySetInnerHTML例外を明記。
+- **速度**: 本番実測 TTFB2.8s/FCP5.0s。主犯=getReportsDataが全レポート(176件)を本文込みで返しSSR/RSCペイロードが蓄積比例で肥大。直近40件×本文800字に変更(limit/contentCharsはサーバ側でクランプ=原則6)。feed.xmlは全文(contentChars=0)、sitemapは本文なしを明示指定。効果は本番デプロイ後に再計測。
+- **翻訳**: 未翻訳2,542件の根因2つ＝①translateTitlesが80件/日で流入(50-100件/日)に負ける→200件/日に増量＋昼の収集ランでも150件回す ②窓が最新320行のみで古いバックログに届かない→全期間バックフィル(scripts/_backfill_titles.ts)で2,297件翻訳し残181件(製品名等の日本語化不能)。
+- **運用**: Actions起動遅延が実測+1h49mで6:16配信になったため起動を03:07 JSTへ前倒し(バッファ約3時間)。/statusページ・導線・getSystemStatusを全削除。
+- 検証: build/tsc/test(18)クリーン。スプラッシュはPlaywright時系列スクショで初回0.75s完成→1.15sフェード・2回目非表示を確認。
