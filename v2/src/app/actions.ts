@@ -295,19 +295,35 @@ export async function getSitemapTopics(limit = 300): Promise<string[]> {
   }
 }
 
-// 単一記事をID指定で取得（本文rawContent込み）。リスト読み込み範囲に依存しないジャンプ用
-export type ArticleDetail = CollectedItem & { rawContent?: string | null };
+// 単一記事をID指定で取得（本文rawContent＋要点込み）。リスト読み込み範囲に依存しないジャンプ用。
+// key_points/why_matters は詳細でしか使わないので、一覧(COLLECTED_SELECT)には含めない（ペイロード維持）。
+export type ArticleDetail = CollectedItem & {
+  rawContent?: string | null;
+  keyPoints?: string[] | null;
+  whyMatters?: string | null;
+};
 export async function getArticleById(id: number): Promise<ArticleDetail | null> {
   try {
     if (!Number.isFinite(id)) return null;
     const [userId, owner] = await Promise.all([currentUserId(), isOwner()]);
-    const rows = await db.select({ ...COLLECTED_SELECT, rawContent: collectedData.rawContent })
+    const rows = await db.select({
+      ...COLLECTED_SELECT,
+      rawContent: collectedData.rawContent,
+      keyPoints: collectedData.keyPoints,
+      whyMatters: collectedData.whyMatters,
+    })
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
       .where(eq(collectedData.id, id))
       .limit(1);
     if (rows.length === 0) return null;
-    const items = parseCollectedRows(rows) as ArticleDetail[];
+    const items = parseCollectedRows(rows).map(it => {
+      const kp = (it as unknown as { keyPoints?: string | null }).keyPoints;
+      return {
+        ...it,
+        keyPoints: kp ? (() => { try { const a = JSON.parse(kp); return Array.isArray(a) ? a : null; } catch { return null; } })() : null,
+      };
+    }) as ArticleDetail[];
     await overlayUserState(items, userId);
     const item = items[0] ?? null;
     // 著作権・各情報源ToSへの配慮: 元記事から抽出した本文(rawContent)は内部の情報解析用に保持するが、

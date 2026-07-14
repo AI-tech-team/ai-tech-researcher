@@ -26,6 +26,10 @@ export const collectedData = sqliteTable("collected_data", {
   importanceScore: integer("importance_score").default(5),
   normalizedImportanceScore: integer("normalized_importance_score"),
   tags: text("tags"), // JSON array: '["tag1","tag2"]'
+  // v7: 記事ページ用の「要点」。抽出本文(rawContent)は著作権上一般公開できないため(第三条)、
+  // 本文の切り出しではなくLLMが書き起こした要点3〜5行＋「なぜ重要か」1行を持たせる。
+  keyPoints: text("key_points"), // JSON array: '["要点1","要点2",...]'
+  whyMatters: text("why_matters"),
   rawContent: text("raw_content"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),

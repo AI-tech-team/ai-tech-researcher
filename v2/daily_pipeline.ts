@@ -2268,6 +2268,129 @@ ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
   return translated;
 }
 
+// ── v7: 英語のまま残った summary を日本語化 ──────────────────────────────
+// 収集時の評価プロンプトは日本語要約を求めているが、LLMが原文をそのまま返してくる件がある。
+// タイトル(translateTitles)には再翻訳の救済があるのに要約には無く、英語要約がフィードに残っていた。
+const SummaryTransSchema = z.object({
+  items: z.array(z.object({ id: z.number().int(), summaryJa: z.string().max(400) })),
+});
+
+// scanRows: 「英語のまま」をJS側で判定するため、DBから何行走査するか。日次は新しい方だけで足りるが、
+// バックフィル(PIPELINE_MODE=translate)は全件を走査しないと、古い記事に散らばった英語要約に届かない。
+async function translateSummaries(limit = 80, scanRows = limit * 4): Promise<number> {
+  console.log('[TranslateSum] 要約の日本語化開始');
+  const rows = await db.select({ id: schema.collectedData.id, title: schema.collectedData.title, summary: schema.collectedData.summary })
+    .from(schema.collectedData)
+    .where(sql`${schema.collectedData.summary} IS NOT NULL AND length(${schema.collectedData.summary}) > 10`)
+    .orderBy(desc(schema.collectedData.createdAt))
+    .limit(scanRows);
+
+  const targets = rows.filter(r => r.summary && !JA_CHAR.test(r.summary)).slice(0, limit);
+  if (targets.length === 0) { console.log('[TranslateSum] 対象なし'); return 0; }
+
+  let done = 0;
+  const BATCH = 15;
+  for (let i = 0; i < targets.length; i += BATCH) {
+    const chunk = targets.slice(i, i + BATCH);
+    try {
+      const { object } = await withRetry(() => generateObject({
+        model: google('gemini-2.5-flash-lite'),
+        schema: SummaryTransSchema,
+        prompt: `以下は英語のまま残ってしまった記事要約です。各記事について、日本語の要約(150文字程度)を書いてください。
+原文をそのまま返さず、必ず日本語の文章にすること。固有名詞・モデル名・略語のみ英語表記のまま残す。必ず全${chunk.length}件のitemsを返す。
+
+${chunk.map(c => `[${c.id}] ${c.title}\n${c.summary}`).join('\n\n')}`,
+      }));
+      for (const it of object.items) {
+        if (!it.summaryJa || !JA_CHAR.test(it.summaryJa)) continue; // 日本語が無い訳は書かない
+        await db.update(schema.collectedData)
+          .set({ summary: it.summaryJa.slice(0, 300) })
+          .where(eq(schema.collectedData.id, it.id));
+        done++;
+      }
+    } catch (e: any) {
+      console.warn(`  [TranslateSum] バッチ失敗(非クリティカル): ${(e.message ?? '').slice(0, 60)}`);
+    }
+  }
+  console.log(`[TranslateSum] ${done}件を日本語化`);
+  return done;
+}
+
+// ── v7: 記事ページ用の「要点3〜5行＋なぜ重要か」を生成 ────────────────────
+// 抽出本文(rawContent)は著作権上そのまま公開できない(第三条)ので、本文の切り出しではなく
+// LLMに書き起こさせた要点を key_points / why_matters に持たせ、記事ページに表示する。
+const KeyPointsSchema = z.object({
+  items: z.array(z.object({
+    id: z.number().int(),
+    keyPoints: z.array(z.string().max(160)).min(3).max(5),
+    whyMatters: z.string().max(200),
+  })),
+});
+
+async function enrichKeyPoints(limit = 60): Promise<number> {
+  console.log('[KeyPoints] 要点生成開始');
+  // 未生成の記事を「新しい順・重要度が高い順」に。フィードは新着順に並ぶので、重要度優先で埋めると
+  // 古い記事ばかり埋まって、実際に読まれる新着が空のままになる（初回バックフィルで踏んだ）。
+  const targets = await db.select({
+    id: schema.collectedData.id,
+    title: schema.collectedData.title,
+    titleJa: schema.collectedData.titleJa,
+    summary: schema.collectedData.summary,
+    rawContent: schema.collectedData.rawContent,
+  })
+    .from(schema.collectedData)
+    .where(sql`${schema.collectedData.keyPoints} IS NULL AND ${schema.collectedData.summary} IS NOT NULL`)
+    .orderBy(desc(schema.collectedData.createdAt), desc(schema.collectedData.importanceScore))
+    .limit(limit);
+
+  if (targets.length === 0) { console.log('[KeyPoints] 対象なし'); return 0; }
+
+  let done = 0;
+  const BATCH = 8; // 1件あたりの入力が大きい（本文あり）ので小さめ
+  for (let i = 0; i < targets.length; i += BATCH) {
+    const chunk = targets.slice(i, i + BATCH);
+    const body = chunk.map(c => {
+      // 本文があれば根拠として使う（出力は要約＝転載ではない）。無ければ要約から起こす。
+      const src = c.rawContent ? c.rawContent.replace(/\s+/g, ' ').slice(0, 2500) : (c.summary ?? '');
+      return `[${c.id}] ${c.titleJa || c.title}\n${src}`;
+    }).join('\n\n---\n\n');
+
+    try {
+      const { object } = await withRetry(() => generateObject({
+        model: google('gemini-2.5-flash-lite'),
+        schema: KeyPointsSchema,
+        prompt: `以下の各記事について、記事を読まなくても内容がわかる「要点」を書いてください。
+
+【出力】各記事ごとに
+- keyPoints: 要点を3〜5個。1個40〜80文字の日本語の文。「何が発表/判明したか」「数値・モデル名・企業名などの具体」「従来との違い」を含める。原文の逐語訳ではなく自分の言葉で要約する。
+- whyMatters: 「なぜ重要か」を1文(80〜120文字)。技術的・実務的なインパクトを書く。
+
+【ルール】
+- 必ず日本語。固有名詞・モデル名・略語のみ英語表記可。
+- 記事に書かれていないことを推測で足さない。断定を避ける(「〜とされる」「〜と説明している」)。
+- 必ず全${chunk.length}件のitemsを返す。
+
+${body}`,
+      }));
+
+      for (const it of object.items) {
+        if (!it.keyPoints?.length) continue;
+        await db.update(schema.collectedData)
+          .set({
+            keyPoints: JSON.stringify(it.keyPoints.slice(0, 5).map(p => p.slice(0, 160))),
+            whyMatters: (it.whyMatters ?? '').slice(0, 200) || null,
+          })
+          .where(eq(schema.collectedData.id, it.id));
+        done++;
+      }
+    } catch (e: any) {
+      console.warn(`  [KeyPoints] バッチ失敗(非クリティカル): ${(e.message ?? '').slice(0, 60)}`);
+    }
+  }
+  console.log(`[KeyPoints] ${done}件の要点を生成`);
+  return done;
+}
+
 // ── v3.1: 既存クレームの英語predicate/valueを日本語化（「今週の論点」表示用）──
 const ClaimsTransSchema = z.object({
   items: z.array(z.object({ id: z.number().int(), predicate: z.string().max(80), value: z.string().max(150) })),
@@ -2749,8 +2872,21 @@ async function main() {
     if (pipelineMode === 'translate') {
       let total = 0, n = 0;
       do { n = await translateTitles(80); total += n; } while (n >= 60 && total < 400);
+      // バックフィルは全件走査（英語要約は古い記事にも散らばっているため、新着だけ見ても届かない）
+      let sumTotal = 0, s = 0;
+      do { s = await translateSummaries(80, 100000); sumTotal += s; } while (s > 0 && sumTotal < 400);
       await translateClaims(300);
-      console.log(`=== Translate mode 完了（タイトル計${total}件＋クレーム）===`);
+      console.log(`=== Translate mode 完了（タイトル計${total}件＋要約計${sumTotal}件＋クレーム）===`);
+      process.exit(0);
+    }
+
+    // v7: 要点(key_points/why_matters)のバックフィル。重要度が高い順に埋める。
+    // 既存記事は数千件あるので、上限を切って複数回まわす想定（BACKFILL_MAX で調整）。
+    if (pipelineMode === 'keypoints') {
+      const max = Number(process.env.BACKFILL_MAX ?? 300);
+      let total = 0, n = 0;
+      do { n = await enrichKeyPoints(60); total += n; } while (n > 0 && total < max);
+      console.log(`=== KeyPoints mode 完了（計${total}件）===`);
       process.exit(0);
     }
 
@@ -2817,12 +2953,21 @@ async function main() {
         await runStoryGrouping();
         // 翻訳は1日の英語記事流入(50〜100件)を確実に上回る量を処理する（80/日では滞留が増え続けた）
         await translateTitles(200);
+        await translateSummaries(150); // v7: 英語のまま残った要約の救済（タイトルと同じ考え方）
         await translateClaims();
       } catch (e: any) {
         console.warn('[Pipeline] ベクトル/翻訳処理失敗(非クリティカル):', e.message);
       }
 
       await runKnowledgeExtraction();
+
+      // v7: 記事ページ用の要点を生成（ディープ抽出の後＝本文がある記事は本文を根拠にできる）。非クリティカル。
+      // 上限は1日の流入(約190件)を上回る量にする。下回ると未生成が毎日積み上がる（翻訳で踏んだのと同じ罠）。
+      try {
+        await enrichKeyPoints(220);
+      } catch (e: any) {
+        console.warn('[Pipeline] 要点生成失敗(非クリティカル):', e.message);
+      }
 
       // 確信度スペクトル: 日次decay + stale移行 + カスケード。非クリティカル
       try {
