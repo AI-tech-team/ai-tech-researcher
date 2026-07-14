@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
+import { useScrollLock } from '@/lib/useScrollLock';
 
 // 情報ページ(feedback/privacy/terms/changelog)を一覧からのソフト遷移(intercept)で
 // 全画面オーバーレイ表示する汎用シェル。裏のトップ(/)は children スロットに保持されたままなので、
@@ -9,6 +10,11 @@ import { usePathname } from 'next/navigation';
 // 各ページは自前のヘッダー(ロゴ/トップ導線)を持つので、ここではヘッダーを足さず overlay の器だけ提供する。
 export function OverlayShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+
+  // 背面(トップ)のスクロールを止める。useScrollLock は解除時にスクロール位置を復元するので、
+  // 「ロックすると閉じた時に先頭へ飛ぶ」問題は起きない（下の早期returnと同じ条件で有効化）。
+  useScrollLock(pathname !== '/');
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Escで戻る（history.back＝ソフト遷移でトップに復帰）
@@ -16,9 +22,6 @@ export function OverlayShell({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // ※ body の overflow:hidden ロックはしない。ロックすると裏のトップ(/)の
-    //   スクロール位置が失われ、閉じた時に先頭へ飛ぶため。代わりに overscroll-contain で
-    //   オーバーレイ内スクロールの背面への波及だけを抑える（位置は保持される）。
   }, []);
 
   // ページ内の「トップ」リンク(<Link href="/">)は前進ソフト遷移で、Next.jsの並行ルートは

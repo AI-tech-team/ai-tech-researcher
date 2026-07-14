@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { BrainCircuit, X } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
+import { useScrollLock } from '@/lib/useScrollLock';
 
 // 一覧からのソフト遷移(intercept)で記事/レポートを全画面オーバーレイ表示する汎用シェル。
 // 裏のトップ(一覧)は保持されるので、閉じる(戻る)で再読み込みなし＝スクロール位置も維持。
@@ -13,17 +14,19 @@ export function ModalShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const close = () => router.back();
 
+  // 背面(一覧)のスクロールを止める。body の overflow だけでは iOS Safari で背面が動くため、
+  // position:fixed 方式の共通フックを使う（閉じた時にスクロール位置は復元される）。
+  useScrollLock(true);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') router.back(); };
     window.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+    return () => { window.removeEventListener('keydown', onKey); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
-    <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto bg-[#03060f]" onClick={close}>
+    <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto overscroll-contain bg-[#03060f]" onClick={close}>
       <div className="min-h-full" onClick={e => e.stopPropagation()}>
         <header className="sticky top-0 z-10 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
           <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">

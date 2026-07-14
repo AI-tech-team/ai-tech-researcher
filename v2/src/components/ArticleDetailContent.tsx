@@ -105,6 +105,28 @@ export function ArticleDetailContent({
         </div>
       )}
 
+      {/* 要点（AIが書き起こした3〜5行）＋なぜ重要か。
+          元記事本文は著作権上そのまま出せない(第三条)ため、本文の転載ではなく要約として提示する。 */}
+      {article.keyPoints && article.keyPoints.length > 0 && (
+        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+          <div className="mb-2.5"><AiBadge label="AI要点" /></div>
+          <ul className="space-y-2">
+            {article.keyPoints.map((p, i) => (
+              <li key={i} className="flex gap-2 text-sm text-slate-300 leading-relaxed">
+                <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400/70" />
+                <span>{p}</span>
+              </li>
+            ))}
+          </ul>
+          {article.whyMatters && (
+            <div className="mt-3 pt-3 border-t border-white/5">
+              <p className="font-mono text-[10px] text-slate-500 uppercase tracking-widest mb-1">なぜ重要か</p>
+              <p className="text-sm text-slate-300 leading-relaxed">{article.whyMatters}</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 本文（抽出済みがあれば） */}
       {article.rawContent && (
         <div>

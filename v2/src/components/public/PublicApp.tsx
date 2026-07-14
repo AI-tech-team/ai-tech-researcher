@@ -18,6 +18,7 @@ import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION } from '@/lib/site';
+import { useScrollLock } from '@/lib/useScrollLock';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
@@ -80,7 +81,9 @@ function PubCard({ item, featured = false, lead = false }: {
   const outlets = item.storyOutlets ?? [];
   const multi = (item.storyCount ?? 1) > 1 && outlets.length > 0;
   return (
-    <Link href={`/articles/${item.id}`}
+    // scroll={false} 必須: 付けないと Next.js が @modal スロット(DOM上はフィードの後ろ)まで
+    // ウィンドウをスクロールさせ、オーバーレイを開いた瞬間に背面が最下部へ飛ぶ。
+    <Link href={`/articles/${item.id}`} scroll={false}
       className={`group cursor-pointer rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 transition-all duration-200 flex flex-col gap-2.5 ${lead ? 'p-6 sm:p-7' : 'p-5'}`}>
       <div className="flex items-center gap-2 flex-wrap">
         {lead && (
@@ -102,8 +105,9 @@ function PubCard({ item, featured = false, lead = false }: {
       <h3 className={`font-bold leading-snug text-white group-hover:text-sky-300 transition-colors ${lead ? 'text-xl sm:text-2xl' : featured ? 'text-lg' : 'text-base'}`}>
         {title}
       </h3>
+      {/* 通常カードも3行表示（要約は平均150字前後あり、2行だと内容が伝わらないという指摘への対応） */}
       {item.summary && (
-        <p className={`text-slate-400 leading-relaxed ${lead ? 'text-base line-clamp-3' : featured ? 'text-sm line-clamp-3' : 'text-sm line-clamp-2'}`}>
+        <p className={`text-slate-400 leading-relaxed ${lead ? 'text-base line-clamp-3' : 'text-sm line-clamp-3'}`}>
           {item.summary}
         </p>
       )}
@@ -162,8 +166,10 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const [digestPromptOpen, setDigestPromptOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
-  const openArticle = (id: number) => router.push(`/articles/${id}`);
-  const openReportObj = (r: Report) => router.push(`/reports/${r.id}`);
+  // scroll: false 必須（Linkのscroll={false}と同じ理由）。付けないとオーバーレイを開いた瞬間に
+  // Next.js が @modal スロットの位置まで背面をスクロールさせてしまう。
+  const openArticle = (id: number) => router.push(`/articles/${id}`, { scroll: false });
+  const openReportObj = (r: Report) => router.push(`/reports/${r.id}`, { scroll: false });
 
   // パーソナライズの再取得（プロフィール保存後など）
   const reloadPersonalization = async () => {
@@ -226,21 +232,12 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
     return () => window.removeEventListener('keydown', h);
   }, []);
 
-  // モーダル表示中は背面(body/html)のスクロールを止める（スマホで背面がスクロールする問題の対策）
+  // モーダル表示中は背面のスクロールを止める（スマホで背面がスクロールする問題の対策）。
+  // overflow:hidden は iOS Safari で効かないため、position:fixed 方式の共通フックに統一。
   const anyOverlayOpen =
     searchOpen ||
     profileOpen || savedOpen;
-  useEffect(() => {
-    if (!anyOverlayOpen) return;
-    const prevBody = document.body.style.overflow;
-    const prevHtml = document.documentElement.style.overflow;
-    document.body.style.overflow = 'hidden';
-    document.documentElement.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prevBody;
-      document.documentElement.style.overflow = prevHtml;
-    };
-  }, [anyOverlayOpen]);
+  useScrollLock(anyOverlayOpen);
 
   useEffect(() => {
     let cancelled = false;
