@@ -105,8 +105,23 @@ const KnowledgeSchema = z.object({
   })).max(5),
 });
 
+// 要約を6行相当(約180字)に収める。ハードに .slice すると文の途中で切れて「10行以上あるのに尻切れ」
+// になる（ユーザー指摘2026-07-15）。切り詰めるのではなく、最後の句点(。！？)までで言い切らせる。
+// 生成側プロンプトも「6行以内で必ず言い切る」に統一するので、通常はここで削られず素通りする。
+const SUMMARY_MAX = 200;
+function clampSummary(s: string | null | undefined): string {
+  const t = String(s ?? '').trim();
+  if (t.length <= SUMMARY_MAX) return t;
+  const head = t.slice(0, SUMMARY_MAX);
+  // 上限手前で最後に文が終わる位置(。！？)まで戻す。見つからなければ読点/空白、最後は素の上限。
+  const end = Math.max(head.lastIndexOf('。'), head.lastIndexOf('！'), head.lastIndexOf('？'));
+  if (end >= 60) return head.slice(0, end + 1);
+  const soft = Math.max(head.lastIndexOf('、'), head.lastIndexOf(' '));
+  return (soft >= 60 ? head.slice(0, soft) : head).trim();
+}
+
 // summaryは超過しやすく max(300) だとスキーマ不一致で評価ごと失敗→フィード丸ごと0件になる。
-// 余裕を持たせ(600)、挿入時に切り詰める。
+// 余裕を持たせ(600)、挿入時に clampSummary で文末まで（6行相当）に収める。
 const ArticleEvalSchema = z.object({
   items: z.array(z.object({
     importance: z.number().int().min(0).max(10),
@@ -257,7 +272,7 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   const { object } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下の記事をAI技術の観点で評価してください。AI技術と無関係な記事はimportance: 0にしてください。各記事のimportance(0-10)、category、日本語summary(150文字)を生成してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下の記事をAI技術の観点で評価してください。AI技術と無関係な記事はimportance: 0にしてください。各記事のimportance(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を生成してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = object.items;
   if (evaluations.length !== fresh.length) {
@@ -277,7 +292,7 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
       sourceId: source.id,
       title: item.title,
       url: item.link,
-      summary: (ev.summary ?? '').slice(0, 300),
+      summary: clampSummary(ev.summary),
       category: ev.category ?? 'その他',
       importanceScore: Math.min(10, ev.importance + authorityBonus),
       publishedAt: pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString(),
@@ -323,7 +338,7 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
   const { object: hnObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: HnEvalSchema,
-    prompt: `以下のHacker NewsのAI/ML関連記事の専門的な日本語summary（200文字）とcategoryを生成してください。\n\n${batchText}`,
+    prompt: `以下のHacker NewsのAI/ML関連記事の専門的な日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）とcategoryを生成してください。\n\n${batchText}`,
   }));
   const evaluations = hnObject.items;
 
@@ -339,7 +354,7 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
       sourceId: source.id,
       title: item.title,
       url: item.url,
-      summary: ev.summary,
+      summary: clampSummary(ev.summary),
       category: ev.category ?? 'その他',
       importanceScore,
       tags: JSON.stringify(['hacker-news', `hn-score:${item.score}`]),
@@ -391,7 +406,7 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   const { object: arxivObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = arxivObject.items;
   if (evaluations.length !== fresh.length) {
@@ -410,7 +425,7 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
       sourceId: source.id,
       title: item.title,
       url: item.url,
-      summary: ev.summary,
+      summary: clampSummary(ev.summary),
       category: ev.category ?? '研究/論文',
       importanceScore: Math.min(10, ev.importance + authorityBonus),
       tags: JSON.stringify(['arxiv', ev.category ?? '研究/論文']),
@@ -447,7 +462,7 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
   const { object: ghObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のGitHubトレンドリポジトリ（AI/ML分野）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下のGitHubトレンドリポジトリ（AI/ML分野）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = ghObject.items;
   if (evaluations.length !== candidates.length) {
@@ -466,7 +481,7 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
       sourceId: source.id,
       title: ghTitle,
       url: item.html_url,
-      summary: ev.summary,
+      summary: clampSummary(ev.summary),
       category: ev.category ?? 'ツール/フレームワーク',
       importanceScore: ev.importance,
       tags: JSON.stringify(['github-trending', `⭐${item.stargazers_count}`]),
@@ -504,7 +519,7 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
   const { object: pwcObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary(150文字)を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = pwcObject.items;
   if (evaluations.length !== fresh.length) {
@@ -525,7 +540,7 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
       sourceId: source.id,
       title: item.title,
       url: paperUrl,
-      summary: ev.summary,
+      summary: clampSummary(ev.summary),
       category: ev.category ?? '研究/論文',
       importanceScore: Math.min(10, ev.importance + authorityBonus),
       tags: JSON.stringify(['papers-with-code', ...(item.tasks ?? []).slice(0, 2).map((t: any) => t.name as string)]),
@@ -575,7 +590,7 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
         if (category === null) continue;
         const rawScore = parseInt((item.score ?? '').replace(/[^\d]/g, ''), 10);
         if (isNaN(rawScore) || rawScore < 20) continue;
-        const summary = [item.summary, item.comment_summary].filter(Boolean).join('\n\n').slice(0, 600) || item.title;
+        const summary = clampSummary([item.summary, item.comment_summary].filter(Boolean).join('\n\n')) || item.title;
         const tags = JSON.stringify([item.src, item.domain].filter(Boolean).slice(0, 3));
         const importanceScore = parseTechDripScore(item.score ?? '');
         const r = await db.insert(schema.collectedData).values({

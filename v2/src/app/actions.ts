@@ -337,20 +337,21 @@ export async function getSitemapTopics(limit = 300): Promise<string[]> {
   }
 }
 
-// 単一記事をID指定で取得（本文rawContent＋要点込み）。リスト読み込み範囲に依存しないジャンプ用。
+// 単一記事をID指定で取得（要点込み）。リスト読み込み範囲に依存しないジャンプ用。
 // key_points/why_matters は詳細でしか使わないので、一覧(COLLECTED_SELECT)には含めない（ペイロード維持）。
+// ⚠ rawContent(抽出本文)は絶対にクライアントへ返さない（オーナーにも返さない）。第三条=公衆送信は
+//   享受目的で著作権侵害リスク。本文は内部の情報解析(RAG/要点生成)専用でDBには持つが、SELECTにも
+//   戻り値にも一切含めない（うっかり露出を型レベルで防ぐため rawContent フィールド自体を廃止）。
 export type ArticleDetail = CollectedItem & {
-  rawContent?: string | null;
   keyPoints?: string[] | null;
   whyMatters?: string | null;
 };
 export async function getArticleById(id: number): Promise<ArticleDetail | null> {
   try {
     if (!Number.isFinite(id)) return null;
-    const [userId, owner] = await Promise.all([currentUserId(), isOwner()]);
+    const userId = await currentUserId();
     const rows = await db.select({
       ...COLLECTED_SELECT,
-      rawContent: collectedData.rawContent,
       keyPoints: collectedData.keyPoints,
       whyMatters: collectedData.whyMatters,
     })
@@ -367,12 +368,7 @@ export async function getArticleById(id: number): Promise<ArticleDetail | null> 
       };
     }) as ArticleDetail[];
     await overlayUserState(items, userId);
-    const item = items[0] ?? null;
-    // 著作権・各情報源ToSへの配慮: 元記事から抽出した本文(rawContent)は内部の情報解析用に保持するが、
-    // 一般公開では再表示しない(=公衆送信しない)。公開UIは「要約＋元記事リンク＋分析」に限定する
-    // (利用規約§5の表明とも一致)。運用者(オーナー)が内部確認する場合のみ本文を返す。
-    if (item && !owner) item.rawContent = null;
-    return item;
+    return items[0] ?? null;
   } catch (error) {
     console.error('getArticleById failed:', error);
     return null;

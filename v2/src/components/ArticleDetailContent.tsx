@@ -127,13 +127,8 @@ export function ArticleDetailContent({
         </div>
       )}
 
-      {/* 本文（抽出済みがあれば） */}
-      {article.rawContent && (
-        <div>
-          <p className="font-mono text-[10px] text-slate-600 uppercase tracking-widest mb-1.5">本文（抽出）</p>
-          <p className="text-[13px] text-slate-400 leading-relaxed whitespace-pre-wrap">{article.rawContent.slice(0, 6000)}</p>
-        </div>
-      )}
+      {/* 抽出本文(rawContent)は著作権上、公開UIでは一切表示しない(第三条・オーナーにも出さない)。
+          本文は内部の情報解析専用。ユーザー向けは要約＋AI要点＋元記事リンクに限定する。 */}
 
       {/* タグ */}
       {article.tags && article.tags.length > 0 && (
