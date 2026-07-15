@@ -45,7 +45,8 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   // 「一致した記事」(語彙検索・速い)だけ先にawaitして即描画する。
   // 「関連する記事」(意味検索・重い)は RelatedSection を Suspense 境界で後追いストリームする。
   // 1つのリストに順位融合すると両方の精度が落ちることを実測済み（2026-07-15・nDCG 87.5%→84%）。
-  const articles = q.length >= 2 ? await searchArticles(q) : [];
+  // 全画面ページはパレット(25件)より多く見せる。畳み込み後で最大50件。
+  const articles = q.length >= 2 ? await searchArticles(q, 50) : [];
 
   return (
     <ArticleListView

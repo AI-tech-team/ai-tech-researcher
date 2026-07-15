@@ -980,13 +980,17 @@ export async function searchRelated(query: string): Promise<CollectedItem[]> {
   }
 }
 
-/** 一致した記事だけ（クライアントのSearchPalette用・軽量）。 */
-export async function searchArticles(query: string): Promise<CollectedItem[]> {
+/**
+ * 一致した記事だけ。SearchPalette(ドロップダウン)は既定25件で軽量、全画面/search は limit を上げて多く出す。
+ * limit を上げるぶん語彙検索の取得数も比例で増やす（畳み込み後に limit 件残るように余裕を持たせる）。
+ */
+export async function searchArticles(query: string, limit = 25): Promise<CollectedItem[]> {
   const q = query.trim().slice(0, 100);
   if (q.length < 2) return [];
+  const cap = Math.min(Math.max(limit, 1), 100);
   try {
     const userId = await currentUserId();
-    const lex = await lexicalSearch(q, 60);
+    const lex = await lexicalSearch(q, Math.max(60, cap * 2));
     if (!lex) return [];
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
@@ -994,7 +998,7 @@ export async function searchArticles(query: string): Promise<CollectedItem[]> {
       .where(inArray(collectedData.id, lex.ids));
     const items = parseCollectedRows(rows)
       .sort((a, b) => (lex.score.get(b.id) ?? 0) - (lex.score.get(a.id) ?? 0));
-    const out = dedupeByStory(items, 25);
+    const out = dedupeByStory(items, cap);
     await overlayUserState(out, userId);
     return out;
   } catch (error) {
