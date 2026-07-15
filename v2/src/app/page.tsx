@@ -79,6 +79,7 @@ export default async function Page() {
         data: core.data as PublicInitial['data'],
         reportsData: core.reportsData as PublicInitial['reportsData'],
         counts: core.counts as PublicInitial['counts'],
+        highlights: core.highlights as PublicInitial['highlights'],
       };
     }
   } catch {

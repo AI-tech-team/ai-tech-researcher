@@ -44,6 +44,7 @@ const PAGE = 30;
 type PubSnapshot = {
   items: CollectedItem[]; reports: Report[]; total: number | null;
   offset: number; hasMore: boolean; stats: KnowledgeStats | null; at: number;
+  highlights: CollectedItem[];
 };
 let pubSnapshot: PubSnapshot | null = null;
 const SNAP_TTL = 5 * 60_000;
@@ -121,7 +122,7 @@ function PubCard({ item, featured = false, lead = false }: {
 
 // page.tsx(サーバ)がSSRで先に取得して渡す初期フィード。これがあれば初回/遷移直後に
 // Client Server Action(getCoreData)を叩かずに描画できる＝@modal遷移時のabortを踏まない。
-export type PublicInitial = { data: CollectedItem[]; reportsData: Report[]; counts: { total: number } };
+export type PublicInitial = { data: CollectedItem[]; reportsData: Report[]; counts: { total: number }; highlights?: CollectedItem[] };
 
 export function PublicApp({ initialData }: { initialData?: PublicInitial | null }) {
   const { toast } = useToast();
@@ -132,6 +133,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   // 初期値は スナップショット(戻り) → SSR初期データ → 空 の順で復元。
   // いずれかがあれば即表示・スケルトンを出さない（戻りのちらつき＆遷移直後の空表示を防ぐ）。
   const [collectedItems, setCollectedItems] = useState<CollectedItem[]>(() => pubSnapshot?.items ?? initialData?.data ?? []);
+  const [highlights, setHighlights] = useState<CollectedItem[]>(() => pubSnapshot?.highlights ?? initialData?.highlights ?? []);
   const [reportsList, setReportsList] = useState<Report[]>(() => pubSnapshot?.reports ?? initialData?.reportsData ?? []);
   const [stats, setStats] = useState<KnowledgeStats | null>(() => pubSnapshot?.stats ?? null);
   const [totalArticles, setTotalArticles] = useState<number | null>(() => pubSnapshot?.total ?? initialData?.counts?.total ?? null);
@@ -252,7 +254,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
       // ナビゲーション中断でgetCoreDataがabortされても無限スケルトンで止まらないよう数回リトライ。
       for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
         try {
-          const { data, reportsData, counts } = await getCoreData(PAGE);
+          const { data, reportsData, counts, highlights: hl } = await getCoreData(PAGE);
           if (cancelled) return;
           const first = data as CollectedItem[];
           setCollectedItems(first);
@@ -260,6 +262,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           setHasMore(first.length === PAGE);
           setReportsList(reportsData as Report[]);
           setTotalArticles((counts as { total: number }).total);
+          if (hl) setHighlights(hl as CollectedItem[]);
           setIsLoading(false);
           return;
         } catch {
@@ -277,8 +280,8 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   // 表示状態をスナップショットへ同期（loadMoreで増えた件数・お気に入り等のトグルも、戻った時に復元する）。
   useEffect(() => {
     if (isLoading) return;
-    pubSnapshot = { items: collectedItems, reports: reportsList, total: totalArticles, offset, hasMore, stats, at: Date.now() };
-  }, [collectedItems, reportsList, totalArticles, offset, hasMore, stats, isLoading]);
+    pubSnapshot = { items: collectedItems, reports: reportsList, total: totalArticles, offset, hasMore, stats, at: Date.now(), highlights };
+  }, [collectedItems, reportsList, totalArticles, offset, hasMore, stats, isLoading, highlights]);
 
   // ログインユーザー向けパーソナライズ（行動ベース推薦・後で読む・読書DNA）。
   // 未ログインでは何も出さない。手動の興味設定に依存しない getRecommendations を使う。
@@ -372,9 +375,21 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const filteredItems = selectedCategory
     ? collectedItems.filter(i => i.category === selectedCategory)
     : collectedItems;
-  const featured = [...filteredItems]
-    .sort((a, b) => (b.importanceScore ?? 0) - (a.importanceScore ?? 0))
-    .slice(0, 6);
+  // 今日の注目: 未選択時はサーバ算出(直近48h・重要度→新着・同一ストーリー畳み)を使う。
+  // フィードは新着順なので重要記事が沈む問題への対策(Techmeme等が川の上に数本置くのと同じ)。
+  // カテゴリ選択中は highlights(全体基準)が合わないため、そのカテゴリ内の重要度上位をクライアントで出す。
+  const dedupeByStory6 = (items: CollectedItem[]): CollectedItem[] => {
+    const seen = new Set<number>(); const out: CollectedItem[] = [];
+    for (const it of items) {
+      if (it.storyId != null) { if (seen.has(it.storyId)) continue; seen.add(it.storyId); }
+      out.push(it);
+      if (out.length >= 6) break;
+    }
+    return out;
+  };
+  const featured = selectedCategory
+    ? dedupeByStory6([...filteredItems].sort((a, b) => (b.importanceScore ?? 0) - (a.importanceScore ?? 0)))
+    : highlights;
   const featuredIds = new Set(featured.map(f => f.id));
   const feed = filteredItems.filter(i => !featuredIds.has(i.id));
 
@@ -719,12 +734,12 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           </section>
         )}
 
-        {/* ── 見どころ（雑誌の一面レイアウト: 先頭1枚を大カード、残りをグリッド） ── */}
+        {/* ── 今日の注目（直近48hの重要記事・雑誌の一面レイアウト: 先頭1枚を大カード、残りをグリッド） ── */}
         {!isLoading && featured.length > 0 && (
           <section>
             <div className="flex items-center gap-2 mb-4">
               <Flame size={16} className="text-orange-400" />
-              <h2 className="text-sm font-bold font-outfit">今日の見どころ</h2>
+              <h2 className="text-sm font-bold font-outfit">{selectedCategory ? `${selectedCategory} の注目` : '今日の注目'}</h2>
             </div>
             <div className="space-y-4">
               <PubCard item={featured[0]} lead />
