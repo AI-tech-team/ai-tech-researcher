@@ -17,6 +17,25 @@ const CATEGORY_STYLE: Record<ChangeCategory, string> = {
   'プライバシー・規約': 'text-slate-300 bg-white/5 border-white/10',
 };
 
+// 更新の重み（バージョンの桁）で見た目を3段階に分ける。
+//   major … 世代の節目（milestone）。青く大きく光らせる。
+//   minor … 新機能の追加（vX.Y.0）。緑の小さな光をともす。
+//   patch … 改善・修正・規約更新（vX.Y.Z, Z>0）。無光の小ドット。
+type Tier = 'major' | 'minor' | 'patch';
+const tierOf = (e: { version: string; milestone?: boolean }): Tier =>
+  e.milestone ? 'major' : /\.0$/.test(e.version) ? 'minor' : 'patch';
+
+const DOT_STYLE: Record<Tier, string> = {
+  major: 'absolute -left-[30px] top-1 w-3 h-3 rounded-full bg-sky-400 ring-4 ring-[#03060f] shadow-[0_0_10px_2px_rgba(56,189,248,0.5)]',
+  minor: 'absolute -left-[28px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-4 ring-[#03060f] shadow-[0_0_7px_1px_rgba(52,211,153,0.55)]',
+  patch: 'absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-slate-600 ring-4 ring-[#03060f]',
+};
+const VERSION_STYLE: Record<Tier, string> = {
+  major: 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-sky-500/40 text-sky-200 bg-sky-500/15',
+  minor: 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-emerald-500/40 text-emerald-200 bg-emerald-500/12',
+  patch: 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-white/10 text-slate-300 bg-white/[0.04]',
+};
+
 export default function ChangelogPage() {
   return (
     <div className="min-h-screen">
@@ -60,24 +79,14 @@ export default function ChangelogPage() {
 
         {/* タイムライン（左に縦線、各更新にバージョン番号付き） */}
         <ol className="mt-10 border-l border-white/10 pl-6 space-y-7">
-          {CHANGELOG.map((e) => (
+          {CHANGELOG.map((e) => {
+            const tier = tierOf(e);
+            return (
             <li key={e.version} className="relative">
-              {/* ドット（節目は大きく光らせる） */}
-              <span
-                className={
-                  e.milestone
-                    ? 'absolute -left-[30px] top-1 w-3 h-3 rounded-full bg-sky-400 ring-4 ring-[#03060f] shadow-[0_0_10px_2px_rgba(56,189,248,0.5)]'
-                    : 'absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-slate-600 ring-4 ring-[#03060f]'
-                }
-              />
+              {/* ドット（節目=青大／新機能=緑小／改善・修正=無光） */}
+              <span className={DOT_STYLE[tier]} />
               <div className="flex items-center gap-2 flex-wrap">
-                <span
-                  className={
-                    e.milestone
-                      ? 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-sky-500/40 text-sky-200 bg-sky-500/15'
-                      : 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-white/10 text-slate-300 bg-white/[0.04]'
-                  }
-                >
+                <span className={VERSION_STYLE[tier]}>
                   {e.version}
                 </span>
                 {e.stage && (
@@ -90,14 +99,18 @@ export default function ChangelogPage() {
                   {e.category}
                 </span>
               </div>
-              <p className={`leading-relaxed mt-1.5 ${e.milestone ? 'text-[15px] font-semibold text-white' : 'text-sm text-slate-300'}`}>
+              <p className={`leading-relaxed mt-1.5 ${
+                tier === 'major' ? 'text-[15px] font-semibold text-white'
+                : tier === 'minor' ? 'text-sm font-medium text-slate-100'
+                : 'text-sm text-slate-300'}`}>
                 {e.title}
               </p>
               {e.detail && (
                 <p className="text-[13px] text-slate-500 leading-relaxed mt-1">{e.detail}</p>
               )}
             </li>
-          ))}
+            );
+          })}
         </ol>
 
         <footer className="mt-14 pt-6 border-t border-white/5 flex items-center justify-between">

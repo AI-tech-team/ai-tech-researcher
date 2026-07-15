@@ -468,7 +468,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                     </Link>
                     {/* 通知トグル（未対応環境・VAPID未設定なら自動で非表示） */}
                     <div className="border-t border-white/5 my-1" />
-                    <PushToggle onDone={() => setInfoMenuOpen(false)} />
+                    <PushToggle loggedIn={!!session?.user} onDone={() => setInfoMenuOpen(false)} />
                   </div>
               )}
             </div>

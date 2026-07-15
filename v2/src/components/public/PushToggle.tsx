@@ -21,9 +21,9 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
 
 type State = 'unsupported' | 'loading' | 'off' | 'on' | 'denied' | 'busy';
 
-// 日次ダイジェストの通知購読トグル。ログイン不要。
+// 日次ダイジェストの通知購読トグル。
 // iOS SafariはPWA(ホーム画面追加)時のみ通知可のため、その旨を案内する。
-export function PushToggle({ onDone }: { onDone?: () => void }) {
+export function PushToggle({ loggedIn, onDone }: { loggedIn: boolean; onDone?: () => void }) {
   const [state, setState] = useState<State>('loading');
 
   useEffect(() => {
@@ -79,6 +79,15 @@ export function PushToggle({ onDone }: { onDone?: () => void }) {
   if (state === 'unsupported') return null;
 
   const base = 'flex items-center gap-2 px-3 py-2 text-[13px] w-full text-left transition-colors';
+
+  // 未ログインは購読させず案内のみ（毎朝の通知はログイン後に使える）
+  if (!loggedIn) {
+    return (
+      <div className={`${base} text-slate-500 cursor-not-allowed`}>
+        <Bell size={14} className="shrink-0" /> 毎朝の通知（ログイン後に使えます）
+      </div>
+    );
+  }
 
   if (state === 'denied') {
     return (
