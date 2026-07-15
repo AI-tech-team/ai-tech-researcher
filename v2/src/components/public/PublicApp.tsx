@@ -16,6 +16,7 @@ import {
 import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
+import { PushToggle } from '@/components/public/PushToggle';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
@@ -440,6 +441,9 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                       className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
                       <History size={14} className="text-slate-400" /> 更新履歴
                     </Link>
+                    {/* 通知トグル（未対応環境・VAPID未設定なら自動で非表示） */}
+                    <div className="border-t border-white/5 my-1" />
+                    <PushToggle onDone={() => setInfoMenuOpen(false)} />
                   </div>
               )}
             </div>

@@ -811,6 +811,48 @@ async function runDailyReportAndDistribute(): Promise<void> {
   if (!result) { console.log('[Report] 新着データなし、レポート生成をスキップ'); return; }
   console.log(`[Report] デイリーレポート生成完了 id=${result.inserted?.id}`);
   await sendPersonalizedBriefs(result.text);
+  // v10: Web Push通知（メール購読とは別経路・非クリティカル）。VAPID未設定なら黙ってスキップ。
+  try { await sendDigestPush(result.inserted?.id ?? null); }
+  catch (e: any) { console.warn('[Push] 通知送信失敗(非クリティカル):', e.message); }
+}
+
+// v10: 日次ダイジェストのWeb Push通知を全購読へ送る。LLM不使用。
+// VAPID鍵(VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY)が未設定なら何もしない＝鍵設定前でもパイプラインは無傷。
+// 送信で 404/410 が返った購読は失効なのでDBから掃除する（購読テーブルが死骸で膨れない）。
+async function sendDigestPush(reportId: number | null): Promise<void> {
+  const pub = process.env.VAPID_PUBLIC_KEY, priv = process.env.VAPID_PRIVATE_KEY;
+  if (!pub || !priv) { console.log('[Push] VAPID未設定のためスキップ'); return; }
+
+  const subs = (await client.execute(`SELECT endpoint, p256dh, auth FROM push_subscriptions`)).rows;
+  if (subs.length === 0) { console.log('[Push] 購読者なし'); return; }
+
+  const webpush = await import('web-push');
+  const subject = process.env.VAPID_SUBJECT || 'mailto:noreply@example.com';
+  webpush.default.setVapidDetails(subject, pub, priv);
+
+  const siteUrl = process.env.SITE_URL || 'https://ai-tech-researcher.vercel.app';
+  const payload = JSON.stringify({
+    title: 'Knowledge Tree',
+    body: '今日のダイジェストができました。最新のAI動向をチェック。',
+    url: reportId ? `${siteUrl}/reports/${reportId}` : siteUrl,
+    tag: 'kt-daily',
+  });
+
+  let sent = 0, pruned = 0;
+  for (const s of subs) {
+    const subscription = { endpoint: String(s.endpoint), keys: { p256dh: String(s.p256dh), auth: String(s.auth) } };
+    try {
+      await webpush.default.sendNotification(subscription, payload);
+      sent++;
+    } catch (e: any) {
+      const code = e?.statusCode;
+      if (code === 404 || code === 410) { // 購読失効 → 掃除
+        await client.execute({ sql: `DELETE FROM push_subscriptions WHERE endpoint = ?`, args: [String(s.endpoint)] });
+        pruned++;
+      }
+    }
+  }
+  console.log(`[Push] 通知送信: ${sent}/${subs.length}件（失効削除 ${pruned}件）`);
 }
 
 async function generateWeeklyReport(): Promise<string | null> {

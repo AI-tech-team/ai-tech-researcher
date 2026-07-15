@@ -212,3 +212,15 @@ export const users = sqliteTable("users", {
   image: text("image"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+// v10: Web Push通知の購読。ログイン不要（匿名でも購読可＝userIdはnull許容・PIIは持たない）。
+// endpointはブラウザ発行のプッシュサービスURL。p256dh/authは暗号化キー（この3点でのみ送信でき、
+// 端末や個人は特定しない）。日次ダイジェスト生成時にパイプラインが全購読へ送る。
+export const pushSubscriptions = sqliteTable("push_subscriptions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userId: integer("user_id"), // null=匿名購読
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});

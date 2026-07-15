@@ -1,7 +1,7 @@
 'use server';
 
 import { db, client } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, claims, userTopicWeights, benchmarks, relations, entities, readingEvents, userArticleState, userProfiles, users, chatMemory } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, claims, userTopicWeights, benchmarks, relations, entities, readingEvents, userArticleState, userProfiles, users, chatMemory, pushSubscriptions } from '@/db/schema';
 import { desc, asc, eq, count, gte, sql, like, or, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
@@ -9,6 +9,7 @@ import { isOwner } from '@/lib/owner';
 import { memRateLimit } from '@/lib/ratelimit';
 import { google } from '@ai-sdk/google';
 import { embedMany } from 'ai';
+import { z } from 'zod';
 import { cached } from '@/lib/cache';
 import { vocabCandidates, segmentQuery, toMatchExpr } from '@/lib/search-tokens';
 import type { CollectedItem, KnowledgeStats, ReadingProfile, Report } from '@/types';
@@ -1195,4 +1196,45 @@ export async function getCoreData(articleLimit = 60) {
     getTodayHighlights(6),
   ]);
   return { srcs, data, reportsData, activity, counts, highlights };
+}
+
+// ── v10: Web Push通知の購読 ─────────────────────────────────────────
+// フロントは信用しない（原則6）: 購読オブジェクトはzodで検証し、長さ上限を課す。
+// ログイン不要（匿名購読可）だが、濫用防止にレート制限をかける（endpoint単位のキー）。
+const PushSubSchema = z.object({
+  endpoint: z.string().url().max(1000),
+  keys: z.object({ p256dh: z.string().min(1).max(300), auth: z.string().min(1).max(300) }),
+});
+
+export async function savePushSubscription(sub: unknown): Promise<{ success: boolean }> {
+  try {
+    const parsed = PushSubSchema.safeParse(sub);
+    if (!parsed.success) return { success: false };
+    const { endpoint, keys } = parsed.data;
+    // endpoint文字列でレート制限（1端末が短時間に大量登録するのを防ぐ）
+    if (!memRateLimit('push', endpoint.slice(0, 64), 10, 60_000)) return { success: false };
+    const userId = await currentUserId();
+    // 同一endpointは差し替え（購読キー更新・ユーザー紐付け更新に対応）
+    await db.insert(pushSubscriptions)
+      .values({ endpoint, p256dh: keys.p256dh, auth: keys.auth, userId: userId ?? null })
+      .onConflictDoUpdate({
+        target: pushSubscriptions.endpoint,
+        set: { p256dh: keys.p256dh, auth: keys.auth, userId: userId ?? null },
+      });
+    return { success: true };
+  } catch (error) {
+    console.error('savePushSubscription failed:', error);
+    return { success: false };
+  }
+}
+
+export async function deletePushSubscription(endpoint: unknown): Promise<{ success: boolean }> {
+  try {
+    if (typeof endpoint !== 'string' || endpoint.length > 1000) return { success: false };
+    await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint));
+    return { success: true };
+  } catch (error) {
+    console.error('deletePushSubscription failed:', error);
+    return { success: false };
+  }
 }

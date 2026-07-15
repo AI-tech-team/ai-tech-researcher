@@ -8,7 +8,7 @@
  * 速度効果: 2回目以降の起動でJS/CSS/アイコンを再ダウンロードしない（モバイルのロード時間の大半を削減）。
  * 更新: バージョンを上げると activate で旧キャッシュを削除し、skipWaiting/clients.claim で即時反映。
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const STATIC_CACHE = `static-${VERSION}`;
 const RUNTIME_CACHE = `runtime-${VERSION}`;
 
@@ -76,5 +76,33 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
       throw err;
     }
+  })());
+});
+
+// v10: Web Push通知。パイプラインが日次ダイジェスト生成時に送る。
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
+  const title = payload.title || 'Knowledge Tree';
+  const options = {
+    body: payload.body || '新しい更新があります。',
+    icon: payload.icon || '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: payload.tag || 'kt-notify',           // 同tagは上書き＝通知が溜まりすぎない
+    data: { url: payload.url || '/' },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// 通知タップ: 既存タブがあればそれを前面に、無ければ開く
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if ('focus' in c) { c.navigate(url); return c.focus(); }
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(url);
   })());
 });
