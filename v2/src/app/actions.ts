@@ -947,43 +947,36 @@ async function relatedByPRF(lex: { ids: number[] }): Promise<number[]> {
 }
 
 /**
- * 公開検索の本体。「一致した記事」(語彙+BM25)と「関連する記事」(PRF意味検索)を一度に返す。
- * 旧実装はクエリを丸ごと `LIKE '%…%'` で照合していたため、「AIの著作権問題」のような複数語クエリが
- * 常に0件になっていた（実測: 正解既知20問で Recall@5=0%、有効クエリの80%が0件）。
- * 形態素解析した索引＋BM25で Recall@5=90% / nDCG@5=87%（2026-07-15計測）。
- * 2レーンは順位融合すると両方の精度が落ちるので必ず別リストで返す（実験18）。
- * lexicalSearch は1回だけ実行し、両レーンで共有する（往復を二重にしない）。
+ * 「関連する記事」(PRF意味検索)だけを返す。検索ページのストリーミング用。
+ * 「一致した記事」(語彙+BM25・速い)と別のawait境界にして、一致を先に描画し関連(重いPRF=
+ * 埋め込み平均+近傍探索)を Suspense で後追いさせる。以前は両方を1回のawaitで返していたため、
+ * 関連が出るまで一致も表示できなかった。
+ * 語彙検索(FTS・約数十ms)を種取得のため1回だけ再実行する。クエリは埋め込まない＝Gemini呼び出しゼロ。
+ * 2レーンは順位融合すると両方の精度が落ちるので必ず別リストで返す（実験18・2026-07-15）。
  */
-export async function searchAll(query: string): Promise<{ matches: CollectedItem[]; related: CollectedItem[] }> {
+export async function searchRelated(query: string): Promise<CollectedItem[]> {
   const q = query.trim().slice(0, 100);
-  if (q.length < 2) return { matches: [], related: [] };
+  if (q.length < 2) return [];
   try {
     const userId = await currentUserId();
     const lex = await lexicalSearch(q, 60);
-    if (!lex) return { matches: [], related: [] };
-
+    if (!lex) return [];
     const relatedIds = await relatedByPRF(lex);
-    const allIds = [...new Set([...lex.ids, ...relatedIds])];
+    if (!relatedIds.length) return [];
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-      .where(inArray(collectedData.id, allIds));
+      .where(inArray(collectedData.id, relatedIds));
     const byId = new Map(parseCollectedRows(rows).map(it => [it.id, it]));
-
-    const matchItems = lex.ids.map(id => byId.get(id)).filter((x): x is CollectedItem => !!x)
-      .sort((a, b) => (lex.score.get(b.id) ?? 0) - (lex.score.get(a.id) ?? 0));
-    const matches = dedupeByStory(matchItems, 25);
-
     const relRank = new Map(relatedIds.map((id, i) => [id, i]));
     const relItems = relatedIds.map(id => byId.get(id)).filter((x): x is CollectedItem => !!x)
       .sort((a, b) => (relRank.get(a.id) ?? 99) - (relRank.get(b.id) ?? 99));
     const related = dedupeByStory(relItems, 6);
-
-    await overlayUserState([...matches, ...related], userId);
-    return { matches, related };
+    await overlayUserState(related, userId);
+    return related;
   } catch (error) {
-    console.error('searchAll failed:', error);
-    return { matches: [], related: [] };
+    console.error('searchRelated failed:', error);
+    return [];
   }
 }
 
