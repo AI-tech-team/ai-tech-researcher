@@ -66,8 +66,11 @@ export default async function Page() {
     // 「スプラッシュ画像のまま十数秒フリーズ」する。時間切れなら null を返してシェルを先に描画し、
     // クライアントがリトライ付き取得（PublicAppのuseEffect）でフィードを後追いさせる。
     // ウォーム時はほぼ即返るので従来どおり initialData 付きで描画＝戻り時abort回避の最適化も維持。
+    // 上から順ロード: SSRでは「見た目の部分」=先頭12件(PublicApp の ABOVE_FOLD と一致)のみawaitして
+    // 最初のHTMLを軽くする。フィード残り(〜PAGE)・統計・推薦はクライアントが波で後追いする（PublicApp参照）。
+    // 定数はPublicApp('use client')からimportすると値がundefinedになる（limit=NaN→全件化）ためリテラルで持つ。
     const core = await Promise.race([
-      getCoreData(30).catch(() => null),
+      getCoreData(12).catch(() => null),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
     ]);
     // 空フィードは信用しない。getCoreData の内部サブ取得はDBエラーを握り潰して空配列を返すため、

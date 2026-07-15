@@ -38,6 +38,10 @@ const CATEGORY_DESC: Record<string, string> = {
 };
 
 const PAGE = 30;
+// 上から順ロード: 第1波で描く「見た目の部分」の記事件数（注目＋レポート＋件数と同時に取得）。
+// 残り(〜PAGE)は第2波でフィードを差し替えて埋める。page.tsx(SSR)も同じ12件で初期取得する
+// （'use client'モジュールのexportはサーバからimportすると値が消えるためあちらはリテラルで保持）。
+const ABOVE_FOLD = 12;
 
 // ページ遷移(記事/規約/プライバシー等)→戻る でPublicAppが再マウントされても、直前の一覧を即座に
 // 復元してローディングのちらつき(=再読み込み感)を防ぐ、モジュールレベルの簡易スナップショット。
@@ -144,8 +148,12 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
   const [isLoading, setIsLoading] = useState(() => !pubSnapshot && !initialData);
   const [offset, setOffset] = useState(() => pubSnapshot?.offset ?? initialData?.data.length ?? 0);
-  const [hasMore, setHasMore] = useState(() => pubSnapshot?.hasMore ?? (initialData ? initialData.data.length === PAGE : true));
+  // initialData は第1波(先頭ABOVE_FOLD件)なので常に続きがある前提でtrue。第2波/loadMoreで実値に補正する。
+  const [hasMore, setHasMore] = useState(() => pubSnapshot?.hasMore ?? true);
   const [loadingMore, setLoadingMore] = useState(false);
+  // 第2波(フィード残りの後追い取得)の実行中フラグ。上から順に埋まる様子をスケルトンで示す＋
+  // 途中状態をスナップショットに焼き付けない（戻り時に先頭12件で固定化するのを防ぐ）。
+  const [belowFoldPending, setBelowFoldPending] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -244,33 +252,49 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
 
   useEffect(() => {
     let cancelled = false;
-    // フィードの初期データが既にある（戻りのスナップショット or SSRの初期データ）なら、
-    // Client Server Action(getCoreData)は叩かない＝@modal遷移直後のabortを踏まず即描画。
-    const haveFeed = (pubSnapshot && Date.now() - pubSnapshot.at < SNAP_TTL) || !!initialData;
-    // stats は初期データに含めていないので別途取得（軽量）。snapshotに無いときだけ。
+    // 戻りのスナップショットが新鮮なら全状態が揃っている＝何も取得しない（従来どおり・abort回避）。
+    const snapFresh = !!pubSnapshot && Date.now() - pubSnapshot.at < SNAP_TTL;
+    // stats(第3波)は初期データに含めていないので別途取得（軽量）。snapshotに無いときだけ。
     if (!stats) getKnowledgeStats().then(s => { if (!cancelled) setStats(s as KnowledgeStats); }).catch(() => {});
-    if (haveFeed) return () => { cancelled = true; };
+    if (snapFresh) return () => { cancelled = true; };
     (async () => {
-      setIsLoading(true); // 初期データが無い時だけスケルトン
-      // ナビゲーション中断でgetCoreDataがabortされても無限スケルトンで止まらないよう数回リトライ。
-      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
-        try {
-          const { data, reportsData, counts, highlights: hl } = await getCoreData(PAGE);
-          if (cancelled) return;
-          const first = data as CollectedItem[];
-          setCollectedItems(first);
-          setOffset(first.length);
-          setHasMore(first.length === PAGE);
-          setReportsList(reportsData as Report[]);
-          setTotalArticles((counts as { total: number }).total);
-          if (hl) setHighlights(hl as CollectedItem[]);
-          setIsLoading(false);
-          return;
-        } catch {
-          if (cancelled) return;
-          if (attempt === 2) setIsLoading(false);
-          else await new Promise(r => setTimeout(r, 400));
+      // ── 第1波: 見た目の部分（注目＋レポート＋件数＋先頭ABOVE_FOLD件）。──
+      // 画面に出せる記事が何も無い時だけ取得（SSRのinitialData or 期限切れスナップショットが既にあれば省略）。
+      if (collectedItems.length === 0) {
+        setIsLoading(true);
+        // ナビゲーション中断でabortされても無限スケルトンで止まらないよう数回リトライ。
+        for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+          try {
+            const { data, reportsData, counts, highlights: hl } = await getCoreData(ABOVE_FOLD);
+            if (cancelled) return;
+            const first = data as CollectedItem[];
+            setCollectedItems(first);
+            setOffset(first.length);
+            setReportsList(reportsData as Report[]);
+            setTotalArticles((counts as { total: number }).total);
+            if (hl) setHighlights(hl as CollectedItem[]);
+            setIsLoading(false);
+            break;
+          } catch {
+            if (cancelled) return;
+            if (attempt === 2) { setIsLoading(false); return; }
+            await new Promise(r => setTimeout(r, 400));
+          }
         }
+      }
+      if (cancelled) return;
+      // ── 第2波: フィード残り（フルページ）を後追いで取得し、上から順に埋める。──
+      setBelowFoldPending(true);
+      try {
+        const full = (await getCollectedDataList(PAGE, 0)) as CollectedItem[];
+        if (cancelled) return;
+        setCollectedItems(full);
+        setOffset(full.length);
+        setHasMore(full.length === PAGE);
+      } catch {
+        // 失敗時は第1波の先頭件のまま。hasMoreはtrueのままなので「もっと読む」で継続可能。
+      } finally {
+        if (!cancelled) setBelowFoldPending(false);
       }
     })();
     return () => { cancelled = true; };
@@ -280,9 +304,10 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
 
   // 表示状態をスナップショットへ同期（loadMoreで増えた件数・お気に入り等のトグルも、戻った時に復元する）。
   useEffect(() => {
-    if (isLoading) return;
+    // 第1波だけ／第2波の途中では焼き付けない（戻り時に先頭12件で固定化するのを防ぐ）。
+    if (isLoading || belowFoldPending) return;
     pubSnapshot = { items: collectedItems, reports: reportsList, total: totalArticles, offset, hasMore, stats, at: Date.now(), highlights };
-  }, [collectedItems, reportsList, totalArticles, offset, hasMore, stats, isLoading, highlights]);
+  }, [collectedItems, reportsList, totalArticles, offset, hasMore, stats, isLoading, belowFoldPending, highlights]);
 
   // ログインユーザー向けパーソナライズ（行動ベース推薦・後で読む・読書DNA）。
   // 未ログインでは何も出さない。手動の興味設定に依存しない getRecommendations を使う。
@@ -774,14 +799,21 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                   <PubCard key={item.id} item={item} />
                 ))}
               </div>
-              {hasMore && (
+              {/* 第2波（フィード残りの後追い）実行中は先頭件の下にスケルトンを出し、上から順に埋まる様子を示す */}
+              {belowFoldPending ? (
+                <div className="grid grid-cols-1 gap-3 mt-3" aria-hidden>
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="h-28 rounded-2xl border border-white/5 bg-white/[0.02] animate-pulse" />
+                  ))}
+                </div>
+              ) : hasMore ? (
                 <div className="flex justify-center pt-6">
                   <button onClick={loadMore} disabled={loadingMore}
                     className="px-5 py-2.5 rounded-xl border border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] text-sm font-bold transition-colors disabled:opacity-40">
                     {loadingMore ? '読み込み中…' : 'もっと読む'}
                   </button>
                 </div>
-              )}
+              ) : null}
             </>
           ) : (
             <p className="text-sm text-slate-500">記事がまだありません。</p>
