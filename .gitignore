@@ -11,3 +11,9 @@ node_modules/
 
 # OS
 .DS_Store
+.vercel
+
+# 一時スクリプト・作業ファイル（アンダースコア始まり）: スクショ・検証・実験・DBダンプ等はコミットしない
+v2/scripts/_*
+scripts/_*
+.screenshots/

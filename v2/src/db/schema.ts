@@ -39,6 +39,8 @@ export const collectedData = sqliteTable("collected_data", {
   // 知識抽出ロジックのバージョン。現EXTRACTION_VERSION未満の記事をBatchで再抽出する（遡及適用）
   extractionVersion: integer("extraction_version").default(0),
   // embedding (F32_BLOB) はDrizzle非対応のため生SQLで管理（select時に巨大blobを引かないようスキーマ外）
+  // search_tokens (TEXT) も同じ理由でスキーマ外。kuromojiで形態素解析した索引語を空白区切りで持ち、
+  // search_fts(FTS5)がトリガで同期する。書き込みは daily_pipeline、検索は actions.ts の生SQL。
 });
 
 export const reports = sqliteTable("reports", {
