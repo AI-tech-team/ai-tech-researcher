@@ -72,6 +72,10 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_TO: ${{ secrets.REPORT_TO }}   # 失敗通知メールの宛先
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}    # v10: Web Push（未設定なら送信スキップ）
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}          # 任意（mailto:）
+          SITE_URL: ${{ secrets.SITE_URL }}                    # 通知タップ先（任意・既定はvercel URL）
           PIPELINE_MODE: report
         run: cd v2 && npx tsx daily_pipeline.ts
 
