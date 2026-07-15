@@ -11,6 +11,7 @@ import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
 import { discoverFeedUrl, fetchArticleText } from './src/lib/feeds';
 import { isSafeFetchUrl } from './src/lib/safeUrl';
+import { initAnalyzer, analyze } from './scripts/lib/search-analyzer';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 config({ path: '.env.local' });
@@ -2030,7 +2031,10 @@ const EMBED_BATCH = 50;
 // v4.5: RAG非対称埋め込み。文書側はRETRIEVAL_DOCUMENT（クエリ側はretrieval.tsでRETRIEVAL_QUERY）
 const EMBED_TASK_DOC = 'RETRIEVAL_DOCUMENT';
 
-async function runEmbeddings(limit = 120): Promise<number> {
+// 上限は1日の流入(実測225件/日)を必ず上回らせる。120では毎日105件ずつ取り残され、
+// 埋め込み保有率が下がり続けていた（2026-07-15時点で直近30日66%・直近7日58%）。
+// 推薦・関連記事・意味検索がその分だけ静かに効かなくなる。翻訳/要点で踏んだのと同じ滞留の罠。
+async function runEmbeddings(limit = 300): Promise<number> {
   console.log('[Embed] 埋め込み生成開始');
   const res = await client.execute({
     sql: `SELECT id, title, summary FROM collected_data WHERE embedding IS NULL ORDER BY created_at DESC LIMIT ?`,
@@ -2790,6 +2794,69 @@ async function ensureSources() {
   }
 }
 
+// ── v9: 公開検索の索引（形態素解析・LLM不使用）─────────────────────────
+// kuromoji(IPADic)で内容語に分割し search_tokens 列へ書く。FTS5(search_fts)への反映はトリガがやるので
+// 「アプリが索引を書き忘れて検索から記事が消える」事故が構造的に起きない。
+// 実測(2026-07-15/正解既知20問): 現行のLIKE検索は Recall@5=0%（複数語クエリの8割が0件）→ 本方式で90%。
+//
+// refreshDays: 直近N日は再解析する。日本語タイトル・要約・要点は収集より後の工程で付くため、
+// 収集直後の内容だけで索引を固めると、その記事は永久に古い索引のままになる（翻訳で踏んだ滞留と同じ罠）。
+async function runSearchTokens(limit = 1500, refreshDays = 0): Promise<{ count: number; terms: string[] }> {
+  const where = refreshDays > 0
+    ? `search_tokens IS NULL OR created_at >= datetime('now', '-${refreshDays} day')`
+    : `search_tokens IS NULL`;
+  const res = await client.execute({
+    sql: `SELECT id, title, title_ja, summary, key_points, tags FROM collected_data
+          WHERE ${where} ORDER BY created_at DESC LIMIT ?`,
+    args: [limit],
+  });
+  if (res.rows.length === 0) { console.log('[Search] 索引対象なし'); return { count: 0, terms: [] }; }
+
+  await initAnalyzer();
+  const allTerms = new Set<string>();
+  for (let i = 0; i < res.rows.length; i += 200) {
+    const chunk = res.rows.slice(i, i + 200);
+    await client.batch(chunk.map(r => {
+      const text = [r.title_ja ?? r.title, r.summary, r.key_points, r.tags].filter(Boolean).join(' ');
+      const tokens = analyze(String(text));
+      for (const t of tokens) allTerms.add(t);
+      return { sql: `UPDATE collected_data SET search_tokens = ? WHERE id = ?`, args: [tokens.join(' '), Number(r.id)] };
+    }), 'write');
+  }
+  console.log(`[Search] ${res.rows.length}件を索引化（語 ${allTerms.size}種）`);
+  return { count: res.rows.length, terms: [...allTerms] };
+}
+
+// 実行時のクエリ分割（最長一致）に使う語彙。df は情報用で、分割自体は語の有無しか見ない。
+async function addSearchVocab(terms: string[]): Promise<void> {
+  if (!terms.length) return;
+  for (let i = 0; i < terms.length; i += 500) {
+    await client.batch(terms.slice(i, i + 500).map(t => ({
+      sql: `INSERT INTO search_vocab(term, df) VALUES (?, 1) ON CONFLICT(term) DO NOTHING`,
+      args: [t],
+    })), 'write');
+  }
+  console.log(`[Search] 語彙に ${terms.length}語を追加（既存はスキップ）`);
+}
+
+// 語彙をdf付きで作り直す（バックフィル時のみ。日次は addSearchVocab の追加だけで足りる）
+async function rebuildSearchVocab(): Promise<number> {
+  const res = await client.execute(`SELECT search_tokens FROM collected_data WHERE search_tokens IS NOT NULL`);
+  const df = new Map<string, number>();
+  for (const r of res.rows) {
+    for (const t of new Set(String(r.search_tokens ?? '').split(' ').filter(Boolean))) df.set(t, (df.get(t) ?? 0) + 1);
+  }
+  const terms = [...df];
+  await client.execute(`DELETE FROM search_vocab`);
+  for (let i = 0; i < terms.length; i += 500) {
+    await client.batch(terms.slice(i, i + 500).map(([t, c]) => ({
+      sql: `INSERT INTO search_vocab(term, df) VALUES (?, ?)`, args: [t, c],
+    })), 'write');
+  }
+  console.log(`[Search] 語彙 ${terms.length}語を再構築`);
+  return terms.length;
+}
+
 async function main() {
   const startTime = Date.now();
   _recentTitleCache = null; // キャッシュリセット
@@ -2803,6 +2870,15 @@ async function main() {
       await runEmbeddings();
       await runStoryGrouping();
       console.log('=== Vectors mode 完了 ===');
+      process.exit(0);
+    }
+
+    // v9: 公開検索の索引＋語彙を一括構築（初回バックフィル用）。LLMを使わないので何度でも安全に流せる。
+    if (pipelineMode === 'search') {
+      let total = 0, r: { count: number; terms: string[] };
+      do { r = await runSearchTokens(2000, 0); total += r.count; } while (r.count > 0);
+      const vocab = await rebuildSearchVocab();
+      console.log(`=== Search index mode 完了: ${total}件を索引化 / 語彙${vocab}語 ===`);
       process.exit(0);
     }
 
@@ -2837,6 +2913,15 @@ async function main() {
       await client.execute(`UPDATE collected_data SET embedding = NULL`);
       await runEmbeddings(2000);
       console.log('=== Reembed mode 完了 ===');
+      process.exit(0);
+    }
+
+    // 埋め込みが無い記事だけを埋める（非破壊）。reembedと違い既存ベクトルは消さない。
+    // 日次上限が流入を下回っていた時期の取り残しを一気に解消するためのモード。
+    if (pipelineMode === 'embed') {
+      let total = 0, n: number;
+      do { n = await runEmbeddings(2000); total += n; } while (n > 0);
+      console.log(`=== Embed backfill 完了: ${total}件 ===`);
       process.exit(0);
     }
 
@@ -2967,6 +3052,16 @@ async function main() {
         await enrichKeyPoints(220);
       } catch (e: any) {
         console.warn('[Pipeline] 要点生成失敗(非クリティカル):', e.message);
+      }
+
+      // v9: 公開検索の索引（形態素解析・LLM不使用・非クリティカル）。
+      // 翻訳と要点生成の「後」に置く＝索引に日本語タイトルと要点が載る。直近3日は再解析して、
+      // 後から付いた翻訳/要点を索引へ反映する（NULLの行だけ見ていると、その記事は永久に古い索引のまま）。
+      try {
+        const { terms } = await runSearchTokens(1500, 3);
+        await addSearchVocab(terms);
+      } catch (e: any) {
+        console.warn('[Pipeline] 検索索引の更新失敗(非クリティカル):', e.message);
       }
 
       // 確信度スペクトル: 日次decay + stale移行 + カスケード。非クリティカル

@@ -10,6 +10,7 @@ import { memRateLimit } from '@/lib/ratelimit';
 import { google } from '@ai-sdk/google';
 import { embedMany } from 'ai';
 import { cached } from '@/lib/cache';
+import { vocabCandidates, segmentQuery, toMatchExpr } from '@/lib/search-tokens';
 import type { CollectedItem, KnowledgeStats, ReadingProfile, Report } from '@/types';
 
 // 読書DNA: カテゴリ→4軸の寄与（depth:0理論↔100実装 / view:0研究者↔50エンジニア↔100ビジネス / recency:0長期↔100近未来）
@@ -806,26 +807,166 @@ export async function getReadingProfile(): Promise<ReadingProfile | null> {
 
 // 公開UIのグローバル検索向け: 無料テキスト検索（LLM不使用・全コーパス対象）。
 // 匿名ユーザーも叩くため、埋め込みAPIを使うsemanticSearchと違いコスト/濫用の心配がない。
+// created_at は "YYYY-MM-DD HH:MM:SS"(UTC・空白区切り)で入っている。ISOに直さずDate()に渡すと環境依存でずれる。
+function ageDays(createdAt: string | null | undefined): number {
+  if (!createdAt) return 3650;
+  const ms = Date.parse(String(createdAt).replace(' ', 'T') + 'Z');
+  if (Number.isNaN(ms)) return 3650;
+  return Math.max(0, (Date.now() - ms) / 86_400_000);
+}
+
+// 語彙(search_vocab)は数万語あるので全部は載せない。クエリの部分文字列だけを1回のSQLで照合する。
+async function vocabFor(query: string): Promise<Set<string>> {
+  const cands = vocabCandidates(query);
+  if (!cands.length) return new Set();
+  const r = await client.execute({
+    sql: `SELECT term FROM search_vocab WHERE term IN (${cands.map(() => '?').join(',')})`,
+    args: cands,
+  });
+  return new Set(r.rows.map(x => String(x.term)));
+}
+
+// 語彙で分割 → FTS5(search_fts) → BM25×重要度×新しさ。上位候補のidとスコアを返す。
+async function lexicalSearch(q: string, limit = 60): Promise<{ ids: number[]; score: Map<number, number> } | null> {
+  const vocab = await vocabFor(q);
+  const { tokens, unknown } = segmentQuery(q, vocab);
+  // コーパスが知らない内容語を含むクエリ（例:「アボカドの育て方」）は、無関係な記事を並べずに「該当なし」にする
+  if (unknown) return null;
+  const expr = toMatchExpr(tokens);
+  if (!expr) return null;
+  const r = await client.execute({
+    sql: `SELECT search_fts.rowid AS id, bm25(search_fts) AS bm, cd.importance_score AS imp, cd.created_at AS created
+          FROM search_fts JOIN collected_data cd ON cd.id = search_fts.rowid
+          WHERE search_fts MATCH ? ORDER BY bm25(search_fts) LIMIT ?`,
+    args: [expr, limit],
+  });
+  const score = new Map<number, number>();
+  for (const row of r.rows) {
+    const bm = -Number(row.bm); // bm25()は負値（小さいほど良い）。符号を反転して「大きいほど良い」に揃える
+    const imp = Number(row.imp ?? 5);
+    const rec = 1 / (1 + ageDays(row.created as string) / 30);
+    score.set(Number(row.id), bm * (1 + 0.5 * (imp - 5) / 5) * (1 + rec));
+  }
+  const ids = [...score.keys()].sort((a, b) => (score.get(b) ?? 0) - (score.get(a) ?? 0));
+  return ids.length ? { ids, score } : null;
+}
+
+// 同一ストーリー（同じニュースの別媒体）を1件に畳む。実測: 検索結果の上位10件の15.6%が重複だった。
+function dedupeByStory(items: CollectedItem[], limit: number): CollectedItem[] {
+  const seen = new Set<number>();
+  const out: CollectedItem[] = [];
+  for (const it of items) {
+    const st = it.storyId;
+    if (st != null && seen.has(st)) continue;
+    if (st != null) seen.add(st);
+    out.push(it);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// PRF(擬似適合性フィードバック)で「関連する記事」のidを返す。lexicalSearchの結果を受け取り再計算しない。
+// クエリを埋め込まない（種記事の既存ベクトルを平均する）ので Gemini API を1回も呼ばない＝公開経路に課金が出ない。
+async function relatedByPRF(lex: { ids: number[] }): Promise<number[]> {
+  const seeds = lex.ids.slice(0, 8);
+  if (!seeds.length) return [];
+  const matched = new Set(lex.ids.slice(0, 25)); // 「一致した記事」と重複させない
+  const embRes = await client.execute({
+    sql: `SELECT id, vector_extract(embedding) AS e FROM collected_data
+          WHERE embedding IS NOT NULL AND id IN (${seeds.map(() => '?').join(',')})`,
+    args: seeds,
+  });
+  const vecs = new Map<number, number[]>();
+  for (const r of embRes.rows) {
+    try {
+      const v = JSON.parse(String(r.e)) as number[];
+      const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+      vecs.set(Number(r.id), v.map(x => x / n));
+    } catch { /* 壊れたベクトルは無視 */ }
+  }
+  if (vecs.size === 0) return [];
+
+  let centroid: number[] | null = null;
+  let wsum = 0;
+  seeds.forEach((id, i) => {
+    const v = vecs.get(id);
+    if (!v) return;
+    const w = 1 / (i + 1); // 順位減衰（上位の記事ほど重心への寄与を大きく）
+    wsum += w;
+    if (!centroid) centroid = new Array(v.length).fill(0);
+    for (let j = 0; j < v.length; j++) centroid[j] += v[j] * w;
+  });
+  if (!centroid || !wsum) return [];
+  const c = (centroid as number[]).map(x => x / wsum);
+  const cn = Math.sqrt(c.reduce((s, x) => s + x * x, 0)) || 1;
+  const unit = c.map(x => x / cn);
+
+  const nn = await client.execute({
+    sql: `SELECT cd.id AS id FROM vector_top_k('collected_embedding_idx', vector32(?), 30) AS v
+          JOIN collected_data cd ON cd.rowid = v.id`,
+    args: [JSON.stringify(unit)],
+  });
+  return nn.rows.map(r => Number(r.id)).filter(id => !matched.has(id));
+}
+
+/**
+ * 公開検索の本体。「一致した記事」(語彙+BM25)と「関連する記事」(PRF意味検索)を一度に返す。
+ * 旧実装はクエリを丸ごと `LIKE '%…%'` で照合していたため、「AIの著作権問題」のような複数語クエリが
+ * 常に0件になっていた（実測: 正解既知20問で Recall@5=0%、有効クエリの80%が0件）。
+ * 形態素解析した索引＋BM25で Recall@5=90% / nDCG@5=87%（2026-07-15計測）。
+ * 2レーンは順位融合すると両方の精度が落ちるので必ず別リストで返す（実験18）。
+ * lexicalSearch は1回だけ実行し、両レーンで共有する（往復を二重にしない）。
+ */
+export async function searchAll(query: string): Promise<{ matches: CollectedItem[]; related: CollectedItem[] }> {
+  const q = query.trim().slice(0, 100);
+  if (q.length < 2) return { matches: [], related: [] };
+  try {
+    const userId = await currentUserId();
+    const lex = await lexicalSearch(q, 60);
+    if (!lex) return { matches: [], related: [] };
+
+    const relatedIds = await relatedByPRF(lex);
+    const allIds = [...new Set([...lex.ids, ...relatedIds])];
+    const rows = await db.select(COLLECTED_SELECT)
+      .from(collectedData)
+      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+      .where(inArray(collectedData.id, allIds));
+    const byId = new Map(parseCollectedRows(rows).map(it => [it.id, it]));
+
+    const matchItems = lex.ids.map(id => byId.get(id)).filter((x): x is CollectedItem => !!x)
+      .sort((a, b) => (lex.score.get(b.id) ?? 0) - (lex.score.get(a.id) ?? 0));
+    const matches = dedupeByStory(matchItems, 25);
+
+    const relRank = new Map(relatedIds.map((id, i) => [id, i]));
+    const relItems = relatedIds.map(id => byId.get(id)).filter((x): x is CollectedItem => !!x)
+      .sort((a, b) => (relRank.get(a.id) ?? 99) - (relRank.get(b.id) ?? 99));
+    const related = dedupeByStory(relItems, 6);
+
+    await overlayUserState([...matches, ...related], userId);
+    return { matches, related };
+  } catch (error) {
+    console.error('searchAll failed:', error);
+    return { matches: [], related: [] };
+  }
+}
+
+/** 一致した記事だけ（クライアントのSearchPalette用・軽量）。 */
 export async function searchArticles(query: string): Promise<CollectedItem[]> {
   const q = query.trim().slice(0, 100);
   if (q.length < 2) return [];
   try {
     const userId = await currentUserId();
-    // %_ はLIKEのワイルドカードなのでエスケープ（getArticlesByTagと同方針）
-    const safe = q.replace(/[\\%_]/g, (m) => `\\${m}`);
+    const lex = await lexicalSearch(q, 60);
+    if (!lex) return [];
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-      .where(or(
-        sql`${collectedData.title} LIKE ${'%' + safe + '%'} ESCAPE '\\'`,
-        sql`${collectedData.titleJa} LIKE ${'%' + safe + '%'} ESCAPE '\\'`,
-        sql`${collectedData.summary} LIKE ${'%' + safe + '%'} ESCAPE '\\'`,
-      ))
-      .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
-      .limit(25);
-    const items = parseCollectedRows(rows);
-    await overlayUserState(items, userId);
-    return items;
+      .where(inArray(collectedData.id, lex.ids));
+    const items = parseCollectedRows(rows)
+      .sort((a, b) => (lex.score.get(b.id) ?? 0) - (lex.score.get(a.id) ?? 0));
+    const out = dedupeByStory(items, 25);
+    await overlayUserState(out, userId);
+    return out;
   } catch (error) {
     console.error('searchArticles failed:', error);
     return [];
