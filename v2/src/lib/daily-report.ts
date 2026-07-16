@@ -82,7 +82,9 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
 
   const contextStr = recentData
     .map(d => {
-      const multi = (d.storyCount ?? 1) > 1 ? `（${d.storyCount}媒体が報じた）` : '';
+      // storyCountは「同一ストーリーの記事数」であって媒体数ではない（実測: 160件のstoryでも実媒体は6）。
+      // 「N媒体が報じた」と書くとLLMがその誇張をそのままレポートに載せるため、件数として渡す。
+      const multi = (d.storyCount ?? 1) > 1 ? `（同一トピックで${d.storyCount}件）` : '';
       return `[重要度:${d.importanceScore ?? 5}/10][${d.category ?? '未分類'}]${multi} ${d.titleJa || d.title}\n${d.summary}\nURL: ${d.url}\n公開日: ${d.publishedAt?.split('T')[0] ?? '不明'}`;
     })
     .join('\n\n---\n\n');

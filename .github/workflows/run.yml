@@ -16,7 +16,7 @@ on:
         required: false
         default: 'daily'
         type: choice
-        options: [daily, report, collect, backup]
+        options: [daily, report, collect, backup, restory]
 
 jobs:
   research:
@@ -89,6 +89,18 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_TO: ${{ secrets.REPORT_TO }}
           PIPELINE_MODE: collect
+        run: cd v2 && npx tsx daily_pipeline.ts
+
+      # ストーリーグループ再構築（手動のみ）。既存ベクトルだけを使うのでGemini APIは消費しない。
+      # 連鎖マージで別記事が重複扱いされ一覧から消えていた分を解放する（[[debug-story-overmerge]]）。
+      - name: Restory (rebuild story groups)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'restory'
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          # restory自体はGeminiを呼ばない（＝課金なし）が、クライアントがモジュール評価時に初期化されるため渡す。
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          PIPELINE_MODE: restory
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Weekly DB Backup

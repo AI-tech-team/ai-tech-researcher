@@ -32,6 +32,12 @@ const db = drizzle(client, { schema });
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り)で格納される。
 // created_at 系の比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日が1日ズレる）。
 const sqlTs = (d: Date): string => d.toISOString().replace('T', ' ').slice(0, 19);
+// 'YYYY-MM-DD HH:MM:SS'(UTC・空白区切り) → epoch ms。パース不能はnull。
+const parseSqlTs = (s: string | null | undefined): number | null => {
+  if (!s) return null;
+  const ms = new Date(s.replace(' ', 'T') + 'Z').getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
 
 const TECHDRIP_CAT_MAP: Record<string, string | null> = {
   'AI': 'エージェント', 'LLM': 'LLM推論', '開発手法': 'ツール/フレームワーク',
@@ -2186,8 +2192,16 @@ async function runChunkEmbeddings(limit = 40): Promise<number> {
 }
 
 // ── v3: 意味的重複排除（同一ストーリーをstory_idでグループ化）──────────
-const STORY_DISTANCE_THRESHOLD = 0.12; // cos距離(=1-類似度)。これ未満を同一ストーリーとみなす
+// cos距離(=1-類似度)。これ未満を同一ストーリーとみなす。
+// 0.12→0.08（2026-07-16・本番/dev実測にもとづく）。0.12は「同じ話題」と「同じ出来事」を区別できず、
+// 別記事を重複扱いして一覧・日次レポートから消していた（実測ペア: d=0.108「Meta Is in Crisis」と
+// 「Six search engines worth trying」が同一視）。距離帯サンプルでは 〜0.08=同一記事の重複収集/表記ゆれ、
+// 0.10〜0.12=ほぼ別記事。距離でも時間でも両者は分離不能（本物の重複0.074-0.118 と 別記事0.090-0.120 が重なる）
+// ため、失敗の非対称性で選ぶ: 誤マージ=記事がサイレントに消える / マージ漏れ=一覧がくどいだけ。前者を避ける。
+// 代償: 続報が続くニュース(例: IPO報道)はまとまらず個別に並ぶ。
+const STORY_DISTANCE_THRESHOLD = 0.08;
 const STORY_LINK_WINDOW_DAYS = 21;
+const STORY_CANDIDATE_STORIES = 3; // 合流候補として代表との距離を検証する既存ストーリー数の上限
 
 async function recomputeStoryCount(storyId: number) {
   await client.execute({
@@ -2198,43 +2212,75 @@ async function recomputeStoryCount(storyId: number) {
   });
 }
 
-async function runStoryGrouping(limit = 150): Promise<{ stories: number; merged: number }> {
+// 指定ベクトルと複数記事との距離を1クエリでまとめて取得（ループ内問い合わせ＝N+1を避ける）
+async function distancesFrom(embStr: string, ids: number[]): Promise<Map<number, number>> {
+  const m = new Map<number, number>();
+  if (ids.length === 0) return m;
+  const ph = ids.map(() => '?').join(',');
+  const r = await client.execute({
+    sql: `SELECT id, vector_distance_cos(embedding, vector32(?)) AS dist
+          FROM collected_data WHERE id IN (${ph}) AND embedding IS NOT NULL`,
+    args: [embStr, ...ids],
+  });
+  for (const row of r.rows as any[]) {
+    const d = Number(row.dist);
+    if (Number.isFinite(d)) m.set(Number(row.id), d);
+  }
+  return m;
+}
+
+async function getEmbedding(id: number): Promise<string | null> {
+  const r = await client.execute({
+    sql: `SELECT vector_extract(embedding) AS emb FROM collected_data WHERE id = ?`,
+    args: [id],
+  });
+  return (r.rows[0]?.emb as string | undefined) ?? null;
+}
+
+// 上限は1日の流入(実測239件/日)を必ず上回らせる。埋め込みで踏んだのと同じ滞留の罠で、
+// 150では取り残しが積み上がっていた（2026-07-16時点で埋め込み済み10373件中3551件が未割当＝
+// その分だけ重複排除が効かない）。取り残しの一括解消は PIPELINE_MODE=restory。
+async function runStoryGrouping(limit = 400): Promise<{ stories: number; merged: number }> {
   console.log('[Story] 意味的重複排除（ストーリーグループ化）開始');
-  const cutoff = sqlTs(new Date(Date.now() - STORY_LINK_WINDOW_DAYS * 24 * 60 * 60 * 1000));
 
   const targetRes = await client.execute({
-    sql: `SELECT id FROM collected_data
+    sql: `SELECT id, created_at FROM collected_data
           WHERE embedding IS NOT NULL AND story_id IS NULL
           ORDER BY created_at DESC LIMIT ?`,
     args: [limit],
   });
-  const targetIds = targetRes.rows.map(r => Number(r.id));
+  const targets = targetRes.rows.map(r => ({ id: Number(r.id), createdAt: String(r.created_at ?? '') }));
+  const targetIds = targets.map(t => t.id);
   if (targetIds.length === 0) { console.log('[Story] 対象なし'); return { stories: 0, merged: 0 }; }
 
   const assigned = new Set<number>(); // このラウンドで割当済みのid
   const touchedStories = new Set<number>();
   let merged = 0, newStories = 0;
 
-  for (const aid of targetIds) {
+  for (const { id: aid, createdAt } of targets) {
     if (assigned.has(aid)) continue;
 
     // 対象記事のベクトルを取り出す
-    const embRes = await client.execute({
-      sql: `SELECT vector_extract(embedding) AS emb FROM collected_data WHERE id = ?`,
-      args: [aid],
-    });
-    const embStr = embRes.rows[0]?.emb as string | undefined;
+    const embStr = await getEmbedding(aid);
     if (!embStr) continue;
 
-    // 近傍検索（自身を除く・直近ウィンドウ内・閾値内）
+    // 窓は「対象記事の日付 ±21日」。実行時刻basisにすると、過去記事の再グループ化(restory)で
+    // 同時期の本物の重複を照合できず単独化してしまう（dev実測: 解放246件が全て単独ストーリー化）。
+    // 日次実行では対象が新着なので従来と実質同じ挙動。
+    const anchorMs = parseSqlTs(createdAt) ?? Date.now();
+    const winMs = STORY_LINK_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const lo = sqlTs(new Date(anchorMs - winMs));
+    const hi = sqlTs(new Date(anchorMs + winMs));
+
+    // 近傍検索（自身を除く・ウィンドウ内・閾値内）
     const nnRes = await client.execute({
       sql: `SELECT t.id AS id, t.story_id AS story_id,
                    vector_distance_cos(t.embedding, vector32(?)) AS dist
             FROM vector_top_k('collected_embedding_idx', vector32(?), 12) AS v
             JOIN collected_data t ON t.rowid = v.id
-            WHERE t.id != ? AND t.created_at >= ?
+            WHERE t.id != ? AND t.created_at >= ? AND t.created_at <= ?
             ORDER BY dist ASC`,
-      args: [embStr, embStr, aid, cutoff],
+      args: [embStr, embStr, aid, lo, hi],
     });
     const neighbors = nnRes.rows
       .map(r => ({ id: Number(r.id), storyId: r.story_id == null ? null : Number(r.story_id), dist: Number(r.dist) }))
@@ -2248,26 +2294,56 @@ async function runStoryGrouping(limit = 150): Promise<{ stories: number; merged:
       continue;
     }
 
-    // 既存ストーリーに属する近傍があれば最も近いものに合流
-    const withStory = neighbors.filter(n => n.storyId != null);
-    if (withStory.length > 0) {
-      const storyId = withStory[0].storyId as number; // dist昇順なので先頭が最近傍
-      await client.execute({ sql: `UPDATE collected_data SET story_id = ? WHERE id = ?`, args: [storyId, aid] });
-      assigned.add(aid);
-      touchedStories.add(storyId);
-      merged++;
-    } else {
-      // 近傍はあるが全員未割当 → 新ストーリーを作る。代表は最古(=最小id)
-      const clusterIds = [aid, ...neighbors.map(n => n.id)];
-      const canonical = Math.min(...clusterIds);
-      for (const cid of clusterIds) {
-        await client.execute({ sql: `UPDATE collected_data SET story_id = ? WHERE id = ?`, args: [canonical, cid] });
-        assigned.add(cid);
+    // 既存ストーリーへの合流。近傍が近いだけでは合流させず、そのストーリーの代表(canonical)とも
+    // 閾値内であることを要求する。近傍だけで判定すると「近傍の近傍」で数珠つなぎに成長し、
+    // 別トピックが1ストーリーに混ざる（本番実測: 160件・54日スパンの巨大クラスタが生まれ、
+    // 一覧と日次レポートは代表1件しか出さないため残りが消えていた）。
+    const candIds = [...new Set(neighbors.filter(n => n.storyId != null).map(n => n.storyId as number))]
+      .slice(0, STORY_CANDIDATE_STORIES);
+    if (candIds.length > 0) {
+      const repDist = await distancesFrom(embStr, candIds);
+      const ok = candIds
+        .filter(cid => (repDist.get(cid) ?? Infinity) < STORY_DISTANCE_THRESHOLD)
+        .sort((a, b) => (repDist.get(a) as number) - (repDist.get(b) as number));
+      if (ok.length > 0) {
+        const storyId = ok[0]; // 代表が最も近いストーリーへ
+        await client.execute({ sql: `UPDATE collected_data SET story_id = ? WHERE id = ?`, args: [storyId, aid] });
+        assigned.add(aid);
+        touchedStories.add(storyId);
+        merged++;
+        continue;
       }
-      touchedStories.add(canonical);
-      newStories++;
-      merged += clusterIds.length - 1;
     }
+
+    // 未割当の近傍だけで新ストーリーを作る。代表は最古(=最小id)。
+    // 代表から閾値外のメンバーは入れない（同一ラウンド内での連鎖を防ぐ）。
+    const free = neighbors.filter(n => n.storyId == null && !assigned.has(n.id)).map(n => n.id);
+    if (free.length === 0) {
+      await client.execute({ sql: `UPDATE collected_data SET story_id = ?, story_count = 1 WHERE id = ?`, args: [aid, aid] });
+      assigned.add(aid);
+      newStories++;
+      continue;
+    }
+    const clusterIds = [aid, ...free];
+    let canonical = Math.min(...clusterIds);
+    let canonEmb = canonical === aid ? embStr : await getEmbedding(canonical);
+    if (!canonEmb) { canonical = aid; canonEmb = embStr; }
+    const dmap = await distancesFrom(canonEmb, clusterIds.filter(i => i !== canonical));
+    const members = clusterIds.filter(i => i === canonical || (dmap.get(i) ?? Infinity) < STORY_DISTANCE_THRESHOLD);
+    if (!members.includes(aid)) {
+      // 自分が代表から遠い＝このクラスタには属さない。単独ストーリーにする。
+      await client.execute({ sql: `UPDATE collected_data SET story_id = ?, story_count = 1 WHERE id = ?`, args: [aid, aid] });
+      assigned.add(aid);
+      newStories++;
+      continue;
+    }
+    for (const cid of members) {
+      await client.execute({ sql: `UPDATE collected_data SET story_id = ? WHERE id = ?`, args: [canonical, cid] });
+      assigned.add(cid);
+    }
+    touchedStories.add(canonical);
+    newStories++;
+    merged += members.length - 1;
   }
 
   // 影響を受けたストーリーのstory_countを再計算
@@ -2979,6 +3055,39 @@ async function main() {
       let total = 0, n: number;
       do { n = await runEmbeddings(2000); total += n; } while (n > 0);
       console.log(`=== Embed backfill 完了: ${total}件 ===`);
+      process.exit(0);
+    }
+
+    // v3 Phase2: ストーリーグループの再構築。既存ベクトルしか使わないのでGemini APIは消費しない。
+    // ① 代表から閾値外なのに同一ストーリー扱いされているメンバーを解放（連鎖マージの被害を剥がす）
+    // ② 未割当（解放分＋日次上限の取り残し）を修正済みロジックで再グループ化
+    // ③ story_countを全再計算（記事数。媒体数ではない点に注意）
+    // 冪等: 何度流しても同じ状態に収束する。途中で落ちてもstory_id=NULLが残るだけ＝重複排除が
+    // 一時的に効かなくなるのみで、記事が消える方向には壊れない（fail-open）。
+    if (pipelineMode === 'restory') {
+      const rel = await client.execute({
+        sql: `UPDATE collected_data SET story_id = NULL
+              WHERE id IN (
+                SELECT c.id FROM collected_data c JOIN collected_data r ON r.id = c.story_id
+                WHERE c.story_id IS NOT NULL AND c.id != c.story_id
+                  AND c.embedding IS NOT NULL AND r.embedding IS NOT NULL
+                  AND vector_distance_cos(c.embedding, r.embedding) >= ?
+              )`,
+        args: [STORY_DISTANCE_THRESHOLD],
+      });
+      console.log(`[Restory] 代表から閾値外のメンバーを解放: ${rel.rowsAffected}件`);
+
+      let total = 0, guard = 0, r: { stories: number; merged: number };
+      do {
+        r = await runStoryGrouping(2000);
+        total += r.stories + r.merged;
+      } while (r.stories + r.merged > 0 && ++guard < 50); // guard: 想定外の未割当残留で無限ループしない
+
+      await client.execute(`UPDATE collected_data SET story_count = (
+        SELECT COUNT(*) FROM collected_data x WHERE x.story_id = collected_data.story_id
+      ) WHERE story_id IS NOT NULL`);
+      await client.execute(`UPDATE collected_data SET story_count = 1 WHERE story_id IS NULL`);
+      console.log(`=== Restory 完了: ${total}件処理 (${guard}ラウンド) ===`);
       process.exit(0);
     }
 
