@@ -16,7 +16,7 @@ on:
         required: false
         default: 'daily'
         type: choice
-        options: [daily, report, collect, backup, restory]
+        options: [daily, report, collect, backup, restory, deep]
 
 jobs:
   research:
@@ -101,6 +101,19 @@ jobs:
           # restory自体はGeminiを呼ばない（＝課金なし）が、クライアントがモジュール評価時に初期化されるため渡す。
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           PIPELINE_MODE: restory
+        run: cd v2 && npx tsx daily_pipeline.ts
+
+      # v3 Phase3: 本文抽出の滞留分(imp>=7・本文なし 約6600件)を回収する（[[pattern-throughput-starvation]]）。
+      # fetchのみでLLM不使用＝Gemini課金なし。試行記録により冪等＝完了まで繰り返し実行してよい。
+      - name: Deep extract (backfill article bodies)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'deep'
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          # deep自体はGeminiを呼ばない（＝課金なし）が、クライアントがモジュール評価時に初期化されるため渡す。
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          PIPELINE_MODE: deep
+          DEEP_LIMIT: '1500'
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Weekly DB Backup

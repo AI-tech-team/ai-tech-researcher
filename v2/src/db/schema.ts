@@ -31,6 +31,11 @@ export const collectedData = sqliteTable("collected_data", {
   keyPoints: text("key_points"), // JSON array: '["要点1","要点2",...]'
   whyMatters: text("why_matters"),
   rawContent: text("raw_content"),
+  // v3 Phase3: 本文抽出の試行記録。これが無いと「枯渇で未試行」と「試行して失敗」を区別できず、
+  // 抽出率を上げても効果を測れない。extractError は集計用の短い固定タグ（http_404/timeout等）。
+  extractAttemptedAt: text("extract_attempted_at"),
+  extractAttempts: integer("extract_attempts").default(0),
+  extractError: text("extract_error"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   // v3ベクトル基盤: 同一ストーリーの代表記事ID（自己参照）と束ねた記事数

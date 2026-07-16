@@ -9,7 +9,7 @@ import { config } from 'dotenv';
 import * as nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
-import { discoverFeedUrl, fetchArticleText } from './src/lib/feeds';
+import { discoverFeedUrl, fetchArticleText, fetchArticleTextDetailed } from './src/lib/feeds';
 import { isSafeFetchUrl } from './src/lib/safeUrl';
 import { initAnalyzer, analyze } from './scripts/lib/search-analyzer';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -2607,27 +2607,67 @@ async function fixGroundingUrls(limit = 300): Promise<void> {
 
 // ── v4: 本文ディープ抽出（無料・LLM不使用）────────────────────────────
 // 高重要度かつrawContent未取得の直近記事の本文を取得・保存する（RAG/知識抽出の土台）。
-async function runDeepExtraction(maxArticles = 25): Promise<void> {
-  const sevenDaysAgo = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-  const rows = await db.select({ id: schema.collectedData.id, url: schema.collectedData.url })
+//
+// v3 Phase3(2026-07-17): 試行記録を追加し、キュー順を「未試行優先」に変えた。
+// 旧実装は ORDER BY importance DESC のみで、失敗記事はrawContent=NULLのまま翌日も先頭に居座り、
+// 25枠を毎回同じ失敗が食い潰していた（本番実測: 先頭25件中19件が7日前の同一記事＝7日間再試行し続け、
+// その間に後続1041件は一度も試行されず窓切れで永久欠落）。→ [[pattern-throughput-starvation]]
+const EXTRACT_MAX_ATTEMPTS = 3;   // 一過性(timeout/5xx)の再試行上限
+const EXTRACT_RETIRED = 9;        // 恒久失敗(404/robots/非HTML)は即引退させ枠を明け渡す
+const PERMANENT_ERROR = /^(http_4|robots_disallow|unsafe_url|not_html|no_url|unsupported_domain)/;
+
+// 上限は流入(imp>=7で約150件/日)を必ず上回らせる。旧25件/日では6分の1しか処理できず、
+// 残りは7日窓を過ぎて永久欠落していた（本番実測: 6512件が窓切れ確定）。
+// 窓は撤廃する。試行記録(attempts)があるので「未試行の古い記事」も安全に回収でき、
+// 再試行の暴走は attempts の上限で止まる（窓は不要になった）。
+async function runDeepExtraction(maxArticles = 300): Promise<void> {
+  const rows = await db.select({
+      id: schema.collectedData.id,
+      url: schema.collectedData.url,
+      attempts: schema.collectedData.extractAttempts,
+    })
     .from(schema.collectedData)
     .where(and(
-      gte(schema.collectedData.createdAt, sevenDaysAgo),
-      gte(schema.collectedData.importanceScore, 7), // 知識抽出(runKnowledgeExtraction)と同じ閾値に揃える(E)。importance7も本文ベース抽出に
+      gte(schema.collectedData.importanceScore, 7), // 知識抽出(runKnowledgeExtraction)と同じ閾値に揃える(E)
       isNull(schema.collectedData.rawContent),
+      lt(sql`COALESCE(${schema.collectedData.extractAttempts}, 0)`, EXTRACT_MAX_ATTEMPTS),
     ))
-    .orderBy(desc(schema.collectedData.importanceScore))
+    // 未試行(0回)を最優先＝失敗記事が先頭を占め続ける詰まりを防ぐ。
+    // 同数なら重要度降順→新着優先。当日の重要記事を最優先しつつ、余った枠で滞留分を消化する
+    .orderBy(
+      sql`COALESCE(${schema.collectedData.extractAttempts}, 0) ASC`,
+      desc(schema.collectedData.importanceScore),
+      desc(schema.collectedData.createdAt),
+    )
     .limit(maxArticles);
 
   let done = 0;
+  const errs = new Map<string, number>();
   for (const r of rows) {
-    if (!r.url || /github\.com|vertexaisearch/.test(r.url)) continue; // GitHub等は本文抽出に不向き
-    const text = await fetchArticleText(r.url);
-    if (!text) continue;
-    await db.update(schema.collectedData).set({ rawContent: text }).where(eq(schema.collectedData.id, r.id));
-    done++;
+    const attempted = sqlTs(new Date());
+    // 試行不能なものも「試行した」として記録する（黙ってcontinueすると未試行と区別できない）
+    const pre = !r.url ? 'no_url'
+      : /github\.com|vertexaisearch|youtube\.com|youtu\.be/.test(r.url) ? 'unsupported_domain' // 本文が無い/動画
+      : null;
+    const { text, error } = pre ? { text: null, error: pre } : await fetchArticleTextDetailed(r.url!);
+
+    if (text) {
+      await db.update(schema.collectedData)
+        .set({ rawContent: text, extractAttemptedAt: attempted, extractError: null,
+               extractAttempts: (r.attempts ?? 0) + 1 })
+        .where(eq(schema.collectedData.id, r.id));
+      done++;
+    } else {
+      // 恒久失敗は上限を待たず引退（枠を後続に譲る）。一過性のみ EXTRACT_MAX_ATTEMPTS まで再試行
+      const next = PERMANENT_ERROR.test(error ?? '') ? EXTRACT_RETIRED : (r.attempts ?? 0) + 1;
+      await db.update(schema.collectedData)
+        .set({ extractAttemptedAt: attempted, extractError: error, extractAttempts: next })
+        .where(eq(schema.collectedData.id, r.id));
+      errs.set(error ?? 'unknown', (errs.get(error ?? 'unknown') ?? 0) + 1);
+    }
   }
-  console.log(`[DeepExtract] 本文抽出 ${done}/${rows.length}件`);
+  const breakdown = [...errs.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join(' ');
+  console.log(`[DeepExtract] 本文抽出 ${done}/${rows.length}件${breakdown ? ` / 失敗内訳 ${breakdown}` : ''}`);
 }
 
 // ── v4: フィード自己監視（沈黙した自動発見フィードを降格し巡回/評価の無駄を防ぐ）──
@@ -3034,9 +3074,10 @@ async function main() {
       process.exit(0);
     }
 
-    // v4: 本文ディープ抽出のみ実行（バックフィル・検証用）
+    // v4: 本文ディープ抽出のみ実行（バックフィル・検証用）。
+    // 滞留分(imp>=7・本文なし 約6600件)の回収用。冪等＝試行記録により再実行しても未試行/一過性失敗だけを拾う。
     if (pipelineMode === 'deep') {
-      await runDeepExtraction(60);
+      await runDeepExtraction(Number(process.env.DEEP_LIMIT ?? 1500));
       console.log('=== Deep extract mode 完了 ===');
       process.exit(0);
     }

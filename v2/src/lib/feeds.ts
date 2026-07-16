@@ -104,20 +104,34 @@ export function extractMainText(html: string): string {
     .trim();
 }
 
-// 記事URLから本文テキストを取得（HTML以外・抽出失敗時はnull）。maxCharsで上限。
-export async function fetchArticleText(url: string, maxChars = 6000): Promise<string | null> {
-  if (!isSafeFetchUrl(url)) return null; // SSRF対策: 内部/プライベート宛は弾く
-  if (!(await isAllowedByRobots(url))) return null; // 第三条: robots.txtでDisallowされたパスは本文取得しない
+// v3 Phase3: 失敗“理由”を返す版。従来は6種類の失敗が全てnullに潰れており、
+// 「枯渇で未試行」と「試行して失敗」をDB上で区別できなかった（=直しても効果を測れない）。
+// error は集計する前提の短い固定タグ（PIIや本文は載せない）。
+export type ExtractResult = { text: string | null; error: string | null };
+export async function fetchArticleTextDetailed(url: string, maxChars = 6000): Promise<ExtractResult> {
+  if (!isSafeFetchUrl(url)) return { text: null, error: 'unsafe_url' }; // SSRF対策: 内部/プライベート宛は弾く
+  if (!(await isAllowedByRobots(url))) return { text: null, error: 'robots_disallow' }; // 第三条: robots.txtを尊重
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': UA },
       signal: AbortSignal.timeout(12000),
       redirect: 'follow',
     });
-    if (!res.ok) return null;
-    if (!/html/i.test(res.headers.get('content-type') ?? '')) return null; // PDF等はスキップ
+    if (!res.ok) return { text: null, error: `http_${res.status}` };
+    const ct = res.headers.get('content-type') ?? '';
+    if (!/html/i.test(ct)) return { text: null, error: `not_html:${ct.split(';')[0].trim() || 'unknown'}` }; // PDF等
     const text = extractMainText(await res.text());
-    if (text.length < 200) return null; // JS依存ページ等で抽出失敗
-    return text.slice(0, maxChars);
-  } catch { return null; }
+    // JS依存ページ等で抽出失敗。タグは集計するので文字数を埋め込まない（記事ごとに割れて集計不能になる）
+    if (text.length < 200) return { text: null, error: 'too_short' };
+    return { text: text.slice(0, maxChars), error: null };
+  } catch (e: any) {
+    // タイムアウト/DNS/TLS等。メッセージは環境依存で長いのでタグに畳む
+    const n = e?.name === 'TimeoutError' || /timeout|aborted/i.test(e?.message ?? '') ? 'timeout' : 'fetch_error';
+    return { text: null, error: n };
+  }
+}
+
+// 記事URLから本文テキストを取得（HTML以外・抽出失敗時はnull）。maxCharsで上限。
+export async function fetchArticleText(url: string, maxChars = 6000): Promise<string | null> {
+  return (await fetchArticleTextDetailed(url, maxChars)).text;
 }
