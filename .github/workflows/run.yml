@@ -17,6 +17,11 @@ on:
         default: 'daily'
         type: choice
         options: [daily, report, collect, backup, restory, deep, chunks]
+      limit:
+        description: '1回の処理件数（deep/chunks のみ。空ならステップ既定値）'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   research:
@@ -113,7 +118,7 @@ jobs:
           # deep自体はGeminiを呼ばない（＝課金なし）が、クライアントがモジュール評価時に初期化されるため渡す。
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           PIPELINE_MODE: deep
-          DEEP_LIMIT: '1500'
+          DEEP_LIMIT: ${{ github.event.inputs.limit || '1500' }}
         run: cd v2 && npx tsx daily_pipeline.ts
 
       # v3 Phase3の仕上げ: 本文チャンク埋め込みのバックフィル。deepで本文が11.8%→69.7%に増えた分、
@@ -128,7 +133,7 @@ jobs:
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           PIPELINE_MODE: chunks
-          CHUNK_LIMIT: '3500'
+          CHUNK_LIMIT: ${{ github.event.inputs.limit || '3500' }}
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Weekly DB Backup
