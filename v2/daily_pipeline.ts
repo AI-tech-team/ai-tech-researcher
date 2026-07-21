@@ -2164,30 +2164,47 @@ async function runChunkEmbeddings(limit = 40): Promise<number> {
   const arts = res.rows.map(r => ({ id: Number(r.id), raw: String(r.raw_content ?? '') }));
   if (arts.length === 0) { console.log('[Chunk] 対象なし'); return 0; }
 
+  // v3 Phase3(2026-07-21): 記事をまたいでバッチ化する。
+  // 旧実装は1記事ごとに embedMany 1回 + INSERT を1チャンクずつ実行しており、
+  // 米国のGitHubランナーから東京のTursoへ毎回往復していた（本番実測: 2000記事に5時間34分＝
+  // 約10秒/記事、うち往復が約7000回。レート制限ではなく純粋な逐次レイテンシ）。
+  // 同じ高速化は既に runEmbeddings(EMBED_BATCH) と client.batch で使っている規約。
+  const units = arts.flatMap(a =>
+    chunkText(a.raw).map((text, index) => ({ articleId: a.id, index, text })));
+  if (units.length === 0) { console.log('[Chunk] 対象なし'); return 0; }
+
+  const INSERT_SQL = `INSERT INTO content_chunks (article_id, chunk_index, text, embedding) VALUES (?, ?, ?, vector32(?))`;
+  const embedSlice = async (slice: typeof units): Promise<number> => {
+    const { embeddings } = await withRetry(() => embedMany({
+      model: google.embedding('gemini-embedding-001'),
+      values: slice.map(u => u.text),
+      providerOptions: { google: { outputDimensionality: EMBED_DIM, taskType: EMBED_TASK_DOC } },
+    }));
+    const stmts = slice
+      .map((u, i) => ({ u, vec: embeddings[i] }))
+      .filter(({ vec }) => vec && vec.length === EMBED_DIM)
+      .map(({ u, vec }) => ({ sql: INSERT_SQL, args: [u.articleId, u.index, u.text, JSON.stringify(vec)] }));
+    if (stmts.length === 0) return 0;
+    await client.batch(stmts);
+    return stmts.length;
+  };
+
   let total = 0;
-  for (const a of arts) {
-    const chunks = chunkText(a.raw);
-    if (chunks.length === 0) continue;
+  for (let i = 0; i < units.length; i += EMBED_BATCH) {
+    const slice = units.slice(i, i + EMBED_BATCH);
     try {
-      const { embeddings } = await withRetry(() => embedMany({
-        model: google.embedding('gemini-embedding-001'),
-        values: chunks,
-        providerOptions: { google: { outputDimensionality: EMBED_DIM, taskType: EMBED_TASK_DOC } },
-      }));
-      for (let i = 0; i < chunks.length; i++) {
-        const vec = embeddings[i];
-        if (!vec || vec.length !== EMBED_DIM) continue;
-        await client.execute({
-          sql: `INSERT INTO content_chunks (article_id, chunk_index, text, embedding) VALUES (?, ?, ?, vector32(?))`,
-          args: [a.id, i, chunks[i], JSON.stringify(vec)],
-        });
-        total++;
-      }
+      total += await embedSlice(slice);
     } catch (e: any) {
-      console.warn(`  [Chunk] 失敗(非クリティカル) art=${a.id}: ${(e.message ?? '').slice(0, 60)}`);
+      // バッチ失敗時は1件ずつ退避実行する。不良チャンク1件が同じバッチの他49件を
+      // 巻き添えにして毎回同じ場所で詰まる（＝永久に取り込めない）のを防ぐ。
+      console.warn(`  [Chunk] バッチ失敗→個別実行に退避: ${(e.message ?? '').slice(0, 60)}`);
+      for (const u of slice) {
+        try { total += await embedSlice([u]); }
+        catch (e2: any) { console.warn(`  [Chunk] 失敗(非クリティカル) art=${u.articleId} idx=${u.index}: ${(e2.message ?? '').slice(0, 60)}`); }
+      }
     }
   }
-  console.log(`[Chunk] ${arts.length}記事 → ${total}チャンク埋め込み`);
+  console.log(`[Chunk] ${arts.length}記事 → ${total}チャンク埋め込み (API ${Math.ceil(units.length / EMBED_BATCH)}回)`);
   return total;
 }
 
