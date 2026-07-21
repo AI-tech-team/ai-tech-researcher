@@ -2174,18 +2174,25 @@ async function runChunkEmbeddings(limit = 40): Promise<number> {
   if (units.length === 0) { console.log('[Chunk] 対象なし'); return 0; }
 
   const INSERT_SQL = `INSERT INTO content_chunks (article_id, chunk_index, text, embedding) VALUES (?, ?, ?, vector32(?))`;
+  // 埋め込みとDB書き込みのどちらが律速かを分離して記録する。バッチ化で往復を14分の1にしても
+  // 1.6倍しか速くならなかったため、内訳を測らずに次の手（並列化など）を打つと的を外す。
+  let embedMs = 0, dbMs = 0;
   const embedSlice = async (slice: typeof units): Promise<number> => {
+    const t0 = Date.now();
     const { embeddings } = await withRetry(() => embedMany({
       model: google.embedding('gemini-embedding-001'),
       values: slice.map(u => u.text),
       providerOptions: { google: { outputDimensionality: EMBED_DIM, taskType: EMBED_TASK_DOC } },
     }));
+    embedMs += Date.now() - t0;
     const stmts = slice
       .map((u, i) => ({ u, vec: embeddings[i] }))
       .filter(({ vec }) => vec && vec.length === EMBED_DIM)
       .map(({ u, vec }) => ({ sql: INSERT_SQL, args: [u.articleId, u.index, u.text, JSON.stringify(vec)] }));
     if (stmts.length === 0) return 0;
+    const t1 = Date.now();
     await client.batch(stmts);
+    dbMs += Date.now() - t1;
     return stmts.length;
   };
 
@@ -2204,7 +2211,9 @@ async function runChunkEmbeddings(limit = 40): Promise<number> {
       }
     }
   }
+  const s = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   console.log(`[Chunk] ${arts.length}記事 → ${total}チャンク埋め込み (API ${Math.ceil(units.length / EMBED_BATCH)}回)`);
+  console.log(`[Chunk] 内訳: 埋め込み ${s(embedMs)} / DB書込 ${s(dbMs)} (1チャンクあたり 埋込 ${(embedMs / Math.max(total, 1)).toFixed(0)}ms / 書込 ${(dbMs / Math.max(total, 1)).toFixed(0)}ms)`);
   return total;
 }
 
