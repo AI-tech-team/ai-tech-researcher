@@ -90,18 +90,32 @@ export async function discoverFeedUrl(domain: string): Promise<string | null> {
 
 // ── v4: 本文ディープ抽出（無料・LLM不使用）──────────────────────────────
 // <article>/<main>を優先し、ナビ・スクリプト等を除いた本文テキストを返す。
-export function extractMainText(html: string): string {
-  const scoped =
-    html.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1] ??
-    html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1] ??
-    html;
-  return scoped
+function stripToText(html: string): string {
+  return html
     .replace(/<(script|style|nav|header|footer|aside|form|svg|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// v3 Phase3(2026-07-21): 「先頭の<article>」ではなく「最長のブロック」を本文とみなす。
+// 旧実装は最初にマッチした<article>を採っており、サイドバーの関連記事カードが先頭にある
+// レイアウトで本文を取り逃していた（本番実測: 9to5mac/huggingface等は<article>が4個あり、
+// 先頭カードの44〜100字を掴んで too_short 判定。同一サイトの5記事が全て同じ100字を返していた）。
+// <main>を見れば2337〜8658字取れる。タグの出現順に依存せず、中身の量で選ぶ。
+export function extractMainText(html: string): string {
+  let best = '';
+  for (const tag of ['article', 'main'] as const) {
+    const re = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, 'gi');
+    for (let m = re.exec(html); m; m = re.exec(html)) {
+      const t = stripToText(m[1]);
+      if (t.length > best.length) best = t;
+    }
+  }
+  // セマンティックタグが無いページは従来どおり全体から抽出する
+  return best || stripToText(html);
 }
 
 // v3 Phase3: 失敗“理由”を返す版。従来は6種類の失敗が全てnullに潰れており、
