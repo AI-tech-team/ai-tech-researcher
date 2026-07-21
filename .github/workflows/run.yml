@@ -16,7 +16,7 @@ on:
         required: false
         default: 'daily'
         type: choice
-        options: [daily, report, collect, backup, restory, deep]
+        options: [daily, report, collect, backup, restory, deep, chunks]
 
 jobs:
   research:
@@ -114,6 +114,21 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           PIPELINE_MODE: deep
           DEEP_LIMIT: '1500'
+        run: cd v2 && npx tsx daily_pipeline.ts
+
+      # v3 Phase3の仕上げ: 本文チャンク埋め込みのバックフィル。deepで本文が11.8%→69.7%に増えた分、
+      # チャンク未生成の記事(実測6528件・22,967チャンク)を埋める。ハイブリッド検索の本文レーンが
+      # 全記事の11.7%しかカバーできていなかったのを解消する。
+      # Gemini埋め込みを消費する（実測 最大¥618・gemini-embedding-001 $0.15/1Mトークン）。
+      # 既にチャンクがある記事はSQLで除外されるため冪等＝完了まで繰り返し実行してよい。
+      - name: Chunk embeddings (backfill)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'chunks'
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          PIPELINE_MODE: chunks
+          CHUNK_LIMIT: '3500'
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Weekly DB Backup

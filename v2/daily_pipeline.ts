@@ -3134,7 +3134,8 @@ async function main() {
 
     // v4.5: 本文チャンク埋め込みのみ実行（バックフィル）
     if (pipelineMode === 'chunks') {
-      await runChunkEmbeddings(2000);
+      // CHUNK_LIMIT で1回の処理件数を指定（deepのDEEP_LIMITと同じ運用）。バックフィルは大きめに回す。
+      await runChunkEmbeddings(Number(process.env.CHUNK_LIMIT ?? 2000));
       console.log('=== Chunks mode 完了 ===');
       process.exit(0);
     }
