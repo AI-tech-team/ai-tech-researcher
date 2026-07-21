@@ -3268,7 +3268,12 @@ async function main() {
       // v3: ベクトル化 → 意味的重複排除（失敗しても主処理は継続）
       try {
         await runEmbeddings();
-        await runChunkEmbeddings(); // v4.5: パッセージレベル埋め込み
+        // v4.5: パッセージレベル埋め込み。
+        // 枠は流入(実測138件/日)を必ず上回らせる。既定40件のままだと1日98件ずつ取り残され、
+        // チャンク検索のカバレッジが再び落ち続ける。この飢餓はPhase3で本文抽出率を
+        // 13.7%→83%に上げた結果、チャンク対象が24件/日→138件/日に増えて発生した
+        // （＝改善が下流に飢餓を作った）。→ [[pattern-throughput-starvation]]
+        await runChunkEmbeddings(250);
         await runStoryGrouping();
         // 翻訳は1日の英語記事流入(50〜100件)を確実に上回る量を処理する（80/日では滞留が増え続けた）
         await translateTitles(200);
