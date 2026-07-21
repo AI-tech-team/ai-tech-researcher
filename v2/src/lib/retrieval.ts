@@ -73,7 +73,13 @@ export async function hybridSearch(query: string, topK = 8): Promise<RetrievedDo
       console.warn('[hybridSearch] 記事ベクトル失敗:', e.message?.slice(0, 80));
     }
 
-    // 2) パッセージ(チャンク)レベル意味検索（本文の該当段落）
+    // 2) パッセージ(チャンク)レベル意味検索。
+    //    ⚠ ランキング(RRF)には混ぜない。snippet＝根拠段落の供給だけに使う。
+    //    本番実測(scripts/_measure_chunk_lane.ts・正解既知20問)で、このレーンをRRFに入れると
+    //    Recall@5 が 85.0%→55.0%、MRR が 0.679→0.307 に落ちることが分かったため。
+    //    内訳は「同一記事の複数チャンクが並ぶぶんRRFが累積加算される」不具合で-15pt、
+    //    残り-15ptは粒度の違い自体（本文断片は部分一致した記事を大量に浮上させ、上位5の枠を
+    //    平均3.32件占拠して正解を押し出す）。このレーンが単独で救えた正解は20問中0件だった。
     try {
       const r = await client.execute({
         sql: `SELECT cc.article_id AS aid, cc.text AS text
@@ -81,13 +87,10 @@ export async function hybridSearch(query: string, topK = 8): Promise<RetrievedDo
               JOIN content_chunks cc ON cc.rowid = v.id`,
         args: [vecStr],
       });
-      const chunkOrder: number[] = [];
       for (const x of r.rows as any[]) {
         const aid = Number(x.aid);
-        chunkOrder.push(aid);
         if (!bestChunk.has(aid)) bestChunk.set(aid, String(x.text ?? '').slice(0, 800)); // 上位＝最良
       }
-      addRrf(score, chunkOrder);
     } catch (e: any) {
       console.warn('[hybridSearch] チャンクベクトル失敗:', e.message?.slice(0, 80));
     }
