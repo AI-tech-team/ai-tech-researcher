@@ -14,8 +14,8 @@
 
 | コンポーネント | 現在 | 移行先 | 状態 |
 |---|---|---|---|
-| GitHub repo | `AI-tech-team/ai-tech-researcher`（org owner=`meguru-v1`） | **アカウントは作らず `meguru-v1` のメールをProtonへ変更** | 未 |
-| GitHub Actions（毎日cron） | 同repo・secret 9個 | repoごと不動（メール変更のみ） | 未 |
+| GitHub repo | `AI-tech-team/ai-tech-researcher`（org owner=`meguru-v1`） | **アカウントは作らず `meguru-v1` のメールをProtonへ変更** | ✅ 2026-08-12 |
+| GitHub Actions（毎日cron） | 同repo・secret 9個 | repoごと不動（メール変更のみ） | ✅ 影響なし確認 |
 | Vercel | 旧個人垢のまま（CLIから不可視・`vercel whoami`=Not authorized） | **Team `hayasi-hajime` へ Transfer**（Team自体は既存・`planetarium`が同居） | 未 |
 | Turso DB | 旧個人垢 org（prod=`ai-researcher-prod-2` / dev=旧dev） | Proton新垢の org へ再移行 | 未 |
 | Gemini APIキー・課金・予算キルスイッチ | 個人 `project-6f8c0b7f` | Proton名義Google下の新GCP project | 未（Step0待ち） |
@@ -76,7 +76,10 @@
 
 ---
 
-## Step 1: GitHub＝新アカウントを作らず `meguru-v1` のメールをProtonへ変更（★易・無停止）
+## Step 1: GitHub＝新アカウントを作らず `meguru-v1` のメールをProtonへ変更（★易・無停止）✅ 2026-08-12 完了
+
+> **完了時の実測**: primary=`hayasi.hajime@proton.me`(verified/private)、`222714034+meguru-v1@users.noreply...` 残存、旧Gmail 2件削除済、`id=222714034` 不変、Actions active・直近5回success。
+> **ハマり**: 「Primary email address のドロップダウンが出ない」＝ UIの問題ではなく **verify 未完了**（`gh api user/emails` で `verified=false` を実測して確定）。GitHubは **verified な実アドレスが2つ以上ないと primary を切り替えられない**（noreplyは候補に出ない）。画面を読み合う前に `gh api user/emails` で測るのが速い（`user` スコープが要る＝`gh auth refresh -h github.com -s user`）。
 
 > **新アカウントを作らない理由**: 身元スクラブで公開694コミットを `222714034+meguru-v1@users.noreply.github.com` に書き換え済み。新垢だと数値ID(222714034)が変わり、**全履歴の帰属が旧垢に取り残される**。メール変更なら org/secrets/URL/履歴すべて無傷。
 
