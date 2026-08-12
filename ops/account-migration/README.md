@@ -16,7 +16,7 @@
 |---|---|---|---|
 | GitHub repo | `AI-tech-team/ai-tech-researcher`（org owner=`meguru-v1`） | **アカウントは作らず `meguru-v1` のメールをProtonへ変更** | ✅ 2026-08-12 |
 | GitHub Actions（毎日cron） | 同repo・secret 9個 | repoごと不動（メール変更のみ） | ✅ 影響なし確認 |
-| Vercel | 旧個人垢のまま（CLIから不可視・`vercel whoami`=Not authorized） | **Team `hayasi-hajime` へ Transfer**（Team自体は既存・`planetarium`が同居） | 未 |
+| Vercel | 旧個人垢のまま（CLIから不可視・`vercel whoami`=Not authorized） | **見送り**（Transfer=Pro必須／メール変更=アドレス衝突。無料＝請求主体の問題なし） | ⏭️ 2026-08-12 見送り |
 | Turso DB | 旧個人垢 org（prod=`ai-researcher-prod-2` / dev=旧dev） | Proton新垢の org へ再移行 | 未 |
 | Gemini APIキー・課金・予算キルスイッチ | 個人 `project-6f8c0b7f` | Proton名義Google下の新GCP project | 未（Step0待ち） |
 | OAuth（Googleログイン） | 個人 同project | 同・新project | 未（Step0待ち） |
@@ -96,22 +96,55 @@
 
 ---
 
-## Step 2: Vercel＝再importせず Team `hayasi-hajime` へ Transfer（★★中・数分のデプロイ停止）
+## Step 2: Vercel ⏭️ **見送り**（2026-08-12 決定）
 
-> **再importしない理由**: env（`AUTH_SECRET` 含む）・`vercel.json` の hnd1 固定・`ai-tech-researcher.vercel.app` を維持できる。作り直すと全部貼り直し＝取りこぼしリスク。
+> 2つの手段を実際に試して**どちらも塞がっていた**ため、現状維持と判断した。**Vercelは Hobby＝無料＝請求主体の問題が存在しない**ので、残る論点は名義だけ＝実害が小さい。
 
-1. [あなた] **移管前に env を控える**（保険）。旧個人垢でブラウザから Project Settings → Environment Variables を全部コピー、または旧垢で `vercel login` → `vercel env pull .env.backup`（このファイルは **絶対にコミットしない**）。
-2. [あなた] Team `hayasi-hajime` に**旧個人垢のメールを Owner として招待** → 旧個人垢で承認（Transfer先は「自分が属するTeam」しか選べないため）。
-3. [あなた] 旧個人垢で project `ai-tech-researcher` → **Settings → Advanced → Transfer Project** → `hayasi-hajime` を選択。
-   - Root Directory=`v2` / Framework=Next.js / Production Branch=main は維持される。
-4. [あなた] 移管後、**Team側に Vercel GitHub App を入れ直す**（org `AI-tech-team` へのアクセスを許可）。Git連携が切れていたら `AI-tech-team/ai-tech-researcher` に再接続。
-5. [あなた] **env の実在チェック**：上の棚卸し表の Vercel 行が Production/Preview 両方に揃っているか（特に `AUTH_SECRET`）。欠けていたら1のバックアップから補充。
-6. [あなた] Web Analytics / Speed Insights が有効のままか確認。
-7. [あなた] 安定後、Team メンバーから**旧個人垢を削除**。
-8. **検証**: 空コミットpush → 自動デプロイ緑 → トップ/記事/レポートが開く → **シークレットウィンドウでGoogleログイン**（この時点ではOAuth/Gemini/Turso は旧のままなので普通に通るはず）→ お気に入り保存。
-9. [私] 移管後に `vercel whoami --scope hayasi-hajime` と `vercel project ls` でCLIから可視になったことを確認（以後CLIで env 差替が可能になる＝Step3/4が楽になる）。
+### 塞がっていた2つの道（実測）
+1. **Transfer**（プロジェクトを `hayasi-hajime` Team へ移す）
+   - 公式要件: **「移管元のOwner」かつ「移管先Teamのメンバー」**（`vercel.com/docs/projects/transferring-projects`）。
+   - **Hobbyはメンバーを持てない** → `vercel teams invite` が `Team members are not permitted on the Hobby Plan` で拒否（実測）。
+   - 抜け道は **Proの14日無料トライアル**（collaboration込み）のみ → **Proは採らない**判断（ユーザー決定）。
+2. **アカウントのメール変更**（GitHubと同じ手口で名義だけ移す）
+   - `hayasi.hajime@proton.me` は**既に Proton側アカウント(`hayasihajime-2131`)で使用中** → `An account already exists with this email` で拒否。
+   - `hayasi.hajime+airesearcher@proton.me` も **Vercelが+サフィックスを同一視して同じエラー**（実測）。
+   - 別ドメイン（`@pm.me` 等）なら通る可能性はあるが、費用対効果で見送り。
 
-⚠️ `ai-tech-researcher.vercel.app` は Team に同名プロジェクトが無ければ維持される。`planetarium` と名前衝突しないので問題なし。
+### 見送っても実害が小さい理由
+- Vercelは**無料**＝個人カードに請求が来る問題がそもそも無い（＝Turso/Geminiとは性質が違う）。
+- アカウントのメールは**公開されない**＝身元露出に繋がらない（[[privacy-identity-scrub]]）。
+- ログインは GitHub 連携で、その GitHub は Step1 で**もう Proton 名義**。
+
+### 将来やるなら
+独自ドメイン導入・Pro化・作り直しのいずれかの機会に合わせる。**新規Importは単独ではやらない**（`ai-tech-researcher.vercel.app` 維持に旧削除→同名再作成が要り、数分〜十数分の断＋URL取り損ねるとメール/OG/PWA/OAuthに波及）。
+
+<details><summary>参考: 当時検討した Transfer 手順（Pro前提・不採用）</summary>
+
+### なぜ Transfer をやめたか（2026-08-12 実測に基づく判断）
+- 公式要件: transfer は **「移管元のOwner」かつ「移管先Teamのメンバー」**（`vercel.com/docs/projects/transferring-projects`）。
+- **Hobbyプランはメンバーを持てない** → `vercel teams invite` が `Team members are not permitted on the Hobby Plan` で実際に拒否された（実測）。
+- 唯一の抜け道は **Proの14日無料トライアル**（collaboration込み）だが、**Proは採らない**判断（ユーザー決定 2026-08-12）。
+- **決め手**: Vercelは Hobby＝**無料＝請求主体の問題が存在しない**。残る論点は名義だけなので、メール変更で目的は満たせる。
+  → 副作用として **`planetarium` とはVercelアカウントが別のまま**になる。1アカウントへの統合は、Pro化や独自ドメイン導入で作り直す機会があればその時に。
+- 却下: 新規Import（`ai-tech-researcher.vercel.app` 維持には旧削除→同名再作成が要り、数分〜十数分の断＋URL取り損ねるとメール/OG/PWA/OAuthに波及）。
+
+### 手順
+1. [あなた] **旧個人垢**（`ai-tech-researcher` が見える方）の Vercel にログイン。
+2. [あなた] 右上アバター → **Account Settings** → サイドバー **Settings** → 下へスクロールして **Emails** セクション。
+3. [あなた] **Add Another** → `hayasi.hajime@proton.me` を追加。
+4. [あなた] Proton に届く確認メールの **verification link** をクリック。
+5. [あなた] verify 後、その行の **⋯（ドットメニュー）→ Set as Primary**。
+6. [あなた] 旧Gmailの行 → **⋯ → Delete**（primaryを先に切り替えないと消せない）。
+
+### 詰まりどころ（先に潰しておく）
+- **verify しないと Set as Primary が出ない**（Step1と同じ罠）。
+- 制約: **1アカウント最大3メール／同一ドメインは最大2メールまで**。
+- **「already in use」で弾かれたら** そのアドレスが Proton側アカウント(`hayasihajime-2131`)に既に登録されている
+  → `hayasi.hajime+vercel@proton.me` のような **エイリアス**を使う（Protonは+サフィックスを受信可）。
+- ログイン方法は変わらない（GitHub連携ログインはそのまま。`meguru-v1` は Step1 で既に Proton 名義）。
+- プロジェクト・env・ドメイン・cron・Analyticsは**一切触らない**＝断ゼロ、検証不要。
+
+</details>
 
 ---
 
