@@ -73,7 +73,8 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
     '@type': 'BreadcrumbList',
     itemListElement: [
       { '@type': 'ListItem', position: 1, name: SITE_NAME, item: SITE_URL },
-      { '@type': 'ListItem', position: 2, name: decoded, item: `${SITE_URL}/topic/${encodeURIComponent(decoded)}` },
+      { '@type': 'ListItem', position: 2, name: 'トピック', item: `${SITE_URL}/topic` },
+      { '@type': 'ListItem', position: 3, name: decoded, item: `${SITE_URL}/topic/${encodeURIComponent(decoded)}` },
     ],
   };
 
@@ -159,9 +160,12 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
           </div>
         )}
 
-        <div className="mt-8">
+        <div className="mt-8 flex items-center gap-4">
+          <Link href="/topic" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
+            <ArrowLeft size={13} /> トピック一覧
+          </Link>
           <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップに戻る
+            トップに戻る
           </Link>
         </div>
       </main>

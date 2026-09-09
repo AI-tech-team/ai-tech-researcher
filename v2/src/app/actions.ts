@@ -361,6 +361,37 @@ export async function getSitemapTopics(limit = 300): Promise<string[]> {
   }
 }
 
+/**
+ * トピック一覧ページ（/topic）用。公開品質を満たすエンティティを言及数の多い順に返す。
+ * getSitemapTopics と同じ母集団だが、表示に使う mention_count / type も返す。
+ * 匿名データのみ（cookiesを読まない）なので呼び出し側をISR化できる。
+ */
+export async function getTopicIndex(limit = 200): Promise<{ name: string; mentions: number; type: string | null }[]> {
+  try {
+    const lim = Math.min(Math.max(limit, 1), 500);
+    const r = await client.execute(
+      `SELECT e.canonical_name AS n, COALESCE(e.mention_count, 0) AS m, e.type AS t
+         FROM entities e
+        WHERE e.canonical_name IS NOT NULL AND e.canonical_name != ''
+          AND COALESCE(e.mention_count, 0) >= 2
+          AND EXISTS (
+            SELECT 1 FROM relations r
+             WHERE r.status != 'stale'
+               AND (r.subject_name = e.canonical_name OR r.object_name = e.canonical_name)
+          )
+        ORDER BY e.mention_count DESC
+        LIMIT ${lim * 2}`,
+    );
+    return r.rows
+      .map((row) => ({ name: String(row.n), mentions: Number(row.m ?? 0), type: row.t ? String(row.t) : null }))
+      .filter((x) => x.name && isPublishableEntity(x.name, x.mentions))
+      .slice(0, lim);
+  } catch (error) {
+    console.error('getTopicIndex failed:', error);
+    return [];
+  }
+}
+
 // 単一記事をID指定で取得（要点込み）。リスト読み込み範囲に依存しないジャンプ用。
 // key_points/why_matters は詳細でしか使わないので、一覧(COLLECTED_SELECT)には含めない（ペイロード維持）。
 // ⚠ rawContent(抽出本文)は絶対にクライアントへ返さない（オーナーにも返さない）。第三条=公衆送信は

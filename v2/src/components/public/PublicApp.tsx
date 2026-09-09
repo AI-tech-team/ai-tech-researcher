@@ -846,6 +846,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
               <p className="text-[11px] font-bold text-slate-300 mb-2.5 font-outfit">サービス</p>
               <ul className="space-y-1.5 text-[12px] text-slate-500">
                 <li><Link href="/about" scroll={false} className="hover:text-slate-300 transition-colors">このサービスについて</Link></li>
+                <li><Link href="/topic" className="hover:text-slate-300 transition-colors">トピック一覧</Link></li>
                 <li><Link href="/changelog" scroll={false} className="hover:text-slate-300 transition-colors">更新履歴</Link></li>
               </ul>
             </div>
