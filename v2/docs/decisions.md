@@ -254,3 +254,20 @@
   → `entities` の mention_count 降順＋relations を持つ条件(EXISTS)に変更。
 - 未了: **エンティティ正規化が公開に耐えていない**（`Claude`/`Anthropic Claude`/`Anthropic's Claude` が別物、
   `3.5 Flash` 等のバージョン断片、`CEO`/`China` 等の一般名詞、文字化け）。`/topic` を主役にする前の前提工事。
+
+## 2026-09-09 エンティティ公開品質フィルタ（/topic・sitemap）
+- 決定: `src/lib/entity-quality.ts` を新設し、公開面に出すエンティティを決定論で足切りする（LLM不使用）。
+  ①mention_count>=2 ②一般名詞/地名/役職のブロックリスト ③文・40字超・文字化けの除外。
+  適用先= `getSitemapTopics`（候補236→**223件**）／`/topic/[name]` は該当時 noindex。`EntityPage` に mentionCount 追加。
+- 実測で落ちた13件（全て妥当・誤爆なし）: AI(m=42) / 既存のLLMスケーリング則(m=17) / LLMs(9) / China(8) /
+  AI agents(5) / US(5) / AI demand(3) / Taiwan(3) / TSMC's CoWoS advanced packaging technology(2) /
+  水冷CPUクーラー(2) / CLI(2) / EU(2) / CEO(2)。
+- **撤回した診断**: 当初「エンティティ正規化が公開に耐えていない・Claude系が20個に分裂」と述べたが、実測で誤りと判明。
+  統合可能な重複は **41件だけ**（所有格4 / 単複13 / ベンダー接頭辞41）で、`Claude Code`・`Claude Opus 4.8`・
+  `Claude Fable 5` は**正しい別物**だった。包含関係(`OpenAI ⊂ OpenAI Codex`)も別物が大半で、
+  [[current-phase-plan]] B の教訓どおり自動マージしてはいけないもの。
+  真の問題は重複ではなく **mention_count=1 が81.5%(1,309/1,606件)** という低頻度の氾濫で、
+  それが表に出ていた原因は sitemap のアルファベット順選定だった＝`ORDER BY` 修正が本丸だった。
+- 残課題: `type` が全件 'model'（OpenAI/Nvidia/TSMC も company でなく model）＝分類が機能していない。
+  `Anthropic Claude`↔`Claude`、`Fable 5`↔`Claude Fable 5`、`Opus 4.8`↔`Claude Opus 4.8` の重複は未統合。
+  entity-quality のユニットテスト（第四条）は未作成。

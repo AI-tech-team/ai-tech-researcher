@@ -12,6 +12,7 @@ import { embedMany } from 'ai';
 import { z } from 'zod';
 import { cached } from '@/lib/cache';
 import { vocabCandidates, segmentQuery, toMatchExpr } from '@/lib/search-tokens';
+import { isPublishableEntity } from '@/lib/entity-quality';
 import type { CollectedItem, KnowledgeStats, ReadingProfile, Report } from '@/types';
 
 // 読書DNA: カテゴリ→4軸の寄与（depth:0理論↔100実装 / view:0研究者↔50エンジニア↔100ビジネス / recency:0長期↔100近未来）
@@ -332,19 +333,28 @@ export async function getSitemapTopics(limit = 300): Promise<string[]> {
     // など D以降の主要エンティティが1件もクロールに出ていなかった（2026-09-09 実測）。
     // mention_count 降順にして「言及が多い＝中身のあるエンティティ」から載せる。
     // relations を持つ条件は EXISTS で維持（関係が無い＝空ページ化を避ける）。
+    // mention_count>=2 で足切り（実測: m=1 が1,606件中1,309件＝81.5%で、中身は
+    // `8VC` `1010 Digital Works` のような一度きりの固有名詞）。フィルタで減る分を見越して多めに取る。
+    const lim = Math.min(Math.max(limit, 1), 1000);
     const r = await client.execute(
-      `SELECT e.canonical_name AS n
+      `SELECT e.canonical_name AS n, COALESCE(e.mention_count, 0) AS m
          FROM entities e
         WHERE e.canonical_name IS NOT NULL AND e.canonical_name != ''
+          AND COALESCE(e.mention_count, 0) >= 2
           AND EXISTS (
             SELECT 1 FROM relations r
              WHERE r.status != 'stale'
                AND (r.subject_name = e.canonical_name OR r.object_name = e.canonical_name)
           )
         ORDER BY e.mention_count DESC
-        LIMIT ${Math.min(Math.max(limit, 1), 1000)}`,
+        LIMIT ${lim * 2}`,
     );
-    return r.rows.map((row) => String(row.n)).filter(Boolean);
+    // 一般名詞(AI/LLMs/China/CEO)・文(「既存のLLMスケーリング則」)・文字化けを公開面から除く
+    return r.rows
+      .map((row) => ({ n: String(row.n), m: Number(row.m ?? 0) }))
+      .filter((x) => x.n && isPublishableEntity(x.n, x.m))
+      .slice(0, lim)
+      .map((x) => x.n);
   } catch (error) {
     console.error('getSitemapTopics failed:', error);
     return [];
@@ -714,6 +724,8 @@ export async function deleteMyAccount(): Promise<{ success: boolean; needLogin?:
 export interface EntityPage {
   name: string;
   type: string | null;
+  /** 言及回数。公開面の品質判定（isPublishableEntity）に使う。未登録エンティティは0 */
+  mentionCount: number;
   benchmarks: { benchmark: string; score: number; unit: string | null; date: string | null }[];
   relations: { dir: 'out' | 'in'; type: string; other: string }[];
   claims: { predicate: string; value: string }[];
@@ -722,10 +734,11 @@ export interface EntityPage {
 
 export async function getEntityKnowledgePage(name: string): Promise<EntityPage | null> {
   try {
-    const ent = await db.select({ name: entities.canonicalName, type: entities.type })
+    const ent = await db.select({ name: entities.canonicalName, type: entities.type, mention: entities.mentionCount })
       .from(entities).where(sql`LOWER(${entities.canonicalName}) = ${name.toLowerCase()}`).limit(1);
     const canonical = ent[0]?.name ?? name;
     const type = ent[0]?.type ?? null;
+    const mentionCount = Number(ent[0]?.mention ?? 0);
 
     const [bench, relsOut, relsIn, clm, claimArts, benchArts] = await Promise.all([
       db.select({ benchmark: benchmarks.benchmarkName, score: benchmarks.score, unit: benchmarks.unit, date: benchmarks.recordedDate })
@@ -753,6 +766,7 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
     return {
       name: canonical,
       type,
+      mentionCount,
       benchmarks: bench.map(b => ({ benchmark: b.benchmark, score: b.score, unit: b.unit, date: b.date })),
       relations: [
         ...relsOut.map(r => ({ dir: 'out' as const, type: r.type, other: r.other })),

@@ -5,6 +5,7 @@ import { notFound } from 'next/navigation';
 import { BrainCircuit, ArrowLeft, BookOpen, Trophy, Network, Sparkles, ArrowRight } from 'lucide-react';
 import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { getEntityKnowledgePage } from '@/app/actions';
+import { isPublishableEntity } from '@/lib/entity-quality';
 import { JsonLd } from '@/components/JsonLd';
 
 const RELATION_LABEL: Record<string, string> = {
@@ -19,12 +20,19 @@ function isEmpty(p: Awaited<ReturnType<typeof getTopic>>): boolean {
   return !p || (p.benchmarks.length === 0 && p.relations.length === 0 && p.claims.length === 0 && p.articles.length === 0);
 }
 
+// クロールに出してよいページか。中身が空、または名前が公開に耐えない（一般名詞 AI/China/CEO、
+// 文「既存のLLMスケーリング則」、mention_count=1 の一度きり）なら noindex にする。
+// 2026-09-09 実測: entities 1,606件のうち 81.5% が mention_count=1 だった。
+function shouldIndex(p: Awaited<ReturnType<typeof getTopic>>): boolean {
+  return !!p && !isEmpty(p) && isPublishableEntity(p.name, p.mentionCount);
+}
+
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
   const { name } = await params;
   const decoded = decodeURIComponent(name);
   const page = await getTopic(decoded);
-  // 中身が無いエンティティは薄いページの量産になるので noindex（リンク追跡は許可）
-  if (isEmpty(page)) return { title: decoded, robots: { index: false, follow: true } };
+  // 中身が無い／公開に耐えない名前のエンティティは薄いページの量産になるので noindex（リンク追跡は許可）
+  if (!shouldIndex(page)) return { title: decoded, robots: { index: false, follow: true } };
   const desc = `${decoded}${page!.type ? `（${page!.type}）` : ''} の関連レポート・ベンチマーク・関係性を ${SITE_NAME} の知識グラフから。`;
   return {
     title: decoded,
