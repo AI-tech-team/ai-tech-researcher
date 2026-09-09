@@ -232,3 +232,25 @@
   - **LLM審査による裏取り(`scripts/_judge_chunk_lane.ts`・審査条件はv9のA/Bと同一=gemini-2.5-flash・3票・提示順シャッフル・中央値・`_z_judge.json`にキャッシュ)**: known 20問は「タイトル/要約で特定できる記事を1件当てる」タスクでチャンクに構造的に不利な懸念があったため、realistic を含む44クエリで nDCG@5 を測り直した。結果は **A(修正前)87.1% → B(修正後)91.3% = +4.3pt** で、Recall@5の+30ptよりずっと穏やかだが**方向は一致**し、修正が改善であることが独立指標で確認された。**より正確な診断**: チャンクレーンが持ち込んでいた146件は平均関連度1.72(0=15%/3=32%)で、押し出していた側の220件は平均2.17(0=10%/**3=52%**)。つまり「チャンクはノイズ」ではなく**玉石混交で、置き換えた相手の方が明確に質が高かった**＝真因は等重量RRFで30件ぶんの枠を与えたことによる**過大評価**。146件中46件が最高評価だった事実から、将来ランキングに戻す余地はある(等重量ではなく重み減衰=RRFのKを大きくする/上位k件を絞る形で、同じA/Bで検証する)。今回は snippet 供給専用への降格に留める。
 
 - **外形監視のためのヘルスチェック新設(2026-07-21)**: DBが全滅してもUIは`actions.ts`の各クエリが`catch → return []`でfail-openするため、HTTP 200＋「記事がまだありません」を返し外形監視から健全に見えていた(2026-06-19〜07-08のDB split-brain停止を19日間検知できなかった直接の原因)。→`/api/health`(`src/app/api/health/route.ts`)を新設し、①DB疎通＋記事の存在(down=500)②記事の鮮度③日次レポートの供給④ベクトル索引2本の生存(いずれもdegraded=503)を判定する。**`actions.ts`のfail-openは直さない**: 一部クエリの失敗で全画面を落とすのは表示挙動として退化するため、検知だけを別経路に出す判断。同じく`retrieval.ts`のチャンク検索も索引が壊れてもconsole.warnで続行するが、health側で索引を直接叩くことで可視化できるので触らない。**実測で設計が変わった点**: 当初`MAX(created_at)`で鮮度を見ようとしたが、この列に索引が無く全走査で**32秒**かかった(本番実測)。主キー降順の1行読みに変えて51ms、値が`MAX(created_at)`と一致することも確認済み。ベクトル索引の照会は1本3〜4.5秒で2本直列だと7.7秒に達するためPromise.allで並列化し`maxDuration=15`を明示。連打によるTurso読み取り課金は20秒メモリキャッシュで抑制(監視間隔は5分想定)。詳細(エラー文・最終更新時刻)は`isOwner()`限定で、匿名には各チェックのok/ngのみ返す(第一条=エラー詳細を出さない/運用情報の露出防止)。検証: tsc クリーン、ローカル実機でdev DB(古い)に対し`freshness:ng`→503 degradedが正しく出ること、キャッシュ切れ後の応答296msを確認。
+
+## 2026-09-09 速度の根本原因＝索引欠落（ISR化＋本番DBに索引3本）
+- 発端: ユーザーの「接続速度遅すぎ」。本番実測でトップは **コールド2.66〜3.83秒 / ウォーム0.18秒**、
+  `/sitemap.xml` は **46.76秒**、`X-Vercel-Cache: MISS`・`Cache-Control: private, no-cache, no-store`。
+- 原因①(配信): `page.tsx`→`getCoreData`→`getSourcesData(isOwner)`/`overlayUserState(currentUserId)` が
+  cookies を読み、ページが動的レンダリングに落ちてCDNキャッシュを完全に捨てていた。トラフィックが薄く実質毎回コールド。
+  → SSR専用 `getPublicCoreData()`(auth不使用) 新設＋ISR化。`?article=`/`?report=` は middleware で独立URLへ302
+  （searchParams も動的化の引き金だった）。sitemap/reports/[id]/topic/[name] も同様にISR化。commit e0d42b0。
+  **結果: 全リクエストが `X-Vercel-Cache: HIT`・0.21〜0.31s、sitemap 46.76s→0.41s。**
+- 原因②(DB): `collected_data.created_at` に**索引が無かった**。EXPLAIN が `SCAN c / USE TEMP B-TREE FOR ORDER BY`＝
+  **22,538件の全走査＋一時ソート**。コールド30〜47秒・ウォーム0.8〜1.5秒。
+  `reports`/`claims` は索引ゼロ、`entities` は mention_count 索引なし。
+  → 本番に3本追加: `collected_created_idx(created_at DESC)` / `reports_created_idx(created_at DESC)` /
+  `entities_mention_idx(mention_count DESC)`。**articles LIMIT 12 が 861ms→11ms(78倍)、TEMP B-TREE 消滅**。
+- 教訓: [[v3-roadmap-progress]] の「Phase1 速度改善=索引3本」は url/embedding/extract_queue の3本で、
+  **実際に使われる `ORDER BY created_at DESC` を救う索引ではなかった**（[[pattern-coverage-is-not-outcome]] と同型）。
+  記事数も 11,384→22,538 に倍増しており、全走査コストが増大していた。
+- 副次: sitemap のトピック選定に ORDER BY が無く、載っていたのは**アルファベット順の先頭300件**
+  (`01 AI`〜`Coinbase`)。`8VC`/`1010 Digital Works` を出す一方 `OpenAI`/`NVIDIA`/`Gemini` は1件も無し。
+  → `entities` の mention_count 降順＋relations を持つ条件(EXISTS)に変更。
+- 未了: **エンティティ正規化が公開に耐えていない**（`Claude`/`Anthropic Claude`/`Anthropic's Claude` が別物、
+  `3.5 Flash` 等のバージョン断片、`CEO`/`China` 等の一般名詞、文字化け）。`/topic` を主役にする前の前提工事。

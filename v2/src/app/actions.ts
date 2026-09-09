@@ -326,11 +326,23 @@ export async function getAdjacentReports(type: string, reportDate: string): Prom
 // sitemap用: 中身が充実したエンティティ名（関係を持つもの＝/topic が noindex にならない）を列挙。
 export async function getSitemapTopics(limit = 300): Promise<string[]> {
   try {
+    // ⚠️ 旧実装は ORDER BY が無く、UNION の結果をそのまま LIMIT していた。その結果 sitemap に
+    // 載るのは「アルファベット順の先頭300件」になり、本番実測では `01 AI` 〜 `Coinbase` まで＝
+    // `8VC` や `1010 Digital Works` のような無価値ページを出す一方、`OpenAI`/`NVIDIA`/`Gemini`
+    // など D以降の主要エンティティが1件もクロールに出ていなかった（2026-09-09 実測）。
+    // mention_count 降順にして「言及が多い＝中身のあるエンティティ」から載せる。
+    // relations を持つ条件は EXISTS で維持（関係が無い＝空ページ化を避ける）。
     const r = await client.execute(
-      `SELECT n FROM (
-         SELECT subject_name AS n FROM relations WHERE status != 'stale'
-         UNION SELECT object_name AS n FROM relations WHERE status != 'stale'
-       ) WHERE n IS NOT NULL AND n != '' LIMIT ${Math.min(Math.max(limit, 1), 1000)}`,
+      `SELECT e.canonical_name AS n
+         FROM entities e
+        WHERE e.canonical_name IS NOT NULL AND e.canonical_name != ''
+          AND EXISTS (
+            SELECT 1 FROM relations r
+             WHERE r.status != 'stale'
+               AND (r.subject_name = e.canonical_name OR r.object_name = e.canonical_name)
+          )
+        ORDER BY e.mention_count DESC
+        LIMIT ${Math.min(Math.max(limit, 1), 1000)}`,
     );
     return r.rows.map((row) => String(row.n)).filter(Boolean);
   } catch (error) {
