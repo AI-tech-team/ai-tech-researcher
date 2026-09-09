@@ -287,3 +287,27 @@
   示すデータが無く、`acquired_by` 以外が正しい保証もないため。まず全部止める方が非対称性で正しい。
 - **残課題**: ①抽出側で relation の向き・種別を是正（根本原因）②claims も文脈不明なものがある
   （「Belのパラメータ数: 10兆超」「agent misalignment incidents: two」）③ベンチマークのスコア正規化。
+
+## 2026-09-10 知識グラフの品質是正（relations の向き・種別／claims／benchmarks／entities.type）
+- **発端**: 09-09 に `/topic` の関係表示を撤去したときの残課題「抽出側の是正」。本番の生データを実測してから設計した。
+- **relations の根因は2つ（本番854件を実測）**: ①型名 `acquired_by` が**受動名**なのに、LLMは subject に「記事の主役」を置く癖があるため**向きが定まらない**。実際、唯一事実だった記事「OpenAI、Onaを買収」も `OpenAI --acquired_by--> Ona` と逆に入っていた。②型が6種しかなく「開発元・製造委託・提訴・規制措置」の受け皿が無いため、企業間の関係が**すべて acquired_by に流れ込んでいた**（`AMD ← Nvidia` `Nvidia ← TSMC` `Apple ← Nvidia` `Cloudflare ← Cloudflare Turnstile` `Block ← Generative AI` `OpenAI ← マルタ`）。→ **全型を能動態に統一**し（subject が行為者）、`acquires` へ改名のうえ `develops` `supplies` `invests_in` `partners_with` を追加、プロンプトに向きの明示と正例・「どれにも当てはまらなければ抽出しない」を書いた。**不採用**: 既存 acquired_by 147件の向きを機械的に反転して救済する案＝サンプル30件中まともな行が0件で、向きだけでなく種別も誤っているため救済対象が定義できない。
+- **決定論ゲートを新設** `src/lib/knowledge-quality.ts`（LLMも埋め込みも使わない・47ケースのユニットテスト付き）: `isValidRelation`（一般名詞/概念語/自己包含を除外）・`orderRelation`（対称関係を辞書順にして A-B と B-A の二重登録を防ぐ）・`isValidClaim`（推測伝聞・文になった述語・`= true` のような値でない値・一般名詞の主語を除外）・`isValidBenchmarkName`/`isValidBenchmarkUnit`（業績/作業量/運用指標、`52 x` `1.5 times` の相対倍率を除外）。**プロンプトの禁止事項は守られない前提で二重化**する方針（実測で `ヤコビ予想の反例を持つ可能性を示唆 = true` が通っていた）。`looksLikeEntity` 等は daily_pipeline.ts から移設した（同ファイルはトップレベル実行されるためテストから import できず、第四条を満たせなかった）。
+- **ベンチスコアの捏造を止めた**: 旧 `normalizeBenchmarkScore` は 0<score<=1 を無条件に ×100 していた。ドライランで `Cursor Composer 2.5 / SWE-bench = 1` が **100%** に化けていたのを検出。ちょうど 1 は「1位/1点/1%/満点」の区別がつかないので**捨てる**（失敗の非対称性: 誤情報の公開 ＞ 情報の欠落・第三条）。0<score<1 は従来どおり ×100 し、`〜Bench/〜Eval` で単位なしのケースにも広げた（`Stanford LegalBench 0.823` → 82.3）。
+- **entities.type が全1,620件 `model` だった**: `resolveEntity(rawName, type = 'model')` の既定引数がそのまま入り、呼び出し側が誰も型を渡していなかった。/topic のバッジで OpenAI も TSMC も「model」と表示されていた。→ `classifyEntityType`（既知リスト＋語形の決定論）を新設し、**判別できないものは 'model' と断定せず 'unknown'** にしてバッジ自体を出さない。再分類の実測は company 103 / model 183 / product 14 / benchmark 7 / unknown 1,309。**不採用**: LLMに分類させる案＝課金＋非決定的で、既知リストで足りる。
+- **normalizeEntityKey が日本語を捨てていた（副次発見・実害あり）**: `[^a-z0-9]` で除去していたため、①`カインズ` `ソフトバンク` `マイクロソフト` はキーが空になり**エンティティとして登録できず**、②`既存のLLMスケーリング則` がキー `llm` になり**別物の `LLM` と同じノードに衝突**していた（canonical_name が前者の行に subject=`LLM` のclaimが入っていた）。→ かな・カナ・漢字・長音符を残す形に修正し、`runDataCleanup` で全エンティティのキーを再計算する（衝突する相手が既にいれば参照を付け替えてから統合）。本番ドライランでキー修正111件・統合0件。
+- **`getEntityKnowledgePage` の取りこぼし**: claims/benchmarks を `subject = canonical` の完全一致だけで引いていたため、entity `Nvidia` に対し subject が `NVIDIA` のクレームがページから丸ごと漏れていた（SQLiteの `=` は大小文字を区別する）。→ `entity_id` で引き、名前一致は entity 未登録時のフォールバックにした。
+- **表示側にも同じゲートを置いた**: DB クリーンアップ（日次パイプライン）を待たずに `tok/s` `unknown` `2026年売上高見通し 430億ユーロ` を公開面から消すため。第六条「障害時はまず止める」に沿う二重化。
+- **本番への適用計画**: `runDataCleanup` の遡及適用（ドライラン実測: relations 854→647／benchmarks 466→338／claims active 2,858→2,453／entity key 111件修正）＋ `EXTRACTION_VERSION` を 2 に上げて Batch 再抽出。再抽出は `extraction_version DESC` 優先に変更した（未抽出16,584件が先に消化されると、いま誤りを出している1,760件の是正が1件も進まないため）。
+
+## 2026-09-10 埋め込み入力に本文を混ぜる／reembed モードの致命的バグ修正
+- **決定**: 記事ベクトルの入力を `title + summary`（本番実測で中央値175字・1500字上限への到達0%）から `title + summary + 本文冒頭`（上限2000字）に変更。Phase3 で本文抽出率が 11.8%→69.7% に上がり、[[debug-story-overmerge]] で判明していた「ベクトルが"出来事"でなく"話題"しか表現できない」痩せを解消できる材料が揃ったため。
+- **バグ修正**: `PIPELINE_MODE=reembed` は全ベクトルを `UPDATE ... SET embedding = NULL` した後 `runEmbeddings(2000)` を**1回だけ**呼んでいた。本番は22,538件あるため、実行すれば2万件が embedding=NULL のまま残り**ベクトル検索から丸ごと消える**。未実行だったため顕在化していなかった。→ 完走するまで回すループに変更。
+- **未実施（要GO）**: 実際の再埋め込みと A/B 実測。効果は必ず消費側の指標で測る（[[pattern-coverage-is-not-outcome]]）。ベースラインは既知の Recall@5=85.0% / MRR=0.679。
+
+## 2026-09-10 ソフト404の解消（実測でメモリの記述を訂正）
+- **実測でわかったこと**: `/articles/{欠番}` は 200 だが、**`<meta name="robots" content="noindex">` は入っており not-found UI も正しく描画されていた**。過去メモの「not-found.tsx が出ず 200 描画」は現状に当てはまらない。
+- **原因は仕様**: `loading.tsx` によって本文のストリーミングが始まった後に `notFound()` が投げられるため、送信済みヘッダを 404 に変えられない（`node_modules/next/dist/docs` の loading.md「Status Codes」に明記。Next は代わりに noindex を注入するので**検索インデックスへの実害は無い**）。
+- **決定**: ドキュメントが唯一示す方法「ストリーミング前に存在確認する」を middleware で行う。`/articles/:id` `/reports/:id` `/topic/:name` に限定し、実在しなければルート未定義パスへ rewrite して Next のルーティング層に 404 を確定させる。数値以外・桁あふれ・ゼロ埋めのIDはDBを引かずに404。存在確認は**正の結果のみメモリキャッシュ**し（削除された記事を「ある」と言い続けない）、DB障害時は **fail-open で通す**（一時障害で全記事を404にするのは退化・表示側の fail-open と同じ方針）。
+- **不採用**: ①`loading.tsx` を削除してストリーミングを止める案＝スケルトンを失いUXが退行する。②`layout.tsx` で存在確認する案＝root `loading.tsx` があるため layout の await でもストリーミングが始まり効果がない（実際に確認）。
+- **検証**: ローカル本番ビルド（後述の理由で `next build --webpack`）＋ `next start` で実測。`/articles/999999999` `/reports/999999999` `/topic/ZZZ_NOPE` `/articles/abc` `/articles/007` が **404**、`/articles/4204` `/reports/82` `/topic/OpenAI` `/topic/openai` が **200**、`/?article=4204` の302リダイレクトと `/articles/4204/opengraph-image` が無傷であることを確認。
+- **ローカルビルドの罠**: 既定の Turbopack はプロジェクトパスに日本語（`ドキュメント`）が含まれると `start byte index N is not a char boundary` で**パニックして落ちる**。`next build --webpack` なら通る。Vercel 側はパスが英字なので影響しない。

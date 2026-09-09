@@ -121,7 +121,9 @@ export const relations = sqliteTable("relations", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   subjectEntityId: integer("subject_entity_id").references(() => entities.id),
   subjectName: text("subject_name").notNull(),
-  relationType: text("relation_type").notNull(), // outperforms/competes_with/builds_on/acquired_by/cites/supersedes
+  // 値は src/lib/knowledge-quality.ts の RELATION_TYPES（すべて能動態＝subjectが行為者）。
+  // 旧 acquired_by は向きが壊れるため 2026-09-10 に廃止し acquires へ置き換えた。
+  relationType: text("relation_type").notNull(),
   objectEntityId: integer("object_entity_id").references(() => entities.id),
   objectName: text("object_name").notNull(),
   articleId: integer("article_id").references(() => collectedData.id),

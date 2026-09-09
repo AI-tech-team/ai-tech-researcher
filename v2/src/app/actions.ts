@@ -765,23 +765,34 @@ export interface EntityPage {
 
 export async function getEntityKnowledgePage(name: string): Promise<EntityPage | null> {
   try {
-    const ent = await db.select({ name: entities.canonicalName, type: entities.type, mention: entities.mentionCount })
+    const ent = await db.select({ id: entities.id, name: entities.canonicalName, type: entities.type, mention: entities.mentionCount })
       .from(entities).where(sql`LOWER(${entities.canonicalName}) = ${name.toLowerCase()}`).limit(1);
     const canonical = ent[0]?.name ?? name;
+    const entId = ent[0]?.id ?? null;
     const type = ent[0]?.type ?? null;
     const mentionCount = Number(ent[0]?.mention ?? 0);
 
+    // claims/benchmarks は entity_id で引く。subject/entity_name の完全一致だけで引いていたため、
+    // entity `Nvidia` に対し subject が `NVIDIA` のクレーム（SQLiteの = は大小文字を区別する）が
+    // ページから丸ごと漏れていた（2026-09-10 本番実測で確認）。名前一致は entity 未登録時のフォールバック。
+    const claimMatch = entId != null
+      ? or(eq(claims.entityId, entId), eq(claims.subject, canonical))!
+      : eq(claims.subject, canonical);
+    const benchMatch = entId != null
+      ? or(eq(benchmarks.entityId, entId), eq(benchmarks.entityName, canonical))!
+      : eq(benchmarks.entityName, canonical);
+
     const [bench, relsOut, relsIn, clm, claimArts, benchArts] = await Promise.all([
       db.select({ benchmark: benchmarks.benchmarkName, score: benchmarks.score, unit: benchmarks.unit, date: benchmarks.recordedDate })
-        .from(benchmarks).where(eq(benchmarks.entityName, canonical)).orderBy(desc(benchmarks.recordedDate)).limit(12),
+        .from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.recordedDate)).limit(12),
       db.select({ type: relations.relationType, other: relations.objectName })
         .from(relations).where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`)).limit(20),
       db.select({ type: relations.relationType, other: relations.subjectName })
         .from(relations).where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`)).limit(20),
       db.select({ predicate: claims.predicate, value: claims.value })
-        .from(claims).where(and(eq(claims.subject, canonical), eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(8),
-      db.select({ aid: claims.articleId }).from(claims).where(eq(claims.subject, canonical)).limit(40),
-      db.select({ aid: benchmarks.articleId }).from(benchmarks).where(eq(benchmarks.entityName, canonical)).limit(40),
+        .from(claims).where(and(claimMatch, eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(8),
+      db.select({ aid: claims.articleId }).from(claims).where(claimMatch).limit(40),
+      db.select({ aid: benchmarks.articleId }).from(benchmarks).where(benchMatch).limit(40),
     ]);
 
     const ids = [...new Set([...claimArts, ...benchArts].map(r => r.aid).filter((x): x is number => x != null))];

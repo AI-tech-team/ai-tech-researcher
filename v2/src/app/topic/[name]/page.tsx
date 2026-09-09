@@ -5,7 +5,8 @@ import { notFound } from 'next/navigation';
 import { BrainCircuit, ArrowLeft, BookOpen, Trophy, Network, Sparkles, ArrowRight } from 'lucide-react';
 import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { getEntityKnowledgePage } from '@/app/actions';
-import { isPublishableEntity } from '@/lib/entity-quality';
+import { isPublishableEntity, ENTITY_TYPE_LABELS } from '@/lib/entity-quality';
+import { isValidBenchmarkName, isValidBenchmarkUnit, canonicalBenchmarkName, isValidClaim } from '@/lib/knowledge-quality';
 import { JsonLd } from '@/components/JsonLd';
 
 // ⚠️ 関係タイプ（買収/競合/性能で上回る…）は表示しない。
@@ -14,6 +15,13 @@ import { JsonLd } from '@/components/JsonLd';
 // [[current-phase-plan]] でも「信頼低」に分類されている。誤情報の公衆送信は信用毀損リスクがあるため
 // （CLAUDE.md 第三条「AI生成物は断定回避」）、関係の意味づけは出さず、名前だけを
 // 「関連トピック」として並べて回遊性のみ残す。抽出側が信頼できる品質になったら復活を検討する。
+
+// 種別バッジは既知の種別のみ日本語で出す。'unknown' や未知の値はバッジ自体を出さない。
+// 2026-09-10 まで entities.type は**全1,620件が 'model'** で、OpenAI や TSMC にも「model」と
+// 表示されていた（resolveEntity の既定引数がそのまま入っていた）。断定できないものは出さない。
+function typeLabel(type: string | null | undefined): string | null {
+  return (type && ENTITY_TYPE_LABELS[type]) || null;
+}
 
 /** 関係から相手の名前だけを重複なく取り出す（自分自身は除く） */
 function relatedNames(rels: { other: string }[], self: string, limit = 24): string[] {
@@ -29,11 +37,16 @@ function relatedNames(rels: { other: string }[], self: string, limit = 24): stri
   return out;
 }
 
-/** 同一ベンチマークの表記ゆれ重複を畳む（実測: `ExploitGym` と `exploit gym` が別行で出ていた） */
-function dedupeBenchmarks<T extends { benchmark: string }>(items: T[]): T[] {
+/**
+ * 表示できるベンチマークだけに絞り、表記ゆれ重複を畳む（実測: `ExploitGym` と `exploit gym` が別行）。
+ * 品質ゲートを表示側にも置くのは、DB側のクリーンアップ（日次パイプライン）を待たずに
+ * `2026年売上高見通し 430億ユーロ` `tok/s` `unknown` のような非ベンチを公開面から即座に消すため。
+ */
+function visibleBenchmarks<T extends { benchmark: string; unit: string | null }>(items: T[]): T[] {
   const seen = new Set<string>();
   return items.filter((b) => {
-    const k = (b.benchmark ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!isValidBenchmarkName(b.benchmark) || !isValidBenchmarkUnit(b.unit)) return false;
+    const k = canonicalBenchmarkName(b.benchmark).normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
     if (!k || seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -44,7 +57,14 @@ function dedupeBenchmarks<T extends { benchmark: string }>(items: T[]): T[] {
 const getTopic = cache((name: string) => getEntityKnowledgePage(name));
 
 function isEmpty(p: Awaited<ReturnType<typeof getTopic>>): boolean {
-  return !p || (p.benchmarks.length === 0 && p.relations.length === 0 && p.claims.length === 0 && p.articles.length === 0);
+  if (!p) return true;
+  return visibleBenchmarks(p.benchmarks).length === 0 && p.relations.length === 0
+    && visibleClaims(p).length === 0 && p.articles.length === 0;
+}
+
+/** 推測・伝聞・文になった述語のクレームは出さない（DBクリーンアップ前でも公開面から消す） */
+function visibleClaims(p: NonNullable<Awaited<ReturnType<typeof getTopic>>>) {
+  return p.claims.filter(c => isValidClaim(p.name, c.predicate, c.value));
 }
 
 // クロールに出してよいページか。中身が空、または名前が公開に耐えない（一般名詞 AI/China/CEO、
@@ -60,7 +80,8 @@ export async function generateMetadata({ params }: { params: Promise<{ name: str
   const page = await getTopic(decoded);
   // 中身が無い／公開に耐えない名前のエンティティは薄いページの量産になるので noindex（リンク追跡は許可）
   if (!shouldIndex(page)) return { title: decoded, robots: { index: false, follow: true } };
-  const desc = `${decoded}${page!.type ? `（${page!.type}）` : ''} の関連レポート・ベンチマーク・関係性を ${SITE_NAME} の知識グラフから。`;
+  const label = typeLabel(page!.type);
+  const desc = `${decoded}${label ? `（${label}）` : ''} の関連レポート・ベンチマーク・関係性を ${SITE_NAME} の知識グラフから。`;
   return {
     title: decoded,
     description: desc,
@@ -126,17 +147,17 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
         <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-cyan-400/80 flex items-center gap-1.5"><BookOpen size={12} />Topic</p>
         <h1 className="text-2xl sm:text-3xl font-bold text-white font-outfit leading-tight mt-2 flex items-center gap-2.5 flex-wrap">
           {decoded}
-          {page.type && <span className="font-mono text-[11px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 rounded">{page.type}</span>}
+          {typeLabel(page.type) && <span className="font-mono text-[11px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 rounded">{typeLabel(page.type)}</span>}
         </h1>
 
         {empty ? (
           <p className="text-sm text-slate-400 leading-relaxed mt-6">このトピックの詳細情報はまだありません。{SITE_NAME} が新しいレポートを集めるにつれて蓄積されます。</p>
         ) : (
           <div className="grid grid-cols-1 gap-3 mt-6">
-            {dedupeBenchmarks(page.benchmarks).length > 0 && (
+            {visibleBenchmarks(page.benchmarks).length > 0 && (
               <Section icon={<Trophy size={13} />} title="ベンチマーク" color="#fcd34d">
                 <div className="flex flex-col gap-1.5">
-                  {dedupeBenchmarks(page.benchmarks).map((b, i) => (
+                  {visibleBenchmarks(page.benchmarks).map((b, i) => (
                     <div key={i} className="flex items-center gap-2 text-[13px]">
                       <span className="text-slate-300 truncate flex-1">{b.benchmark}</span>
                       <span className="font-mono text-amber-300">{b.score}{b.unit ?? ''}</span>
@@ -159,10 +180,10 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
                 </div>
               </Section>
             )}
-            {page.claims.length > 0 && (
+            {visibleClaims(page).length > 0 && (
               <Section icon={<Sparkles size={13} />} title="判明している事実" color="#6ee7b7">
                 <div className="flex flex-col gap-1.5">
-                  {page.claims.map((c, i) => (
+                  {visibleClaims(page).map((c, i) => (
                     <div key={i} className="text-[13px] text-slate-300"><span className="text-slate-500">{c.predicate}:</span> {c.value}</div>
                   ))}
                 </div>

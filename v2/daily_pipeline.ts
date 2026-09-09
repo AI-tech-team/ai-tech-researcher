@@ -11,6 +11,12 @@ import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
 import { discoverFeedUrl, fetchArticleText, fetchArticleTextDetailed } from './src/lib/feeds';
 import { isSafeFetchUrl } from './src/lib/safeUrl';
+import { classifyEntityType } from './src/lib/entity-quality';
+import {
+  RELATION_TYPES, looksLikeEntity, isValidRelation, orderRelation,
+  isValidBenchmarkName, isValidBenchmarkUnit, canonicalBenchmarkName, normalizeBenchmarkScore,
+  isValidClaim,
+} from './src/lib/knowledge-quality';
 import { initAnalyzer, analyze } from './scripts/lib/search-analyzer';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
@@ -80,12 +86,14 @@ const HN_AI_KEYWORDS = [
 const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'] as const;
 
 // v3知識グラフ: claims/benchmarks/relations を1回の構造化出力でまとめて抽出
-const RELATION_TYPES = ['outperforms', 'competes_with', 'builds_on', 'acquired_by', 'cites', 'supersedes'] as const;
+// ※ RELATION_TYPES は src/lib/knowledge-quality.ts に移設（ユニットテスト対象にするため）
 
 // 知識抽出ロジックのバージョン。抽出プロンプト/フィルタ/正規化を変えたら +1 する。
 // collected_data.extraction_version がこの値未満の記事を batch_submit が再抽出対象にする（遡及適用）。
 // v1: 文脈フィルタ（推測・伝聞・主観・相対表現の除外）導入。
-const EXTRACTION_VERSION = 1;
+// v2: 関係タイプを能動態に再設計（acquired_by 廃止→acquires/develops/supplies/invests_in/partners_with 追加）、
+//     claims/benchmarks の決定論ゲートを追加。2026-09-10 の本番実測で acquired_by 147件がほぼ全滅していたため。
+const EXTRACTION_VERSION = 2;
 
 // Batch API用の公式SDKクライアント（非同期バッチは @ai-sdk/google 非対応のため）
 const genai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY });
@@ -1149,70 +1157,9 @@ async function sendFailureEmail(error: Error) {
 }
 
 // ── v3.2 抽出品質ゲート ───────────────────────────────────────────────
-// 文の断片・一般名詞をエンティティとして弾く（ASCIIで大文字/数字が無い＝固有名詞でない可能性大）
-function looksLikeEntity(s: string): boolean {
-  const t = (s ?? '').trim();
-  if (!t || t.length > 40) return false;
-  if (/[、,]/.test(t)) return false;            // カンマ/読点 = 文の断片
-  if (t.split(/\s+/).length > 5) return false;  // 単語数過多 = 文
-  const hasCJK = /[ぁ-んァ-ヶ一-龯]/.test(t);
-  const hasUpperOrDigit = /[A-Z0-9]/.test(t);
-  if (!hasCJK && !hasUpperOrDigit) return false; // 小文字ASCIIのみ = 一般名詞の可能性大
-  return true;
-}
-
-// ハードウェアスペック・価格等はベンチマークでないため除外
-const BENCH_SPEC_RE = /(cores?|RAM|メモリ|memory|TOPS|MHz|GHz|\dGB|\dMB|\dKB|nm\b|watt|ワット|price|価格|cost|円|ドル|\$|tokens?\/s|context window|コンテキスト|parameters?|params?|パラメータ)/i;
-function isValidBenchmarkName(name: string): boolean {
-  const t = (name ?? '').trim();
-  if (!t || t.length < 2 || t.length > 50) return false;
-  if (BENCH_SPEC_RE.test(t)) return false;
-  return true;
-}
-
-// ベンチマーク名の表記ゆれを正規化（リーダーボード集約のため）
-const BENCH_ALIASES: [RegExp, string][] = [
-  [/chatbot\s*arena|lmarena|arena\s*elo/i, 'Chatbot Arena (Elo)'],
-  [/mmlu[-\s]?pro/i, 'MMLU-Pro'],
-  [/\bmmlu\b/i, 'MMLU'],
-  [/gsm[-\s]?8k/i, 'GSM8K'],
-  [/swe[-\s]?bench/i, 'SWE-bench'],
-  [/human\s*eval/i, 'HumanEval'],
-  [/\bmmmu\b/i, 'MMMU'],
-  [/\bgpqa\b/i, 'GPQA'],
-  [/\baime\b/i, 'AIME'],
-  [/arc[-\s]?agi/i, 'ARC-AGI'],
-  [/live\s*code\s*bench/i, 'LiveCodeBench'],
-];
-function canonicalBenchmarkName(name: string): string {
-  const t = (name ?? '').trim();
-  for (const [re, canon] of BENCH_ALIASES) if (re.test(t)) return canon;
-  return t;
-}
-
-// %系ベンチ（accuracy/pass率）。canonicalBenchmarkName の出力名で判定する。
-const PERCENT_BENCHMARKS = new Set([
-  'MMLU', 'MMLU-Pro', 'GSM8K', 'SWE-bench', 'HumanEval', 'MMMU', 'GPQA', 'AIME', 'ARC-AGI', 'LiveCodeBench', 'MATH',
-]);
-// ベンチ数値の正規化(D): スケール統一(0.872→87.2)＋物理的にありえない値を弾く。
-// 不明なベンチ(正規化名になく unit も不明)は触らない＝保守的。戻り値 null は「異常値→不採用」。
-function normalizeBenchmarkScore(canonName: string, score: number, unit: string | null): number | null {
-  if (!Number.isFinite(score)) return null;
-  const u = (unit ?? '').toLowerCase();
-  // Elo系(Chatbot Arena等)は 0-100 化してはいけない。妥当範囲 500-5000。
-  if (/elo|arena/i.test(canonName) || u === 'elo') {
-    return score >= 500 && score <= 5000 ? score : null;
-  }
-  // %系: 既知の%ベンチ、または unit が %。0-1 スケールは ×100 に統一し、0-100 外は異常。
-  if (PERCENT_BENCHMARKS.has(canonName) || u === '%' || u === 'percent' || u === 'pct') {
-    let s = score;
-    if (s > 0 && s <= 1) s = s * 100;
-    if (s < 0 || s > 100) return null;
-    return Math.round(s * 10) / 10;
-  }
-  // 不明: スケール変換せず、負値だけ弾く。
-  return score >= 0 ? score : null;
-}
+// looksLikeEntity / isValidBenchmarkName / canonicalBenchmarkName / normalizeBenchmarkScore は
+// src/lib/knowledge-quality.ts に移設した（daily_pipeline.ts はトップレベルで実行されるため
+// テストから import できず、第四条「純粋ロジックはユニットテスト」を満たせなかった）。
 
 // ── v3: エンティティ正規化（GPT-4o / GPT4o / gpt-4 omni → 同一ノード）─────
 let _entityCache: Map<string, { id: number; canonicalName: string }> = new Map();
@@ -1224,16 +1171,24 @@ const ENTITY_ALIAS_KEYS: [RegExp, string][] = [
   [/^claude\s*3\.?5\s*sonnet$/i, 'claude35sonnet'],
   [/^gemini\s*1\.?5\s*(pro|flash)$/i, 'gemini15$1'],
 ];
+// 2026-09-10 修正: 以前は `[^a-z0-9]` で日本語を丸ごと捨てていた。その結果、
+//   ① `カインズ` `ソフトバンク` `マイクロソフト` はキーが空になり **エンティティとして登録できない**
+//   ② `既存のLLMスケーリング則` がキー `llm` になり、**別物の `LLM` と同じノードに衝突**していた
+//      （本番実測: canonical_name=`既存のLLMスケーリング則` の行に subject=`LLM` のclaimが入っていた）
+// ため、かな・カナ・漢字・長音符を残す。src/lib/entity-quality.ts の key() と同じ形。
 function normalizeEntityKey(name: string): string {
   const t = (name ?? '').trim();
   for (const [re, key] of ENTITY_ALIAS_KEYS) {
     const m = t.match(re);
     if (m) return key.replace('$1', (m[1] ?? '').toLowerCase());
   }
-  return t.normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return t.normalize('NFKC').toLowerCase().replace(/[^a-z0-9ぁ-んァ-ヶー一-龯]/g, '');
 }
 
-async function resolveEntity(rawName: string, type = 'model'): Promise<{ id: number; canonicalName: string } | null> {
+// type は呼び出し側が指定しなければ classifyEntityType で決定論的に推定する。
+// 以前は既定引数 'model' がそのまま入り、本番の entities 1,620件が**全件 model**になっていた
+// （/topic のバッジで OpenAI も TSMC も「model」と表示されていた）。
+async function resolveEntity(rawName: string, type?: string): Promise<{ id: number; canonicalName: string } | null> {
   const name = (rawName ?? '').trim();
   const key = normalizeEntityKey(name);
   if (!key || key.length < 2) return null;
@@ -1250,7 +1205,7 @@ async function resolveEntity(rawName: string, type = 'model'): Promise<{ id: num
   }
 
   const inserted = await db.insert(schema.entities)
-    .values({ canonicalName: name, normalizedKey: key, type })
+    .values({ canonicalName: name, normalizedKey: key, type: type ?? classifyEntityType(name) })
     .onConflictDoNothing()
     .returning({ id: schema.entities.id, canonicalName: schema.entities.canonicalName });
   if (inserted[0]) { _entityCache.set(key, inserted[0]); return inserted[0]; }
@@ -1270,7 +1225,19 @@ function buildExtractionPrompt(article: { title: string | null; rawContent: stri
 【benchmarks】AIモデル/システムの「評価ベンチマークスコア」のみ最大5つ。entity(モデル名)+benchmark(ベンチ名)+score(比較可能な数値)+unit(%/points/Elo等、不明はnull)。
   対象例: MMLU, GSM8K, SWE-bench, HumanEval, MMMU, GPQA, AIME, MATH, Chatbot Arena Elo, ARC-AGI 等。
   除外: CPUコア数・RAM/メモリ容量・TOPS・クロック等のハードウェアスペック、価格、トークン数、'1'のような順位/件数、ベンチ名が曖昧なもの。
-【relations】エンティティ間の明確な関係を最大5つ。subject+relation(${RELATION_TYPES.join('/')})+object。具体的な固有名詞同士のみ（一般名詞・文の断片は除外）。例: "Claude 4" outperforms "GPT-4"。
+【relations】エンティティ間の明確な関係を最大5つ。subject+relation+object。具体的な固有名詞同士のみ（一般名詞・概念語・文の断片は除外）。
+  **向きは必ず「subject が object に対して行う」能動で書くこと。** 記事の主役をsubjectに置くのではなく、行為者をsubjectに置く。
+  - outperforms: AがBを性能で上回る（例: "Claude Opus 5" outperforms "GPT-5"）
+  - competes_with: AとBが競合（向きなし）
+  - partners_with: AとBが提携（向きなし）
+  - builds_on: AがBを基盤にしている（例: "Llama 4" builds_on "Transformer"）
+  - develops: **AがBを開発・提供している**（例: "01 AI" develops "Yi-Large" / "OpenAI" develops "GPT-5"）
+  - acquires: **AがBを買収した**（例: 記事「OpenAI、Onaを買収」→ "OpenAI" acquires "Ona"。逆向きにしない）
+  - invests_in: AがBに出資した
+  - supplies: **AがBに供給・製造している**（例: "TSMC" supplies "Nvidia"）
+  - cites: AがBを引用している
+  - supersedes: AがBの後継である
+  **上のどれにも当てはまらない関係（提訴・規制・調査・従業員の発言など）は、無理に当てはめず抽出しないこと。**
 
 【抽出してはいけないもの（最重要・該当は確信度を下げるのでなく"そもそも抽出しない"）】
 - 推測・予測・願望: 「〜かもしれない」「〜だろう」「将来は〜」「期待される」等の未確定な記述
@@ -1355,6 +1322,10 @@ async function ingestKnowledge(
 
   // ── claims（stale移行つき）──
   for (const claim of parsed.claims) {
+    // 決定論ゲート（v2）: 推測・伝聞、文になった述語、`= true` のような値でない値、一般名詞の主語を落とす。
+    // プロンプトでも禁止しているが、本番実測で `ChatGPT / ヤコビ予想の反例を持つ可能性を示唆 = true` が
+    // 通っていたため「指示は守られない前提」で二重化する。
+    if (!isValidClaim(claim.subject, claim.predicate, claim.value)) continue;
     const entity = await resolveEntity(claim.subject);
     // 同一subject+predicateで異なるvalueの既存activeクレームをstaleに
     if (!replace && claim.confidence === 'high') {
@@ -1392,7 +1363,8 @@ async function ingestKnowledge(
   // ── benchmarks（時系列なので全件保存。スペック等のノイズは除外）──
   for (const b of parsed.benchmarks) {
     if (!Number.isFinite(b.score)) continue;
-    if (!isValidBenchmarkName(b.benchmark)) continue;       // ハードスペック/価格等を除外
+    if (!isValidBenchmarkName(b.benchmark)) continue;       // ハードスペック/価格/業績/作業量等を除外
+    if (!isValidBenchmarkUnit(b.unit ?? null)) continue;     // `52 x` `1.5 times` 等の相対倍率は比較不能
     if (!looksLikeEntity(b.entity)) continue;               // エンティティが文の断片なら除外
     const canon = canonicalBenchmarkName(b.benchmark);      // 表記ゆれを正規化
     const normScore = normalizeBenchmarkScore(canon, b.score, b.unit ?? null); // スケール統一＋範囲ガード(D)
@@ -1414,11 +1386,14 @@ async function ingestKnowledge(
 
   // ── relations（断片を除外・エッジ重複排除・矛盾stale）──
   for (const r of parsed.relations) {
-    if (!looksLikeEntity(r.subject) || !looksLikeEntity(r.object)) continue; // 文の断片を除外
-    const subj = await resolveEntity(r.subject);
-    const obj = await resolveEntity(r.object);
-    const subjName = subj?.canonicalName ?? r.subject.trim();
-    const objName = obj?.canonicalName ?? r.object.trim();
+    // 決定論ゲート（v2）: 文の断片・一般名詞・概念語・自己包含（`Cloudflare acquires Cloudflare Turnstile`）を落とす。
+    if (!isValidRelation(r.subject, r.relation, r.object)) continue;
+    // 対称関係（competes_with / partners_with）は辞書順に揃えて A-B と B-A の二重登録を防ぐ。
+    const ordered = orderRelation(r.subject, r.relation, r.object);
+    const subj = await resolveEntity(ordered.subject);
+    const obj = await resolveEntity(ordered.object);
+    const subjName = subj?.canonicalName ?? ordered.subject;
+    const objName = obj?.canonicalName ?? ordered.object;
     if (!subjName || !objName || subjName === objName) continue;
 
     // outperforms の逆向きactiveエッジをstaleに（A>B が来たら B>A を陳腐化）
@@ -1643,7 +1618,11 @@ async function runBatchSubmit(
       gte(schema.collectedData.importanceScore, 7),
       sql`COALESCE(${schema.collectedData.extractionVersion}, 0) < ${EXTRACTION_VERSION}`,
     ))
-    .orderBy(desc(schema.collectedData.importanceScore))
+    // 抽出済み(version>=1)を先に処理する。**いま公開面に誤りを出しているのはこの集合**であり、
+    // 未抽出(version=0)は「まだ何も出していない」＝新規追加なので後回しでよい。
+    // 2026-09-10 実測: imp>=7 のうち v=1 が1,760件・v=0 が16,584件。降順にしないと
+    // BATCH_MAX が未抽出で埋まり、誤りの是正が1件も進まない。
+    .orderBy(desc(schema.collectedData.extractionVersion), desc(schema.collectedData.importanceScore))
     .limit(maxArticles);
 
   if (targets.length === 0) { console.log('[Batch] 再抽出対象なし（全記事が最新バージョン）'); return; }
@@ -2097,23 +2076,47 @@ const EMBED_TASK_DOC = 'RETRIEVAL_DOCUMENT';
 // 上限は1日の流入(実測225件/日)を必ず上回らせる。120では毎日105件ずつ取り残され、
 // 埋め込み保有率が下がり続けていた（2026-07-15時点で直近30日66%・直近7日58%）。
 // 推薦・関連記事・意味検索がその分だけ静かに効かなくなる。翻訳/要点で踏んだのと同じ滞留の罠。
+// 記事ベクトルの入力テキスト。
+// 2026-07-16 の調査（[[debug-story-overmerge]]）で、入力が `title + summary` だけのため
+// **中央値175字**しかなく、1500字の上限に到達した記事が0%だと判明していた。
+// `clampSummary` の6行制限が埋め込み入力にも効いていて、ベクトルが「出来事」でなく
+// 「話題」しか表現できず、重複排除でも別記事を同一視する原因になっていた。
+// Phase3 で本文抽出率が 11.8% → 69.7% まで上がったので、本文の冒頭を混ぜて厚みを出す。
+// 上限2000字は gemini-embedding-001 の2048トークンに対する安全側の値。
+//
+// ⚠️ 既定は OFF（従来どおり title+summary）。本文を混ぜるのは**全記事を一斉に再埋め込みするときだけ**にする。
+// 新着だけ本文入りにすると「新着＝厚いベクトル / 既存22,538件＝痩せたベクトル」の**混在コーパス**になり、
+// 同一ストーリーでも新旧で類似度が下がって重複排除が効かなくなる（[[debug-story-overmerge]] の逆方向の劣化）。
+// 有効化の手順: GitHub Actions の env に `EMBED_WITH_BODY=1` を入れる → `PIPELINE_MODE=reembed` を1回完走
+// → 以後は日次も同じ入力で作られるので混在しない。**フラグだけ立てて再埋め込みしないのが一番まずい**。
+const EMBED_INPUT_MAX = 2000;
+const EMBED_WITH_BODY = process.env.EMBED_WITH_BODY === '1';
+function buildEmbeddingInput(r: { title: string; summary: string; raw: string }): string {
+  if (!EMBED_WITH_BODY) return `${r.title}\n${r.summary.slice(0, 1500)}`;
+  const head = `${r.title}\n${r.summary}`.trim();
+  const body = r.raw.replace(/\s+/g, ' ').trim();
+  if (!body) return head.slice(0, EMBED_INPUT_MAX);
+  return `${head}\n${body}`.slice(0, EMBED_INPUT_MAX);
+}
+
 async function runEmbeddings(limit = 300): Promise<number> {
   console.log('[Embed] 埋め込み生成開始');
   const res = await client.execute({
-    sql: `SELECT id, title, summary FROM collected_data WHERE embedding IS NULL ORDER BY created_at DESC LIMIT ?`,
+    sql: `SELECT id, title, summary, raw_content FROM collected_data WHERE embedding IS NULL ORDER BY created_at DESC LIMIT ?`,
     args: [limit],
   });
   const rows = res.rows.map(r => ({
     id: Number(r.id),
     title: (r.title as string | null) ?? '',
     summary: (r.summary as string | null) ?? '',
+    raw: (r.raw_content as string | null) ?? '',
   }));
   if (rows.length === 0) { console.log('[Embed] 対象なし'); return 0; }
 
   let embedded = 0;
   for (let i = 0; i < rows.length; i += EMBED_BATCH) {
     const chunk = rows.slice(i, i + EMBED_BATCH);
-    const values = chunk.map(r => (`${r.title}\n${r.summary.slice(0, 1500)}`).trim() || 'untitled');
+    const values = chunk.map(r => buildEmbeddingInput(r).trim() || 'untitled');
     try {
       const { embeddings } = await withRetry(() => embedMany({
         model: google.embedding('gemini-embedding-001'),
@@ -2729,10 +2732,15 @@ async function monitorFeedHealth(): Promise<void> {
 async function runDataCleanup(): Promise<void> {
   console.log('[Cleanup] データクリーンアップ開始');
 
-  // 1. 関係: 文の断片（looksLikeEntityを満たさない）を削除
-  const rels = await db.select({ id: schema.relations.id, s: schema.relations.subjectName, o: schema.relations.objectName })
-    .from(schema.relations);
-  const badRel = rels.filter(r => !looksLikeEntity(r.s) || !looksLikeEntity(r.o)).map(r => r.id);
+  // 1. 関係: 現行の決定論ゲート（isValidRelation）を満たさないものを削除。
+  //    旧タイプ `acquired_by` は RELATION_TYPES に無いのでここで全件落ちる。
+  //    2026-09-10 の本番実測でサンプル30件中まともな行が0件、唯一事実の「OpenAIがOnaを買収」も
+  //    向きが逆だったため、救済（向きの反転）はせず捨てて再抽出に委ねる。
+  const rels = await db.select({
+    id: schema.relations.id, s: schema.relations.subjectName,
+    t: schema.relations.relationType, o: schema.relations.objectName,
+  }).from(schema.relations);
+  const badRel = rels.filter(r => !isValidRelation(r.s, r.t, r.o)).map(r => r.id);
   let relDel = 0;
   for (let i = 0; i < badRel.length; i += 100) {
     const chunk = badRel.slice(i, i + 100);
@@ -2744,7 +2752,9 @@ async function runDataCleanup(): Promise<void> {
     id: schema.benchmarks.id, name: schema.benchmarks.benchmarkName,
     score: schema.benchmarks.score, unit: schema.benchmarks.unit,
   }).from(schema.benchmarks);
-  const badBench = benches.filter(b => !isValidBenchmarkName(b.name)).map(b => b.id);
+  const badBench = benches
+    .filter(b => !isValidBenchmarkName(b.name) || !isValidBenchmarkUnit(b.unit ?? null))
+    .map(b => b.id);
   let benchDel = 0;
   for (let i = 0; i < badBench.length; i += 100) {
     const chunk = badBench.slice(i, i + 100);
@@ -2752,7 +2762,7 @@ async function runDataCleanup(): Promise<void> {
   }
   let benchNorm = 0, scoreNorm = 0, scoreDel = 0;
   for (const b of benches) {
-    if (!isValidBenchmarkName(b.name)) continue;
+    if (!isValidBenchmarkName(b.name) || !isValidBenchmarkUnit(b.unit ?? null)) continue;
     const canon = canonicalBenchmarkName(b.name);
     // スコア正規化(D): 再抽出せず既存行を直接補正。異常値は削除。
     const norm = normalizeBenchmarkScore(canon, b.score, b.unit ?? null);
@@ -2768,7 +2778,63 @@ async function runDataCleanup(): Promise<void> {
       await db.update(schema.benchmarks).set(patch).where(eq(schema.benchmarks.id, b.id));
     }
   }
-  console.log(`[Cleanup] 関係削除${relDel}, ベンチ削除${benchDel}, ベンチ名正規化${benchNorm}, スコア正規化${scoreNorm}, スコア異常削除${scoreDel}`);
+  // 3. クレーム: 決定論ゲート（isValidClaim）を満たさない active を stale に落とす。
+  //    削除でなく stale なのは、判定を緩めたときに戻せるようにするため（既存の stale 機構に合わせる）。
+  const clms = await db.select({
+    id: schema.claims.id, s: schema.claims.subject, p: schema.claims.predicate, v: schema.claims.value,
+  }).from(schema.claims).where(eq(schema.claims.status, 'active'));
+  const badClaim = clms.filter(c => !isValidClaim(c.s, c.p, c.v)).map(c => c.id);
+  let claimStale = 0;
+  for (let i = 0; i < badClaim.length; i += 100) {
+    const chunk = badClaim.slice(i, i + 100);
+    if (chunk.length) {
+      await db.update(schema.claims).set({ status: 'stale' }).where(inArray(schema.claims.id, chunk));
+      claimStale += chunk.length;
+    }
+  }
+
+  // 4. エンティティ: normalized_key の再計算（日本語を残す形へ）と type の再分類。
+  //    キーが変わった結果ぶつかる相手が既にいる場合は、参照を移してから重複行を消す（マージ）。
+  const ents = await db.select({
+    id: schema.entities.id, name: schema.entities.canonicalName,
+    key: schema.entities.normalizedKey, type: schema.entities.type,
+    mention: schema.entities.mentionCount,
+  }).from(schema.entities);
+  const byKey = new Map<string, { id: number; mention: number | null }>();
+  for (const e of ents) byKey.set(e.key, { id: e.id, mention: e.mention });
+
+  let keyFixed = 0, merged = 0, typeFixed = 0;
+  for (const e of ents) {
+    const newKey = normalizeEntityKey(e.name);
+    if (newKey && newKey.length >= 2 && newKey !== e.key) {
+      const target = byKey.get(newKey);
+      if (target && target.id !== e.id) {
+        // 統合: 参照を付け替えてから重複行を削除する（外部キーの取りこぼしを作らない）
+        for (const t of [schema.claims, schema.benchmarks] as const) {
+          await db.update(t).set({ entityId: target.id }).where(eq(t.entityId, e.id));
+        }
+        await db.update(schema.relations).set({ subjectEntityId: target.id }).where(eq(schema.relations.subjectEntityId, e.id));
+        await db.update(schema.relations).set({ objectEntityId: target.id }).where(eq(schema.relations.objectEntityId, e.id));
+        await db.update(schema.entities)
+          .set({ mentionCount: (target.mention ?? 0) + (e.mention ?? 0) })
+          .where(eq(schema.entities.id, target.id));
+        await db.delete(schema.entities).where(eq(schema.entities.id, e.id));
+        merged++;
+        continue;
+      }
+      await db.update(schema.entities).set({ normalizedKey: newKey }).where(eq(schema.entities.id, e.id));
+      byKey.delete(e.key);
+      byKey.set(newKey, { id: e.id, mention: e.mention });
+      keyFixed++;
+    }
+    const newType = classifyEntityType(e.name);
+    if (newType !== e.type) {
+      await db.update(schema.entities).set({ type: newType }).where(eq(schema.entities.id, e.id));
+      typeFixed++;
+    }
+  }
+
+  console.log(`[Cleanup] 関係削除${relDel}, ベンチ削除${benchDel}, ベンチ名正規化${benchNorm}, スコア正規化${scoreNorm}, スコア異常削除${scoreDel}, クレームstale${claimStale}, キー修正${keyFixed}, エンティティ統合${merged}, 種別修正${typeFixed}`);
 }
 
 // ── 確信度スペクトル: 日次 decay + stale 移行 + カスケード研究問い生成 ──────────
@@ -3109,10 +3175,14 @@ async function main() {
     }
 
     // v4.5: 全記事を非対称(RETRIEVAL_DOCUMENT)で再埋め込み（バックフィル）
+    // ⚠️ 旧実装は全ベクトルを NULL にしたあと runEmbeddings(2000) を**1回だけ**呼んでいた。
+    // 本番は22,538件あるので、実行すると2万件が embedding=NULL のまま残り
+    // ベクトル検索から丸ごと消える（未実行だったため顕在化していなかった）。完走するまで回す。
     if (pipelineMode === 'reembed') {
       await client.execute(`UPDATE collected_data SET embedding = NULL`);
-      await runEmbeddings(2000);
-      console.log('=== Reembed mode 完了 ===');
+      let total = 0, n: number;
+      do { n = await runEmbeddings(2000); total += n; } while (n > 0);
+      console.log(`=== Reembed mode 完了: ${total}件 ===`);
       process.exit(0);
     }
 
