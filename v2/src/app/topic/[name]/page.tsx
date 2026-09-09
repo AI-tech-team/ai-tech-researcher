@@ -8,10 +8,37 @@ import { getEntityKnowledgePage } from '@/app/actions';
 import { isPublishableEntity } from '@/lib/entity-quality';
 import { JsonLd } from '@/components/JsonLd';
 
-const RELATION_LABEL: Record<string, string> = {
-  outperforms: '性能で上回る', supersedes: '置き換え', competes_with: '競合',
-  builds_on: '基づく', acquired_by: '買収', cites: '引用',
-};
+// ⚠️ 関係タイプ（買収/競合/性能で上回る…）は表示しない。
+// 2026-09-09 の本番実測で /topic/OpenAI が「買収 → Anthropic / Apple / Google / Hugging Face /
+// Microsoft / SpaceX / マルタ」と表示していた＝**事実でない断定**。relations は LLM 抽出品質依存で
+// [[current-phase-plan]] でも「信頼低」に分類されている。誤情報の公衆送信は信用毀損リスクがあるため
+// （CLAUDE.md 第三条「AI生成物は断定回避」）、関係の意味づけは出さず、名前だけを
+// 「関連トピック」として並べて回遊性のみ残す。抽出側が信頼できる品質になったら復活を検討する。
+
+/** 関係から相手の名前だけを重複なく取り出す（自分自身は除く） */
+function relatedNames(rels: { other: string }[], self: string, limit = 24): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of rels) {
+    const n = (r.other ?? '').trim();
+    if (!n || n === self || seen.has(n.toLowerCase())) continue;
+    seen.add(n.toLowerCase());
+    out.push(n);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** 同一ベンチマークの表記ゆれ重複を畳む（実測: `ExploitGym` と `exploit gym` が別行で出ていた） */
+function dedupeBenchmarks<T extends { benchmark: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((b) => {
+    const k = (b.benchmark ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
 
 // getEntityKnowledgePage は generateMetadata と本体で2回呼ばれるため、リクエスト内でキャッシュ（6クエリの二重実行を防ぐ）
 const getTopic = cache((name: string) => getEntityKnowledgePage(name));
@@ -106,10 +133,10 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
           <p className="text-sm text-slate-400 leading-relaxed mt-6">このトピックの詳細情報はまだありません。{SITE_NAME} が新しいレポートを集めるにつれて蓄積されます。</p>
         ) : (
           <div className="grid grid-cols-1 gap-3 mt-6">
-            {page.benchmarks.length > 0 && (
+            {dedupeBenchmarks(page.benchmarks).length > 0 && (
               <Section icon={<Trophy size={13} />} title="ベンチマーク" color="#fcd34d">
                 <div className="flex flex-col gap-1.5">
-                  {page.benchmarks.map((b, i) => (
+                  {dedupeBenchmarks(page.benchmarks).map((b, i) => (
                     <div key={i} className="flex items-center gap-2 text-[13px]">
                       <span className="text-slate-300 truncate flex-1">{b.benchmark}</span>
                       <span className="font-mono text-amber-300">{b.score}{b.unit ?? ''}</span>
@@ -119,17 +146,15 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
                 </div>
               </Section>
             )}
-            {page.relations.length > 0 && (
-              <Section icon={<Network size={13} />} title="関係" color="#a5b4fc">
-                <div className="flex flex-col gap-1.5">
-                  {page.relations.map((r, i) => (
-                    <div key={i} className="flex items-center gap-1.5 text-[13px]">
-                      <span className="font-mono text-[10px] text-slate-500 shrink-0">{RELATION_LABEL[r.type] ?? r.type}</span>
-                      <ArrowRight size={12} className={`text-indigo-400 shrink-0 ${r.dir === 'in' ? 'rotate-180' : ''}`} />
-                      <Link href={`/topic/${encodeURIComponent(r.other)}`} scroll={false} className="truncate text-slate-200 hover:text-cyan-300 transition-colors">
-                        {r.other}
-                      </Link>
-                    </div>
+            {relatedNames(page.relations, page.name).length > 0 && (
+              <Section icon={<Network size={13} />} title="関連トピック" color="#a5b4fc">
+                <p className="text-[11px] text-slate-600 mb-2.5">同じ記事で一緒に扱われたトピックです。</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {relatedNames(page.relations, page.name).map((n) => (
+                    <Link key={n} href={`/topic/${encodeURIComponent(n)}`} scroll={false}
+                      className="rounded-lg border border-white/5 bg-white/[0.03] px-2 py-1 text-[12px] text-slate-300 hover:border-indigo-400/30 hover:bg-indigo-500/10 hover:text-indigo-200 transition-colors">
+                      {n}
+                    </Link>
                   ))}
                 </div>
               </Section>

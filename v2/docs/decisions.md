@@ -271,3 +271,19 @@
 - 残課題: `type` が全件 'model'（OpenAI/Nvidia/TSMC も company でなく model）＝分類が機能していない。
   `Anthropic Claude`↔`Claude`、`Fable 5`↔`Claude Fable 5`、`Opus 4.8`↔`Claude Opus 4.8` の重複は未統合。
   entity-quality のユニットテスト（第四条）は未作成。
+
+## 2026-09-09 /topic の関係表示を撤去（LLM抽出の関係タイプが事実でない断定を出していた）
+- **症状**: 本番 `/topic/OpenAI` の「関係」が「買収 → Anthropic / Apple / Google / Hugging Face /
+  Microsoft / SpaceX / io Products / **マルタ**」と表示。OpenAIがこれらを買収した事実はない＝**虚偽**。
+  国名まで買収対象になっていた。ベンチマークも `ExploitGym:1` / `exploit gym:100満点` / `ExploitGym:0` と
+  同一ベンチが表記ゆれで重複し、スコアも意味を成していなかった。
+- **決定**: 関係タイプ（買収/競合/性能で上回る…）の表示を撤去し、相手の名前だけを「関連トピック」として
+  重複排除して並べる（説明文=「同じ記事で一緒に扱われたトピックです」）。リンクによる回遊性は維持。
+  ベンチマークは表記ゆれで dedupe。
+- **理由**: relations は [[current-phase-plan]] で自ら「信頼低（LLM抽出品質依存）」に分類していたのに
+  公開面で断定として出していた。誤情報の公衆送信は信用毀損リスクがあり、CLAUDE.md 第三条
+  （AI生成物は断定回避）に抵触する。第六条「障害時はまず止める」に従い、抽出側の是正を待たずに表示を止めた。
+- **不採用**: 「関係タイプのホワイトリスト（competes_with だけ出す等）」＝どの関係タイプが信頼できるかを
+  示すデータが無く、`acquired_by` 以外が正しい保証もないため。まず全部止める方が非対称性で正しい。
+- **残課題**: ①抽出側で relation の向き・種別を是正（根本原因）②claims も文脈不明なものがある
+  （「Belのパラメータ数: 10兆超」「agent misalignment incidents: two」）③ベンチマークのスコア正規化。
