@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation';
 import { BrainCircuit, ArrowLeft, BookOpen, Trophy, Network, Sparkles, ArrowRight } from 'lucide-react';
 import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { getEntityKnowledgePage } from '@/app/actions';
-import { isPublishableEntity, ENTITY_TYPE_LABELS } from '@/lib/entity-quality';
+import { isPublishableEntity, ENTITY_TYPE_LABELS, classifyEntityType } from '@/lib/entity-quality';
 import { isValidBenchmarkName, isValidBenchmarkUnit, canonicalBenchmarkName, isValidClaim } from '@/lib/knowledge-quality';
 import { JsonLd } from '@/components/JsonLd';
 
@@ -16,11 +16,13 @@ import { JsonLd } from '@/components/JsonLd';
 // （CLAUDE.md 第三条「AI生成物は断定回避」）、関係の意味づけは出さず、名前だけを
 // 「関連トピック」として並べて回遊性のみ残す。抽出側が信頼できる品質になったら復活を検討する。
 
-// 種別バッジは既知の種別のみ日本語で出す。'unknown' や未知の値はバッジ自体を出さない。
-// 2026-09-10 まで entities.type は**全1,620件が 'model'** で、OpenAI や TSMC にも「model」と
-// 表示されていた（resolveEntity の既定引数がそのまま入っていた）。断定できないものは出さない。
-function typeLabel(type: string | null | undefined): string | null {
-  return (type && ENTITY_TYPE_LABELS[type]) || null;
+// 種別バッジは名前から**その場で**判定する。DBの `entities.type` は信用しない。
+// 2026-09-10 の実測で entities.type は**全1,620件が 'model'** だった（resolveEntity の既定引数が
+// そのまま入っていた）ため、OpenAI や TSMC にも「モデル」と出てしまう。列の是正は
+// runDataCleanup（手動モード）待ちだが、判定は決定論で無料なので表示側で完結させる。
+// 判別できないもの（'unknown'）はバッジ自体を出さない＝断定しない（CLAUDE.md 第三条）。
+function typeLabel(name: string): string | null {
+  return ENTITY_TYPE_LABELS[classifyEntityType(name)] ?? null;
 }
 
 /** 関係から相手の名前だけを重複なく取り出す（自分自身は除く） */
@@ -80,7 +82,7 @@ export async function generateMetadata({ params }: { params: Promise<{ name: str
   const page = await getTopic(decoded);
   // 中身が無い／公開に耐えない名前のエンティティは薄いページの量産になるので noindex（リンク追跡は許可）
   if (!shouldIndex(page)) return { title: decoded, robots: { index: false, follow: true } };
-  const label = typeLabel(page!.type);
+  const label = typeLabel(page!.name);
   const desc = `${decoded}${label ? `（${label}）` : ''} の関連レポート・ベンチマーク・関係性を ${SITE_NAME} の知識グラフから。`;
   return {
     title: decoded,
@@ -147,7 +149,7 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
         <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-cyan-400/80 flex items-center gap-1.5"><BookOpen size={12} />Topic</p>
         <h1 className="text-2xl sm:text-3xl font-bold text-white font-outfit leading-tight mt-2 flex items-center gap-2.5 flex-wrap">
           {decoded}
-          {typeLabel(page.type) && <span className="font-mono text-[11px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 rounded">{typeLabel(page.type)}</span>}
+          {typeLabel(page.name) && <span className="font-mono text-[11px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 rounded">{typeLabel(page.name)}</span>}
         </h1>
 
         {empty ? (
