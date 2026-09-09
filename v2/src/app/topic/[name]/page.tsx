@@ -43,6 +43,15 @@ function Section({ icon, title, color, children }: { icon: React.ReactNode; titl
   );
 }
 
+// ISR。cookiesを読まない取得のみで構成されているため静的化でき、CDNから配れる＝
+// Vercel関数のコールドスタート（本番実測でトップは2.66〜3.83秒）を踏まない。知識は日次パイプラインで更新されるので短め。
+// 空配列＝ビルド時は事前生成しない。動的セグメントは generateStaticParams が無いと
+// ISRの対象にならず毎回オンデマンド実行になるため、空でも宣言してキャッシュに乗せる
+// （未知のidは dynamicParams のデフォルト true で初回生成→以後キャッシュ）。
+export async function generateStaticParams() { return []; }
+
+export const revalidate = 600;
+
 export default async function TopicPage({ params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
   const decoded = decodeURIComponent(name);

@@ -1,82 +1,35 @@
-import type { Metadata } from 'next';
-import { getArticleById, getReportById, getCoreData } from './actions';
+import { getPublicCoreData } from './actions';
 import { PublicApp, type PublicInitial } from '@/components/public/PublicApp';
-import { SITE_URL, SITE_NAME } from '@/lib/site';
 
-// シェア時のOG/Twitterカードを動的生成。?article=N または ?report=N が付いていれば
-// その記事/レポートのタイトル・サマリーで上書きする。LLM追加コストなし（DB参照のみ）。
-export async function generateMetadata(
-  { searchParams }: { searchParams: Promise<{ article?: string; report?: string }> },
-): Promise<Metadata> {
-  const sp = await searchParams;
-  const articleId = sp.article ? Number(sp.article) : NaN;
-  const reportId = sp.report ? Number(sp.report) : NaN;
-
-  if (Number.isFinite(articleId)) {
-    const a = await getArticleById(articleId).catch(() => null);
-    if (a) {
-      const title = (a.titleJa || a.title || '無題').slice(0, 80);
-      const desc = (a.summary ?? '').slice(0, 200);
-      const url = `${SITE_URL}/?article=${articleId}`;
-      return {
-        title,
-        description: desc,
-        openGraph: { title, description: desc, url, siteName: SITE_NAME, type: 'article', locale: 'ja_JP' },
-        twitter: { card: 'summary_large_image', title, description: desc },
-      };
-    }
-  }
-
-  if (Number.isFinite(reportId)) {
-    const r = await getReportById(reportId).catch(() => null);
-    if (r) {
-      const typeLabel = r.type === 'weekly' ? '週次レポート' : r.type === 'monthly' ? '月次レポート' : 'デイリーレポート';
-      const title = `${typeLabel} ${r.reportDate}`;
-      const lead = (r.content ?? '')
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/[#*_`>]/g, '')
-        .replace(/\[ID:\d+\]/g, '')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 200);
-      const url = `${SITE_URL}/?report=${reportId}`;
-      return {
-        title,
-        description: lead,
-        openGraph: { title, description: lead, url, siteName: SITE_NAME, type: 'article', locale: 'ja_JP' },
-        twitter: { card: 'summary_large_image', title, description: lead },
-      };
-    }
-  }
-
-  // デフォルトは layout.tsx の site-wide metadata を継承
-  return {};
-}
+// 公開ホームはISR（5分）。ここが動的レンダリングに落ちないことが最重要。
+// 落ちるとVercelが `Cache-Control: private, no-cache, no-store` を付けてCDNキャッシュを完全に捨て、
+// 全アクセスが関数のコールドスタートを踏む（本番実測: ウォーム0.18s / コールド2.66〜3.83s）。
+// 動的化の引き金は2つあり、両方を外してある:
+//   ① cookies/auth  → auth()を読まない getPublicCoreData のみを使う（getCoreDataは使わない）
+//   ② searchParams  → 旧OG用の ?article= / ?report= は middleware.ts で独立URLへリダイレクト。
+//                      ここで searchParams を読むと再び動的化するので参照しないこと。
+// ページ固有の metadata は layout.tsx のサイト共通metadataを継承する。
+export const revalidate = 300;
 
 export default async function Page() {
   // 公開ホームの初期フィードをSSRで先に取得してRSCに載せる。これにより /about 等の
-  // intercept経由ページから / へ戻った直後に Client Server Action(getCoreData)へ依存せず
-  // 即描画でき、ナビゲーション中断によるabort（=空スケルトンで止まる）を回避する。
-  // Vercel⇄Turso同リージョンでサーバ取得は速く、TTFB増は小さい。失敗時はnull（従来どおりClient取得）。
+  // intercept経由ページから / へ戻った直後に Client Server Action へ依存せず即描画でき、
+  // ナビゲーション中断によるabort（=空スケルトンで止まる）を回避する。
+  // 上から順ロード: SSRでは「見た目の部分」=先頭12件(PublicApp の ABOVE_FOLD と一致)のみawaitして
+  // 最初のHTMLを軽くする。フィード残り・統計・推薦はクライアントが波で後追いする（PublicApp参照）。
+  // 定数はPublicApp('use client')からimportすると値がundefinedになる（limit=NaN→全件化）ためリテラルで持つ。
   let initialPublic: PublicInitial | null = null;
   try {
-    // SSRの初期フィード取得は最大2.5秒で打ち切る。PWAのコールド起動（Vercel関数ブート＋Turso初回接続）で
-    // getCoreData が長引くと、ここでawaitしている最初のHTMLが丸ごとブロックされ、起動が
-    // 「スプラッシュ画像のまま十数秒フリーズ」する。時間切れなら null を返してシェルを先に描画し、
-    // クライアントがリトライ付き取得（PublicAppのuseEffect）でフィードを後追いさせる。
-    // ウォーム時はほぼ即返るので従来どおり initialData 付きで描画＝戻り時abort回避の最適化も維持。
-    // 上から順ロード: SSRでは「見た目の部分」=先頭12件(PublicApp の ABOVE_FOLD と一致)のみawaitして
-    // 最初のHTMLを軽くする。フィード残り(〜PAGE)・統計・推薦はクライアントが波で後追いする（PublicApp参照）。
-    // 定数はPublicApp('use client')からimportすると値がundefinedになる（limit=NaN→全件化）ためリテラルで持つ。
+    // 保険のタイムアウト。ISR化により、ここが走るのは「5分に1度の再生成」だけで、しかも
+    // stale-while-revalidate でユーザーを待たせない裏側の処理になった。よって旧2.5秒のような
+    // 短い打ち切りは不要で、むしろデータを載せ切る方が良い（8秒は異常時の保険）。
     const core = await Promise.race([
-      getCoreData(12).catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+      getPublicCoreData(12).catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
     ]);
-    // 空フィードは信用しない。getCoreData の内部サブ取得はDBエラーを握り潰して空配列を返すため、
-    // Turso瞬断などSSRの一過性失敗で initialData が「記事0件の成功」になり、クライアント再取得も
-    // スキップされて「記事がまだありません」で固定化する。空なら null にしてクライアント取得
-    // （リトライ付き）へフォールバックさせる。本番コーパスは非空なので空=ほぼ一過性失敗。
+    // 空フィードは信用しない。内部のサブ取得はDBエラーを握り潰して空配列を返すため、
+    // Turso瞬断などの一過性失敗が「記事0件の成功」としてISRにキャッシュされると5分間その空が配られる。
+    // 空なら null にしてクライアント取得（リトライ付き）へフォールバックさせる。
     if (core && Array.isArray(core.data) && core.data.length > 0) {
       initialPublic = {
         data: core.data as PublicInitial['data'],

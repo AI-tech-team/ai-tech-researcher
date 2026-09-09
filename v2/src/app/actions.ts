@@ -160,9 +160,11 @@ function urlDomain(url: string | null): string | null {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return null; }
 }
 
-export async function getCollectedDataList(limit = 60, offset = 0): Promise<CollectedItem[]> {
+export async function getCollectedDataList(limit = 60, offset = 0, anonymous = false): Promise<CollectedItem[]> {
   try {
-    const userId = await currentUserId();
+    // anonymous=true はユーザー状態の解決を丸ごと省く（=cookiesを読まない）。SSRの静的化に必要。
+    // クライアントから true を渡されても「自分の状態が見えなくなる」だけの権限降格なので安全。
+    const userId = anonymous ? undefined : await currentUserId();
     const lim = Math.min(Math.max(limit, 1), 200);
     const off = Math.max(offset, 0);
 
@@ -246,9 +248,9 @@ export async function getArticlesByCategory(category: string, limit = 40, offset
 // フィードは新着順のため、1日52本ある重要度9-10の記事が下に沈む（Techmeme等が川の上に必ず数本置くのと同じ理由）。
 // 直近48hを重要度→新着で並べ、同一ストーリー(別媒体の同報道)を畳んで数本だけ返す。LLMコストゼロ・既存列のみ。
 // 記事が薄い時間帯でも空にならないよう、48hで足りなければ7日→30日と窓を広げる。
-export async function getTodayHighlights(limit = 6): Promise<CollectedItem[]> {
+export async function getTodayHighlights(limit = 6, anonymous = false): Promise<CollectedItem[]> {
   try {
-    const userId = await currentUserId();
+    const userId = anonymous ? undefined : await currentUserId();
     const base = await cached(`highlights:${limit}`, 90_000, async () => {
       const pick = async (days: number) => {
         const cutoff = sqlTs(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
@@ -378,9 +380,9 @@ export async function getArticleById(id: number): Promise<ArticleDetail | null> 
 export interface ArticleCounts { total: number; unread: number; favorite: number; readLater: number; }
 
 // セグメントバッジ用の全体件数（ページングで未ロードでも正確）。ユーザー別状態はuser_article_state集計
-export async function getArticleCounts(): Promise<ArticleCounts> {
+export async function getArticleCounts(anonymous = false): Promise<ArticleCounts> {
   try {
-    const userId = await currentUserId();
+    const userId = anonymous ? undefined : await currentUserId();
     const [tot] = await db.select({ c: count() }).from(collectedData);
     const total = Number(tot?.c ?? 0);
     if (!userId) return { total, unread: total, favorite: 0, readLater: 0 };
@@ -1189,6 +1191,23 @@ export async function getCoreData(articleLimit = 60) {
     getTodayHighlights(6),
   ]);
   return { srcs, data, reportsData, activity, counts, highlights };
+}
+
+// SSR(公開ホーム)専用のコアデータ。auth()/cookies を一切読まないのが唯一にして最大の役割。
+// getCoreData は getSourcesData(isOwner)・overlayUserState(currentUserId) 経由で cookies を読むため、
+// これをSSRで await すると page.tsx が動的レンダリングに落ち、Vercelが
+// `Cache-Control: private, no-cache, no-store` を付けてCDNキャッシュを完全に捨てる。
+// 結果、全アクセスが関数のコールドスタートを踏んでいた（本番実測: ウォーム0.18s / コールド2.66〜3.83s）。
+// ユーザー別状態(お気に入り/後で読む/既読)とsrcs(オーナー限定)は載せない。ログイン中の状態は
+// 従来どおりクライアント側の getCoreData 再取得で後から上書きされる。
+export async function getPublicCoreData(articleLimit = 12) {
+  const [data, reportsData, counts, highlights] = await Promise.all([
+    getCollectedDataList(articleLimit, 0, true),
+    getReportsData(),
+    getArticleCounts(true),
+    getTodayHighlights(6, true),
+  ]);
+  return { data, reportsData, counts, highlights };
 }
 
 // ── v10: Web Push通知の購読 ─────────────────────────────────────────

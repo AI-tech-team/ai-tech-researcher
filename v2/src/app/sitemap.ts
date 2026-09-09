@@ -7,6 +7,11 @@ const CATEGORIES = ['LLM推論', 'エージェント', 'ツール/フレーム�
 
 // 公開ページのサイトマップ。入口ページに加え、全画面ページの記事(/articles/[id])と
 // レポート(/reports/[id])の直近分を列挙してクローラに知らせる（どちらも独立URLを持つ）。
+// 本番実測で /sitemap.xml の生成に46.8秒かかっていた（Googlebotは待たない＝実質クロール不能）。
+// 生成自体の内訳測定は本番読み取りトークンの失効で未実施だが、1時間キャッシュすれば
+// 配信は常にCDNからになり、クローラが46秒待たされることは無くなる。内訳の是正は別途。
+export const revalidate = 3600;
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
   const pages: MetadataRoute.Sitemap = [
@@ -19,7 +24,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   let articles: MetadataRoute.Sitemap = [];
   try {
-    const items = await getCollectedDataList(200, 0);
+    // 第3引数 true = 匿名取得。これを付けないと currentUserId()→auth()→cookies() を読んでしまい、
+    // sitemap 全体が動的レンダリングに落ちて上の revalidate が無効化される。
+    const items = await getCollectedDataList(200, 0, true);
     articles = items.map(i => {
       const d = i.publishedAt ? new Date(i.publishedAt) : now;
       return {

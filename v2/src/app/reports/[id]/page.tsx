@@ -24,6 +24,15 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   };
 }
 
+// ISR。cookiesを読まない取得のみで構成されているため静的化でき、CDNから配れる＝
+// Vercel関数のコールドスタート（本番実測でトップは2.66〜3.83秒）を踏まない。レポートは生成後に変わらないので長め。
+// 空配列＝ビルド時は事前生成しない。動的セグメントは generateStaticParams が無いと
+// ISRの対象にならず毎回オンデマンド実行になるため、空でも宣言してキャッシュに乗せる
+// （未知のidは dynamicParams のデフォルト true で初回生成→以後キャッシュ）。
+export async function generateStaticParams() { return []; }
+
+export const revalidate = 3600;
+
 export default async function ReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const report = await getReportById(Number(id));
