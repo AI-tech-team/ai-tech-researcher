@@ -16,6 +16,8 @@
 # next.js
 /.next/
 /out/
+# OneDrive がハンドルを掴んで .next を unlink できないときの退避先（EPERM 対策）
+/.next-stale-*/
 
 # production
 /build
@@ -42,11 +44,17 @@ yarn-error.log*
 # 値を含まない雛形は追跡する（必要envの文書化）
 !.env.example
 
+# 会員データの暗号化バックアップ（backup-users.ts）。
+# backups/ は公開リポジトリにコミットされるが、こちらは**絶対にコミットしない**。
+private-backups/
+
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
 
 .vercel

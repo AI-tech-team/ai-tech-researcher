@@ -126,6 +126,11 @@ export async function GET() {
 
   return Response.json(body, {
     status: httpStatus,
-    headers: { 'Cache-Control': 'no-store' },
+    headers: {
+      // オーナー向けの応答は詳細を含むので共有キャッシュに載せない。
+      // 匿名向け（外形監視が叩くのはこちら）はCDNに20秒吸わせる。cached() はインスタンス内メモリなので、
+      // それだけだと並列に叩かれた分だけ 3〜4.5秒のベクトルクエリ2本が同時に走っていた（2026-09-10 監査）。
+      'Cache-Control': owner ? 'private, no-store' : 'public, max-age=20, s-maxage=20',
+    },
   });
 }

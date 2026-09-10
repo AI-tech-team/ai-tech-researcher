@@ -6,7 +6,12 @@ import { desc, asc, eq, count, gte, sql, like, or, and, inArray } from 'drizzle-
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
-import { memRateLimit } from '@/lib/ratelimit';
+// 書込Actionは checkRateLimit（rate_limits 表を共有ストアにする版）を使う。
+// memRateLimit はプロセス内Mapなので、Vercelのように毎リクエスト別インスタンスに載る環境では
+// 並列に叩くだけでカウンタがリセットされ、実質無制限になる。
+import { checkRateLimit } from '@/lib/ratelimit';
+import { isAllowedPushEndpoint } from '@/lib/push-endpoint';
+import { logError } from '@/lib/logError';
 import { google } from '@ai-sdk/google';
 import { embedMany } from 'ai';
 import { z } from 'zod';
@@ -100,7 +105,7 @@ async function logReadingEvent(articleId: number, action: string, weight: number
   try {
     await db.insert(readingEvents).values({ articleId, action, weight, category, userId: userId ?? null });
   } catch (e) {
-    console.error('Failed to log reading event:', e);
+    await logError('log reading event', e, { alert: true });
   }
 }
 
@@ -240,7 +245,7 @@ export async function getArticlesByCategory(category: string, limit = 40, offset
       return parseCollectedRows(rows);
     });
   } catch (error) {
-    console.error('getArticlesByCategory failed:', error);
+    await logError('getArticlesByCategory', error, { alert: true });
     return [];
   }
 }
@@ -280,7 +285,7 @@ export async function getTodayHighlights(limit = 6, anonymous = false): Promise<
     await overlayUserState(items, userId);
     return items;
   } catch (error) {
-    console.error('getTodayHighlights failed:', error);
+    await logError('getTodayHighlights', error, { alert: true });
     return [];
   }
 }
@@ -302,7 +307,7 @@ export async function getArticlesByTag(tag: string, limit = 40, offset = 0): Pro
       return parseCollectedRows(rows);
     });
   } catch (error) {
-    console.error('getArticlesByTag failed:', error);
+    await logError('getArticlesByTag', error);
     return [];
   }
 }
@@ -319,7 +324,7 @@ export async function getAdjacentReports(type: string, reportDate: string): Prom
       .orderBy(asc(reports.reportDate)).limit(1);
     return { prev: prev ?? null, next: next ?? null };
   } catch (error) {
-    console.error('getAdjacentReports failed:', error);
+    await logError('getAdjacentReports', error);
     return { prev: null, next: null };
   }
 }
@@ -356,7 +361,7 @@ export async function getSitemapTopics(limit = 300): Promise<string[]> {
       .slice(0, lim)
       .map((x) => x.n);
   } catch (error) {
-    console.error('getSitemapTopics failed:', error);
+    await logError('getSitemapTopics', error);
     return [];
   }
 }
@@ -387,7 +392,7 @@ export async function getTopicIndex(limit = 200): Promise<{ name: string; mentio
       .filter((x) => x.name && isPublishableEntity(x.name, x.mentions))
       .slice(0, lim);
   } catch (error) {
-    console.error('getTopicIndex failed:', error);
+    await logError('getTopicIndex', error);
     return [];
   }
 }
@@ -425,7 +430,7 @@ export async function getArticleById(id: number): Promise<ArticleDetail | null> 
     await overlayUserState(items, userId);
     return items[0] ?? null;
   } catch (error) {
-    console.error('getArticleById failed:', error);
+    await logError('getArticleById', error, { alert: true });
     return null;
   }
 }
@@ -447,7 +452,7 @@ export async function getArticleCounts(anonymous = false): Promise<ArticleCounts
     const read = Number(rd[0]?.c ?? 0);
     return { total, unread: Math.max(0, total - read), favorite: Number(fav[0]?.c ?? 0), readLater: Number(rl[0]?.c ?? 0) };
   } catch (error) {
-    console.error('getArticleCounts failed:', error);
+    await logError('getArticleCounts', error);
     return { total: 0, unread: 0, favorite: 0, readLater: 0 };
   }
 }
@@ -493,7 +498,7 @@ export async function toggleFavorite(id: number) {
     if (!Number.isFinite(id)) return { success: false };
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
-    if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
+    if (!await checkRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const [cur] = await db.select({ v: userArticleState.isFavorited }).from(userArticleState)
       .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
     const newValue = (cur?.v ?? 0) === 1 ? 0 : 1;
@@ -548,7 +553,7 @@ export async function toggleReadLater(id: number) {
     if (!Number.isFinite(id)) return { success: false };
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
-    if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
+    if (!await checkRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const [cur] = await db.select({ v: userArticleState.isReadLater }).from(userArticleState)
       .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
     const newValue = (cur?.v ?? 0) === 1 ? 0 : 1;
@@ -580,7 +585,7 @@ export async function markAsRead(id: number) {
     if (!Number.isFinite(id)) return { success: false };
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
-    if (!memRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
+    if (!await checkRateLimit('uwrite', userId, 300, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     const [cur] = await db.select({ v: userArticleState.isRead }).from(userArticleState)
       .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
     const newValue = (cur?.v ?? 0) === 1 ? 0 : 1;
@@ -644,7 +649,7 @@ export async function getKnowledgeStats(): Promise<KnowledgeStats> {
       staleRelations: Number(staleRel[0]?.c ?? 0),
     };
   } catch (error) {
-    console.error('Failed to fetch knowledge stats:', error);
+    await logError('fetch knowledge stats', error);
     return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
   }
 }
@@ -681,7 +686,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
       hasProfile: !!p,
     };
   } catch (error) {
-    console.error('getMyProfile failed:', error);
+    await logError('getMyProfile', error);
     return null;
   }
 }
@@ -690,7 +695,7 @@ export async function updateMyProfile(data: { displayName: string; interests: st
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false };
-    if (!memRateLimit('profile', userId, 30, 60_000)) return { success: false, message: '更新が多すぎます。少し待ってください' };
+    if (!await checkRateLimit('profile', userId, 30, 60_000)) return { success: false, message: '更新が多すぎます。少し待ってください' };
     const now = new Date().toISOString();
     const vals = {
       displayName: (data.displayName ?? '').slice(0, 80),
@@ -705,7 +710,7 @@ export async function updateMyProfile(data: { displayName: string; interests: st
     revalidatePath('/');
     return { success: true };
   } catch (error) {
-    console.error('updateMyProfile failed:', error);
+    await logError('updateMyProfile', error, { alert: true });
     return { success: false };
   }
 }
@@ -715,7 +720,7 @@ export async function subscribeEmailDigest() {
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false };
-    if (!memRateLimit('profile', userId, 30, 60_000)) return { success: false };
+    if (!await checkRateLimit('profile', userId, 30, 60_000)) return { success: false };
     const now = new Date().toISOString();
     await db.insert(userProfiles)
       .values({ userId, emailOptIn: 1, updatedAt: now })
@@ -723,7 +728,7 @@ export async function subscribeEmailDigest() {
     revalidatePath('/');
     return { success: true };
   } catch (error) {
-    console.error('subscribeEmailDigest failed:', error);
+    await logError('subscribeEmailDigest', error, { alert: true });
     return { success: false };
   }
 }
@@ -735,9 +740,12 @@ export async function deleteMyAccount(): Promise<{ success: boolean; needLogin?:
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false, needLogin: true };
-    if (!memRateLimit('account', userId, 5, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
+    if (!await checkRateLimit('account', userId, 5, 60_000)) return { success: false, message: '操作が多すぎます。少し待ってください' };
     // 依存テーブル → users の順で、このユーザーの個人データを全削除する。
     await db.delete(chatMemory).where(eq(chatMemory.userId, userId));
+    // push購読は端末固有の識別子と鍵を持つ。消し忘れると退会後も通知が届き続け、
+    // プライバシーポリシーの「サーバーから削除します」が事実と食い違う。
+    await db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
     await db.delete(userArticleState).where(eq(userArticleState.userId, userId));
     await db.delete(readingEvents).where(eq(readingEvents.userId, userId));
     await db.delete(userTopicWeights).where(eq(userTopicWeights.userId, userId));
@@ -745,7 +753,7 @@ export async function deleteMyAccount(): Promise<{ success: boolean; needLogin?:
     await db.delete(users).where(eq(users.id, userId));
     return { success: true };
   } catch (error) {
-    console.error('deleteMyAccount failed:', error);
+    await logError('deleteMyAccount', error, { alert: true });
     return { success: false, message: '退会処理に失敗しました。時間をおいて再試行するか、お問い合わせください。' };
   }
 }
@@ -818,7 +826,7 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
       articles,
     };
   } catch (error) {
-    console.error('getEntityKnowledgePage failed:', error);
+    await logError('getEntityKnowledgePage', error);
     return null;
   }
 }
@@ -907,7 +915,7 @@ export async function getReadingProfile(): Promise<ReadingProfile | null> {
 
     return { totalEvents: events.length, radar, categoryDistribution, recentShift, neglectedCategories, persona };
   } catch (error) {
-    console.error('Failed to compute reading profile:', error);
+    await logError('compute reading profile', error);
     return null;
   }
 }
@@ -1045,7 +1053,7 @@ export async function searchRelated(query: string): Promise<CollectedItem[]> {
     await overlayUserState(related, userId);
     return related;
   } catch (error) {
-    console.error('searchRelated failed:', error);
+    await logError('searchRelated', error);
     return [];
   }
 }
@@ -1072,7 +1080,7 @@ export async function searchArticles(query: string, limit = 25): Promise<Collect
     await overlayUserState(out, userId);
     return out;
   } catch (error) {
-    console.error('searchArticles failed:', error);
+    await logError('searchArticles', error, { alert: true });
     return [];
   }
 }
@@ -1092,7 +1100,7 @@ export async function getReportById(id: number): Promise<Report | null> {
       .limit(1);
     return (r as Report) ?? null;
   } catch (error) {
-    console.error('getReportById failed:', error);
+    await logError('getReportById', error, { alert: true });
     return null;
   }
 }
@@ -1113,7 +1121,7 @@ export async function getMyFavorites(): Promise<CollectedItem[]> {
     await overlayUserState(items, userId);
     return items;
   } catch (error) {
-    console.error('getMyFavorites failed:', error);
+    await logError('getMyFavorites', error);
     return [];
   }
 }
@@ -1134,7 +1142,7 @@ export async function getMyReadLater(): Promise<CollectedItem[]> {
     await overlayUserState(items, userId);
     return items;
   } catch (error) {
-    console.error('getMyReadLater failed:', error);
+    await logError('getMyReadLater', error);
     return [];
   }
 }
@@ -1241,7 +1249,7 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
     await overlayUserState(items, userId);
     return items;
   } catch (error) {
-    console.error('Failed to fetch recommendations:', error);
+    await logError('fetch recommendations', error);
     return [];
   }
 }
@@ -1291,8 +1299,13 @@ export async function savePushSubscription(sub: unknown): Promise<{ success: boo
     const parsed = PushSubSchema.safeParse(sub);
     if (!parsed.success) return { success: false };
     const { endpoint, keys } = parsed.data;
-    // endpoint文字列でレート制限（1端末が短時間に大量登録するのを防ぐ）
-    if (!memRateLimit('push', endpoint.slice(0, 64), 10, 60_000)) return { success: false };
+    // 送信先を既知のプッシュサービスに限定する。任意URLを許すと、匿名で大量登録された行を
+    // 毎朝のジョブが1件ずつPOSTしにいって配信が詰まる（＝Runner からのブラインドSSRFにもなる）。
+    // これが主防御: 偽の購読を1件作るのに本物のFCM/Mozilla登録が要るので、量を作れなくなる。
+    if (!isAllowedPushEndpoint(endpoint)) return { success: false };
+    // レート制限は DB共有版にする。memRateLimit はインスタンス跨ぎで効かず、
+    // Vercelでは並列に叩くだけでカウンタがリセットされる。
+    if (!(await checkRateLimit('push', endpoint.slice(0, 64), 10, 60_000))) return { success: false };
     const userId = await currentUserId();
     // 同一endpointは差し替え（購読キー更新・ユーザー紐付け更新に対応）
     await db.insert(pushSubscriptions)
@@ -1303,18 +1316,23 @@ export async function savePushSubscription(sub: unknown): Promise<{ success: boo
       });
     return { success: true };
   } catch (error) {
-    console.error('savePushSubscription failed:', error);
+    await logError('savePushSubscription', error, { alert: true });
     return { success: false };
   }
 }
 
+// endpoint の所持そのものが本人性の証明（Web Push の設計上そうなっている＝ブラウザが自分の
+// endpoint を送る）。ログイン必須にすると匿名購読者が解除できなくなるので、認可は課さず
+// 総当たり・DoS側だけ塞ぐ。
 export async function deletePushSubscription(endpoint: unknown): Promise<{ success: boolean }> {
   try {
     if (typeof endpoint !== 'string' || endpoint.length > 1000) return { success: false };
+    if (!isAllowedPushEndpoint(endpoint)) return { success: false };
+    if (!(await checkRateLimit('push:del', endpoint.slice(0, 64), 10, 60_000))) return { success: false };
     await db.delete(pushSubscriptions).where(eq(pushSubscriptions.endpoint, endpoint));
     return { success: true };
   } catch (error) {
-    console.error('deletePushSubscription failed:', error);
+    await logError('deletePushSubscription', error, { alert: true });
     return { success: false };
   }
 }

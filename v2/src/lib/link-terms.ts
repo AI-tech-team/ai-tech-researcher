@@ -4,16 +4,51 @@
 //   ② 接続語を共有し、日付が近い   → 同じ出来事（ダイジェストで1本にまとめる＝重複排除）
 //   ③ 接続語を共有し、日付が離れている → 続報（「これまでの経緯」の行に使う）
 //
-// 2026-09-10 の本番実測（重要記事20本を目視判定）で、素の語で引くと
-// **本物25% / 全て誤接続50%** だった。誤接続は4型しかなく、ここで全部塞ぐ:
+// ⚠️ 本番未接続。src/ からは一度も import されていない（利用は scripts/ とテストのみ）。
+//    下の数字は「今こうなっている」ではなく「入れたらこうなる」の予測にすぎない。
+//
+// ⚠️ 2026-09-10 レッドチーム（別期間 06-20 / 07-08 / 08-13・595本）で以下を撤回した:
+//   ・「誤接続0% / 本物60%」→ 別期間では **適合率56.5% / 誤接続40%**。
+//     そもそも n=20 では誤接続0%は「真値が最大16.8%」としか言えず（Clopper-Pearson）、
+//     25%→60% も Fisher 両側 p=0.054 で有意ではなかった。
+//   ・「誤接続は4型しかない」→ **新期間で6型（E〜J）が出た。うち3型は塞いだはずの型の再発。**
+//   ・「本物/弱い/誤接続」の判定基準はどこにも明文化されておらず、第三者が再測定できない。
+//
+// 判明した構造的な問題（閾値では直らない）:
+//   E DFは特定性の代理にならない。「ドコモ」(DF37=0.16%) が4つの無関係な出来事を1本に潰した。
+//     ハブ性は頻度でなく役割。AI中心コーパスでは日本の通信事業者は希少語だが通信ニュース内ではハブ。
+//   F kuromoji が日本語一般語を固有名詞と誤タグする（自社/ローンチ/ハルシネーションが通過、
+//     「トークン」→ トー[固有名詞]+クン[接尾]）。「型Aは品詞で塞げる」の前提が崩れている。
+//   G ASCII 経路には品詞ゲートが無く、大文字始まりなら通る（PDF/JSON/OCR/RAG/MCP がキーになった）。
+//     防御が isGenericEntity の手書きリストだけ＝新語に構造的に後手。
+//   H 同名異物。Delta→Delta Electronics、Grok→grok-mermaid。「固有名詞 AND 非ハブ」の2軸では検出不能。
+//   I HTMLエンティティ・URL 由来の分割＝型Cの別入口からの再発（`GPT&#45;5.6 Sol` → GPT + Sol）。
+//   J 表記ゆれでキーが割れる見逃し（`DeepSeek V4 Pro 0813` vs `deepseek-v4-pro-0813`）。
+//     再現率は一度も測っていなかった（適合率しか見ていない）。
+//
+// 測定そのものの欠陥:
+//   ・HUB_RATIO の物差しが歪んでいる。DFは search_tokens（タイトル＋要約＋ソースドメイン）で
+//     測るのに接続語はタイトルからしか取らない。Qwen は実際530本に出るのにDF396、GitHub は逆に370本ぶん過大。
+//   ・2%の線は DF≥2 の455語のうち20語(4.4%)にしか触れていない。しかも観測された誤接続20ペアは
+//     **全て閾値の下**（ゲートが意図的に通した語）から出ており、0.2%まで10倍締めても14ペア残る。
+//   ・グローバルDFか記事日時点DFかで、595本中52本(8.7%)が同一性キーを変える＝出力が再現しない。
+//
+// 最も危うい仮定（ここが崩れている）: **「DFが低い語は特定の出来事を一意に指す」**。
+//   偽のとき「最希少の1語を選ぶ」は「最も検証されていない語を選ぶ」に反転する。DF=2〜10 の語は
+//   コーパス内に確かめる材料が2〜10本しか無い語であり、そこに記事を消す権限(②)と誤情報を出す権限(③)が集中する。
+//
+// ②と③で機構を1つにしたのも誤り。失敗の観測可能性が逆（②=サイレントな欠落 / ③=見える誤情報）で、
+// ②に置いた唯一の保守側の梃子（4文字未満は merge しない）は実際の誤接続20ペアに一度も触れていない。
+//
+// 元の観測（4型・これ自体は実在する失敗）は下記。塞いだが、これで全部ではなかった:
 //   A 一般語  「死ぬ」(DF32)→「売れ筋・死に筋を可視化する店舗DX」/「我々」「壊滅」「今月」
 //   B 数値    「1300」(億トークン)→「AIカメラ1,300台で寮を監視」
 //   C 分割    「Read the Docs」→ read/the/docs に割れて Google Docs へ
 //             「Listen Labs」→ listen → Postgres LISTEN/NOTIFY
 //   D 上限ミス DF上限50が airpods(51) gpt-6(64) huawei(85) siri(134) を捨てていた
 //
-// 正しい規則は **①固有名詞であること（品詞）AND ②ハブでないこと（DF）** の2軸。
-// 当初「希少ならよい」と結論したのは誤りで、それはエンティティ表（＝すでに固有名詞に
+// 「①固有名詞であること（品詞）AND ②ハブでないこと（DF）」の2軸で足りるとしたのも誤り（F/G/H が反例）。
+// 当初「希少ならよい」と結論したのはさらに前の誤りで、それはエンティティ表（＝すでに固有名詞に
 // 絞り込まれたもの）で測った結果を素の語に一般化してしまったため（[[pattern-coverage-is-not-outcome]]）。
 
 import { isGenericEntity } from './entity-quality';
@@ -57,16 +92,28 @@ export function baseFormOf(phrase: string): string {
 
 /**
  * 2つの記事の接続語が「同じものを指している」か（規則②＝重複判定に使う）。
- * `Siri AI` と `Siri` のように、片方がもう片方の**語の先頭からの並び**なら同じとみなす。
- * 重複と判定すると片方がダイジェストから消える＝サイレントな欠落なので、
- * 4文字未満の短い一致では merge しない（保守側に倒す）。
+ *
+ * ⚠️ 2026-09-10 のレッドチーム実測で**前方一致を削除した**。
+ * `Siri AI ⊃ Siri` を拾うために入れていたが、別期間3日分で前方一致のみで成立した31組のうち
+ * **およそ26組が誤マージ**だった:
+ *   Pixel   → Pixel Watch 5 / Pixel 11シリーズ / Pixel Tag / 手話AIモデル が1つの出来事に（6組）
+ *   DeepSeek→ V4 Pro 0813提供 / Harness利用可能 / 新料金体系 の3イベントが連結
+ *   Copilot → Copilot Notebook の話 / MicrosoftがAI機能を廃止し統合
+ * これは classifyTerms のコメントにある `iPhone`(DF280) の21本連鎖マージと完全に同型で、
+ * 主キー方式では塞いだ穴が、こちらにはそのまま残っていた。`Pixel`(DF=84) は `iPhone`(280) より
+ * 希少なのでDF閾値では捕まらない。守れていたのは `Siri` 1例だけなので、代償に見合わない。
+ *
+ * 重複と判定すると片方がダイジェストから消える＝サイレントな欠落なので、完全一致だけを採る
+ * （失敗の非対称性: 見える冗長 ＜ サイレントな欠落）。
  */
 export function sharedLinkTerms(a: string[], b: string[]): string[] {
+  const bySurface = new Map<string, string>();
+  for (const y of b) bySurface.set(y.toLowerCase(), y);
   const shared: string[] = [];
-  for (const x of a) for (const y of b) {
-    const [s, l] = x.length <= y.length ? [x.toLowerCase(), y.toLowerCase()] : [y.toLowerCase(), x.toLowerCase()];
-    if (s.length < 4) continue;
-    if (s === l || l.startsWith(s + ' ')) shared.push(x.length <= y.length ? x : y);
+  for (const x of a) {
+    if (x.length < 4) continue; // 短い一致では merge しない（保守側に倒す）
+    const hit = bySurface.get(x.toLowerCase());
+    if (hit) shared.push(x);
   }
   return [...new Set(shared)];
 }
@@ -142,6 +189,10 @@ export function extractLinkTerms(title: string, posTokens: PosToken[] = []): str
   for (const term of raw) {
     if (isGenericEntity(term)) continue;           // AI / LLM / US / CEO / 中国 …
     if (VERSIONISH.test(term)) continue;           // 数値単独（型B）
+    // 2文字以下のASCII略語は曖昧すぎる。本番実測で `IT` が拾われ、FTSが
+    // モデル名の `gemma-4-12b-it`（instruction-tuned の it）に一致して
+    // 「AIがITセクターを30兆ドルに」と「IT企業CEOに変身した16人の俳優」を同じ出来事にした。
+    if (/^[A-Za-z0-9.+-]{1,2}$/.test(term)) continue;
     const k = term.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
@@ -166,4 +217,35 @@ export function isHubTerm(df: number, corpusSize: number): boolean {
 export function isUsableLinkTerm(term: string, df: number, corpusSize: number): boolean {
   if (df < 2) return false;
   return !isHubTerm(df, corpusSize);
+}
+
+/**
+ * 記事の接続語を「同一性に使う1語」と「多様性の制御に使うハブ語」に分ける。
+ *
+ * 2026-09-10 の本番実測で必要になった。1日ぶん333本を組んだところ、
+ * `iPhone`(DF280) が **21本を鎖状に連結**し、折りたたみiPhone・iPhone 18 Pro・AirPods を
+ * 1つの出来事にまとめてしまった（[[debug-story-overmerge]] の連鎖マージと同じ型）。
+ * さらに `iOS`(DF192) が「iMacやiPhoneをデザインした元Apple社員がフェラーリの…」に誤接続した。
+ *
+ * 原因は閾値ではなく、**一般名（iPhone / iOS）と固有名（iPhone Duo / iPhone 18 Pro）が同居**すること。
+ * 最も希少な1語だけを同一性の根拠にすれば、iPhone Duo と AirPods は別の出来事に分かれる。
+ *
+ * 一方でハブ語（Apple など）は捨てずに返す。**1社が朝刊を占拠しないための編集制御**に使う
+ * ＝ ハブ語の唯一の正しい用途。同一性には絶対に使わない。
+ */
+export function classifyTerms(
+  terms: string[],
+  dfOf: (t: string) => number,
+  corpusSize: number,
+): { primary: string | null; hubs: string[] } {
+  const usable: Array<[string, number]> = [];
+  const hubs: string[] = [];
+  for (const t of terms) {
+    const df = dfOf(t);
+    if (df < 2) continue;                       // 自分の記事にしか無い＝接続先が存在しない
+    if (isHubTerm(df, corpusSize)) { hubs.push(t); continue; }
+    usable.push([t, df]);
+  }
+  usable.sort((a, b) => a[1] - b[1] || b[0].length - a[0].length);
+  return { primary: usable.length ? usable[0][0] : null, hubs };
 }

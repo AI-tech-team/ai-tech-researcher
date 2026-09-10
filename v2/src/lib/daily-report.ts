@@ -19,6 +19,43 @@ function parseSqlTs(s: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** 候補として引く件数。ここからドメイン上限を掛けて TOP_N まで絞る。 */
+const CANDIDATE_LIMIT = 120;
+/** レポートの素材として LLM に渡す上限（旧実装の LIMIT 40 と同じ）。 */
+const TOP_N = 40;
+/** 1ドメインが取れる最大枠。上位20本のうち5本がApple関連という日が実在した（2026-09-10 実測）。 */
+const PER_DOMAIN_CAP = 5;
+
+function domainOf(url: string | null | undefined): string {
+  if (!url) return '';
+  try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; }
+}
+
+/**
+ * 並び順を保ったまま、1ドメインの本数に上限を掛けて上位 `limit` 件を返す。
+ * 上限で弾かれた記事は捨てず、枠が余ったら順に補充する（欠落より冗長を選ぶ）。
+ */
+export function pickTopWithDomainCap<T extends { url: string | null }>(
+  rows: T[], limit = TOP_N, cap = PER_DOMAIN_CAP,
+): T[] {
+  const used = new Map<string, number>();
+  const picked: T[] = [];
+  const overflow: T[] = [];
+  for (const r of rows) {
+    if (picked.length >= limit) break;
+    const d = domainOf(r.url);
+    const n = used.get(d) ?? 0;
+    if (d && n >= cap) { overflow.push(r); continue; }
+    used.set(d, n + 1);
+    picked.push(r);
+  }
+  for (const r of overflow) {
+    if (picked.length >= limit) break;
+    picked.push(r);
+  }
+  return picked;
+}
+
 export interface DailyReportResult {
   inserted: typeof reports.$inferSelect;
   text: string;
@@ -48,11 +85,31 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
   const fourteenDaysAgo = sqlTs(new Date(now - 14 * 86_400_000));
 
   const [rawRecent, thisWeekCounts, lastWeekCounts, recentClaims, recentBench] = await Promise.all([
-    // 新着記事のみ（重要度順は新着期間の中だけで適用）
+    // 新着記事のみ（重要度順は新着期間の中だけで適用）。
+    //
+    // ⚠️ 第2ソートキーが `created_at DESC` だった間、選別は実質「クロール挿入時刻」で決まっていた。
+    // importance_score は整数7値で86.8%が4値に集中し、1日約230本が流入するので、LIMIT 40 の
+    // 切断面は必ず同点の塊の内部に落ちる（過去21日で例外なし）。直近14日の同点帯1,005本のうち
+    // 445本(44.3%)が「同じスコアなのに」脱落し、採用率に startupfortune 67% / TechCrunch 43% の
+    // ような差が出ていた。しかも新しい記事ほど本文が未取得なので、
+    // **最も情報を持たない記事を最優先で選ぶ**状態になっていた（2026-09-10 監査）。
+    //
+    // 同点を解くのは以下の順。いずれも既にDBにある量で、LLMもコストも増やさない:
+    //   1. story_count      何本の報道が同じ出来事を扱ったか＝注目度の実測値
+    //   2. 本文の有無        読んでいない記事より読んだ記事を上に
+    //   3. published_at     クロール時刻ではなく実際の公開時刻
+    //   4. id               最後の決定論的な綱引き（実行ごとに順序が変わらないように）
+    // ドメイン上限は下の pickTop40 で掛ける（1社が枠を占拠しないように）。
     db.select().from(collectedData)
       .where(gte(collectedData.createdAt, since))
-      .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
-      .limit(40),
+      .orderBy(
+        desc(collectedData.importanceScore),
+        desc(sql`COALESCE(${collectedData.storyCount}, 1)`),
+        desc(sql`CASE WHEN ${collectedData.rawContent} IS NOT NULL AND LENGTH(${collectedData.rawContent}) > 200 THEN 1 ELSE 0 END`),
+        desc(sql`COALESCE(${collectedData.publishedAt}, ${collectedData.createdAt})`),
+        desc(collectedData.id),
+      )
+      .limit(CANDIDATE_LIMIT),
     // カテゴリ別トレンドは文脈情報なので週次窓のまま
     db.select({ category: collectedData.category, cnt: count() })
       .from(collectedData).where(gte(collectedData.createdAt, sevenDaysAgo)).groupBy(collectedData.category),
@@ -71,10 +128,13 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
 
   if (rawRecent.length === 0) return null;
 
+  // 1社が朝刊を占拠しないようにドメイン上限を掛けてから上位40件に絞る
+  const topRecent = pickTopWithDomainCap(rawRecent, TOP_N, PER_DOMAIN_CAP);
+
   // 重複ストーリーを代表1件に集約
   const seenStory = new Set<number>();
   const recentData: typeof rawRecent = [];
-  for (const d of rawRecent) {
+  for (const d of topRecent) {
     if (d.storyId != null) { if (seenStory.has(d.storyId)) continue; seenStory.add(d.storyId); }
     recentData.push(d);
     if (recentData.length >= 15) break;
@@ -93,8 +153,14 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     ...recentClaims.map(c => `- ${c.subject}: ${c.predicate} = ${c.value}`),
     ...recentBench.map(b => `- ${b.entityName} / ${b.benchmarkName}: ${b.score}${b.unit ?? ''}`),
   ];
+  // ⚠️ 以前はここを【検証済みの事実・数値（根拠として引用してよい）】と称していた。中身は
+  // arXiv 論文のアブストラクトから抜いた**著者の自己申告**（例:「自己進化により手動エンジニアリング
+  // なしで性能が向上する|True」）で、検証されたものではない。その結果 2026-09-10 配信のレポートに
+  //「（検証済みデータ：処理可能なモダリティ = 医療画像…）」のような表現が実際に出ていた。
+  // confidence も 91.7% が 'high' の定数で、真偽の情報を持っていない（2026-09-10 監査）。
   const evidenceText = evidenceLines.length > 0
-    ? '\n\n【検証済みの事実・数値（根拠として引用してよい）】\n' + evidenceLines.join('\n')
+    ? '\n\n【記事から抽出した記述・未検証（発表者側の主張。「検証済み」と書かないこと。引用する場合は誰の主張かを明示する）】\n'
+      + evidenceLines.join('\n')
     : '';
 
   const lastWeekMap = new Map(lastWeekCounts.map(r => [r.category, Number(r.cnt)]));

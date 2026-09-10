@@ -22,9 +22,37 @@ const ID_PATH_RE = /^\/(articles|reports)\/([^/]+)$/;
 const TOPIC_PATH_RE = /^\/topic\/([^/]+)$/;
 
 // 存在が確認できたキーのメモリキャッシュ。インスタンスが再利用される限りDBを再度叩かない。
-// 正の結果だけを覚える（削除された記事を「ある」と言い続けないよう、負の結果はキャッシュしない）。
 const KNOWN = { articles: new Set<string>(), reports: new Set<string>(), topic: new Set<string>() };
 const KNOWN_MAX = 2000; // 際限なく太らせない
+
+// 「無い」も短時間だけ覚える。正の結果しか覚えていなかったため、`/articles/999999998` のように
+// 毎回違うIDを投げ続けられると全リクエストがそのままTursoに落ちていた（CDNの手前・レート制限なし）。
+// 削除直後の記事を「ある」と言い続けないよう、負のキャッシュは60秒で失効させる（2026-09-10 監査）。
+const MISSING = new Map<string, number>();
+const MISSING_TTL_MS = 60_000;
+const MISSING_MAX = 5000;
+
+function missingHit(key: string): boolean {
+  const at = MISSING.get(key);
+  if (at == null) return false;
+  if (Date.now() - at > MISSING_TTL_MS) { MISSING.delete(key); return false; }
+  return true;
+}
+
+function missingRemember(key: string): void {
+  if (MISSING.size >= MISSING_MAX) {
+    const now = Date.now();
+    for (const [k, v] of MISSING) if (now - v > MISSING_TTL_MS) MISSING.delete(k);
+    if (MISSING.size >= MISSING_MAX) MISSING.clear();
+  }
+  MISSING.set(key, Date.now());
+}
+
+/** 数値IDとして明らかに範囲外のものは、DBを引くまでもなく存在しない。 */
+function impossibleId(kind: 'articles' | 'reports' | 'topic', value: string): boolean {
+  if (kind === 'topic') return value.length > 200;
+  return !/^\d{1,9}$/.test(value) || Number(value) <= 0;
+}
 
 let _client: ReturnType<typeof createClient> | null = null;
 function getClient() {
@@ -38,6 +66,9 @@ function getClient() {
 async function exists(kind: 'articles' | 'reports' | 'topic', value: string): Promise<boolean> {
   const cache = KNOWN[kind];
   if (cache.has(value)) return true;
+  if (impossibleId(kind, value)) return false; // DBを引かずに弾く
+  const key = `${kind}:${value}`;
+  if (missingHit(key)) return false;
   const c = getClient();
   if (!c) return true;
   try {
@@ -52,6 +83,8 @@ async function exists(kind: 'articles' | 'reports' | 'topic', value: string): Pr
     if (ok) {
       if (cache.size >= KNOWN_MAX) cache.clear();
       cache.add(value);
+    } else {
+      missingRemember(key);
     }
     return ok;
   } catch {

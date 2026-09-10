@@ -45,10 +45,16 @@ export default function PrivacyPage() {
           <li><span className="text-slate-200">アプリ内の操作</span> — お気に入り／後で読む／既読の状態、プロフィールに入力した興味・目標。あなた向けの表示と状態の保存に使います。</li>
         </ul>
 
-        <H>取得しない情報</H>
+        {/* 「IPアドレスを取得しません」と断言していたが、Vercel Web Analytics は訪問者の重複判定のため
+            IP+UA からハッシュを生成する。断言と実態が食い違うと、透明性原則違反に加えて表示自体が
+            争点になるため、「取得しない」ではなく「追跡目的で利用しない」に改めた（2026-09-10 監査）。 */}
+        <H>行わないこと</H>
         <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-1.5">
-          <li>IPアドレス・端末識別子・位置情報などを用いた個人の追跡は行いません。</li>
-          <li>アクセス解析にはCookieを用いない匿名・集計ベースの計測（Vercel Web Analytics）を使用し、個人を特定しません。</li>
+          <li>IPアドレス・端末識別子・位置情報を用いて、個人を追跡・プロファイリングすることはありません。</li>
+          <li>アクセス解析には Vercel Web Analytics を使用します。Cookieは用いず、訪問の重複を判別するために
+            IPアドレスとブラウザ情報から一時的なハッシュ値が生成されますが、これは個人を識別する形では保存されず、
+            運営者がIPアドレスそのものを参照・保管することはありません。</li>
+          <li>広告目的のトラッキング、および取得した情報の第三者への販売は行いません。</li>
         </ul>
 
         <H>利用目的</H>
@@ -99,9 +105,37 @@ export default function PrivacyPage() {
           からも行えます。その他、保有する個人データの開示・訂正・利用停止・削除をご希望の場合は、{CONTACT_EMAIL ? '下記の窓口' : '運営者'}までご連絡ください。本人確認のうえ、法令に従って速やかに対応します。
         </p>
 
+        {/* 公開ログインはEU居住者も来る＝GDPR適用前提（v2/CLAUDE.md 第三条）。
+            にもかかわらず13条の必須記載が1つも無かったため追加した（2026-09-10 監査）。 */}
+        <H>保存期間</H>
+        <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-1.5">
+          <li>アカウント情報・アプリ内の操作履歴 — 退会するまで保管し、退会時に削除します。</li>
+          <li>メール配信の設定 — 配信を停止すると、以後の送信対象から外れます。</li>
+          <li>プッシュ通知の購読情報 — 通知を解除したとき、退会したとき、または端末側で購読が失効したときに削除します。</li>
+          <li>アクセス解析の集計値 — 個人と結び付かない集計としてのみ保持します。</li>
+        </ul>
+
+        <H>EU/EEA・英国にお住まいの方へ（GDPR）</H>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          運営者は、あなたの個人データについて管理者（controller）として次のとおり取り扱います。
+        </p>
+        <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-1.5 mt-1.5">
+          <li><span className="text-slate-200">処理の法的根拠</span> — アカウント機能の提供は契約の履行（GDPR 6条1項(b)）、
+            おすすめ表示の改善とサービスの安全確保は正当な利益（同(f)）、メール配信は同意（同(a)）に基づきます。
+            同意はいつでも撤回でき、撤回前の処理の適法性には影響しません。</li>
+          <li><span className="text-slate-200">あなたの権利</span> — アクセス（15条）、訂正（16条）、消去（17条）、
+            処理の制限（18条）、データポータビリティ（20条）、異議（21条）、同意の撤回（7条3項）を行使できます。
+            退会はサイト上でいつでも実行でき、その他の請求は下記の窓口で受け付けます。</li>
+          <li><span className="text-slate-200">国外移転</span> — ホスティング・データベース・認証に米国等のクラウド事業者を利用しており、
+            移転は各事業者の標準契約条項（SCC）または十分性認定に基づいて行われます。</li>
+          <li><span className="text-slate-200">苦情の申立て</span> — お住まいの国の監督機関（英国は ICO）に苦情を申し立てる権利があります。</li>
+          <li><span className="text-slate-200">自動化された意思決定</span> — 法的効果を生じさせる自動化された意思決定やプロファイリングは行いません。
+            記事のおすすめ表示は行いますが、これはあなたの権利や地位に影響しません。</li>
+        </ul>
+
         <H>お問い合わせ</H>
         <p className="text-sm text-slate-400 leading-relaxed">
-          本ポリシーに関するご質問・ご要望は{' '}
+          本ポリシーに関するご質問・ご要望、および上記の権利の行使は{' '}
           {CONTACT_EMAIL ? (
             <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`${SITE_NAME} お問い合わせ`)}`}
               className="text-sky-400 hover:text-sky-300 underline underline-offset-2">{CONTACT_EMAIL}</a>

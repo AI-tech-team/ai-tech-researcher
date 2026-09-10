@@ -23,6 +23,12 @@ on:
         default: ''
         type: string
 
+# リポジトリ設定の既定は write（実測）＝全ステップが GITHUB_TOKEN で contents/actions/packages を
+# 書き換えられる状態だった。本番secretを載せたまま毎晩無人で走るため、必要な contents:write だけに絞る
+# （週次バックアップの `git push origin main` がこれを使う）。
+permissions:
+  contents: write
+
 jobs:
   research:
     runs-on: ubuntu-latest
@@ -36,8 +42,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: v2/package-lock.json
 
+      # npm install は package-lock.json を無視して semver 範囲内の最新を取りに行く＝毎晩、無人で
+      # 未検証の新バージョンを本番secret入りの環境に取り込んでいた。npm ci はロックファイルの
+      # 完全一致（integrity 付き）でしか入れない。
       - name: Install dependencies
-        run: cd v2 && npm install
+        run: cd v2 && npm ci
 
       # 日次フルパイプライン: 収集・ベクトル化・知識抽出・(日曜/月初は週次/月次レポート生成)。
       # デイリーレポートの生成＋メールはここでは行わず、下の Report ステップが 06:00 JST に実行する。

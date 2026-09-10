@@ -11,6 +11,30 @@ import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
 import { discoverFeedUrl, fetchArticleText, fetchArticleTextDetailed } from './src/lib/feeds';
 import { isSafeFetchUrl } from './src/lib/safeUrl';
+import { politeFetch } from './src/lib/robots';
+import { decodeHtmlEntities } from './src/lib/html-entities';
+import { unsubscribeUrl } from './src/lib/unsubscribe-link';
+import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
+import { SITE_NAME, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
+
+/**
+ * 配信メールの共通フッター。特定電子メール法4条が求める
+ * 「送信者の氏名・名称」「住所」「受信拒否の通知先」をここに集約する。
+ * 事業者情報は env（NEXT_PUBLIC_OPERATOR_NAME / _ADDRESS）が入るまで出せないので、
+ * 未設定のときはその行を出さない。**課金を始める前に必ず設定すること。**
+ */
+function mailFooter(unsubUrl: string, siteUrl: string): string {
+  const lines = [
+    `<a href="${unsubUrl}" style="color:#0ea5e9;">配信を停止する</a>（1クリックで停止します）`,
+    `設定の変更は <a href="${siteUrl}" style="color:#0ea5e9;">${SITE_NAME}</a> のプロフィールから。`,
+  ];
+  if (OPERATOR_NAME) lines.push(`送信者: ${escapeHtml(OPERATOR_NAME)}`);
+  if (OPERATOR_ADDRESS) lines.push(`所在地: ${escapeHtml(OPERATOR_ADDRESS)}`);
+  if (CONTACT_EMAIL) lines.push(`お問い合わせ: <a href="mailto:${CONTACT_EMAIL}" style="color:#0ea5e9;">${CONTACT_EMAIL}</a>`);
+  return `<p style="font-size:11px;color:#94a3b8;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px;line-height:1.9;">
+    ${lines.join('<br>')}
+  </p>`;
+}
 import { classifyEntityType } from './src/lib/entity-quality';
 import {
   RELATION_TYPES, looksLikeEntity, isValidRelation, orderRelation,
@@ -123,6 +147,18 @@ const KnowledgeSchema = z.object({
 // になる（ユーザー指摘2026-07-15）。切り詰めるのではなく、最後の句点(。！？)までで言い切らせる。
 // 生成側プロンプトも「6行以内で必ず言い切る」に統一するので、通常はここで削られず素通りする。
 const SUMMARY_MAX = 200;
+/**
+ * 件数上限のenvを読む。workflow_dispatch の入力がそのまま Number() に渡っていたため、
+ * 打ち間違い1つで1回の実行が青天井になりえた（予算アラートは数時間ラグがあり間に合わない）。
+ * 非数値・0以下は既定値、上限超過は上限に丸める（2026-09-10 監査）。
+ */
+function envLimit(name: string, fallback: number, max: number): number {
+  const n = Number(process.env[name]);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  if (n > max) { console.warn(`[Limit] ${name}=${n} は上限 ${max} に丸めました`); return max; }
+  return Math.floor(n);
+}
+
 function clampSummary(s: string | null | undefined): string {
   const t = String(s ?? '').trim();
   if (t.length <= SUMMARY_MAX) return t;
@@ -238,11 +274,10 @@ async function filterUnseenUrls<T>(items: T[], getUrl: (i: T) => string | null |
 
 // ── RSS収集（RSS/Atom両対応）─────────────────────────────────────────
 async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenDaysAgo: string): Promise<number> {
-  if (!isSafeFetchUrl(source.value)) return 0; // SSRF対策: 内部/プライベート宛フィードは弾く
-  const res = await fetch(source.value, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Cernoval/1.0)' },
-    signal: AbortSignal.timeout(15000),
-  });
+  // SSRF対策＋robots.txt 遵守。politeFetch が拒否（robots禁止／内部宛）なら 0 件として静かに終える。
+  // 旧実装はここが素通りで、`Disallow: /` の Reddit を毎日叩いていた（2026-09-10 監査）。
+  const res = await politeFetch(source.value, { signal: AbortSignal.timeout(15000) });
+  if (!res) { console.warn(`  スキップ (${source.value}): robots.txt で許可されていない`); return 0; }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const xml = await res.text();
 
@@ -254,8 +289,12 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   let m: RegExpExecArray | null;
   while ((m = itemRegex.exec(xml)) !== null) {
     const chunk = m[0];
+    // ここでデコードすると title と description の両方に効く。素通しだと `Apple&#039;s` が
+    // そのままメール本文に出て、`GPT&#45;5.6 Sol` は固有名が割れる（2026-09-10 監査・本番1,483件）。
     const get = (tag: string) =>
-      (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim();
+      decodeHtmlEntities(
+        (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim(),
+      );
     const title = get('title');
     // Atom は <link href="url"/> 形式を使う
     const link = isAtom
@@ -324,7 +363,7 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
   const topIds: number[] = await topRes.json();
 
   const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const candidates: Array<{ title: string; url: string; score: number; time: number }> = [];
+  const candidates: Array<{ title: string; url: string; score: number; time: number; selfText: string }> = [];
 
   for (const id of topIds.slice(0, 150)) {
     if (candidates.length >= 5) break;
@@ -338,7 +377,11 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
       if (item.time && item.time * 1000 < sevenDaysAgoMs) continue;
       const titleLower = (item.title as string).toLowerCase();
       if (HN_AI_KEYWORDS.some(kw => titleLower.includes(kw))) {
-        candidates.push({ title: item.title, url: item.url, score: item.score, time: item.time });
+        // Ask HN 等の自己投稿は本文が item.text に入る。要約の材料として使う。
+        const selfText = typeof item.text === 'string'
+          ? decodeHtmlEntities(item.text.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
+          : '';
+        candidates.push({ title: item.title, url: item.url, score: item.score, time: item.time, selfText });
       }
     } catch { /* ignore */ }
   }
@@ -348,34 +391,65 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
   const fresh = await filterUnseenUrls(candidates, it => it.url);
   if (fresh.length === 0) return 0;
 
-  const batchText = fresh.map((item, i) => `[${i}] [HN Score:${item.score}] ${item.title}`).join('\n');
-  const { object: hnObject } = await withRetry(() => generateObject({
-    model: google('gemini-2.5-flash-lite'),
-    schema: HnEvalSchema,
-    prompt: `以下のHacker NewsのAI/ML関連記事の専門的な日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）とcategoryを生成してください。\n\n${batchText}`,
+  // ⚠️ 以前はここでタイトルだけをLLMに渡していた。その結果
+  //   `OpenAI might have stolen another major proof`
+  //     → 「OpenAIが競合他社の主要な証明を盗んだ可能性があるという疑惑が議論を呼んでいます」
+  //   `Shopify / Tailwind` の見出し → 「ShopifyがTailwindを買収した（詳細不明）」importance 10
+  // のように、実在企業への嫌疑や買収の事実を検証ゼロで創作して公開していた（2026-09-10 監査）。
+  // 本文が取れたものだけ要約する。取れないものは要約を付けず、タイトルとリンクだけ出す。
+  const bodies = await Promise.all(fresh.map(async (item) => {
+    if (item.selfText.length >= 200) return item.selfText.slice(0, 4000);
+    const t = await fetchArticleText(item.url, 4000); // robots.txt と SSRF ゲートを通る
+    return t && t.length >= 200 ? t : null;
   }));
-  const evaluations = hnObject.items;
+
+  const withBody = fresh.map((item, i) => ({ item, body: bodies[i] })).filter((x) => x.body);
+  const evaluations = new Map<string, { summary: string; category: string }>();
+  if (withBody.length > 0) {
+    const batchText = withBody
+      .map(({ item, body }, i) => `[${i}] [HN Score:${item.score}] ${item.title}\n本文: ${body}`)
+      .join('\n\n');
+    const { object: hnObject } = await withRetry(() => generateObject({
+      model: google('gemini-2.5-flash-lite'),
+      schema: HnEvalSchema,
+      prompt: `以下のHacker NewsのAI/ML関連記事について、専門的な日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）とcategoryを生成してください。
+
+厳守事項:
+- **本文に書かれていることだけを書く。** 本文に無い経緯・評価・反応・数値を足さない。
+- タイトルが疑問形・推測形（「〜かもしれない」「might have」等）の場合、本文が裏付けていない限り断定形に変えない。
+- 買収・提訴・不正など、実在の企業や人物に関わる事実は、本文に明記がなければ書かない。
+- 「議論を呼んでいます」「注目されています」のような、本文に根拠のない反応の記述をしない。
+
+${batchText}`,
+    }));
+    hnObject.items.forEach((ev, i) => {
+      const key = withBody[i]?.item.url;
+      if (key && ev) evaluations.set(key, ev);
+    });
+  }
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
-  for (let i = 0; i < fresh.length; i++) {
-    const item = fresh[i];
-    const ev = evaluations[i];
-    if (!ev) continue;
+  let noBody = 0;
+  for (const item of fresh) {
     if (isNearDuplicate(item.title, titleCache)) continue;
+    const ev = evaluations.get(item.url);
+    if (!ev) noBody++;
     const importanceScore = item.score >= 500 ? 10 : item.score >= 200 ? 9 : item.score >= 100 ? 8 : 7;
     const r = await db.insert(schema.collectedData).values({
       sourceId: source.id,
       title: item.title,
       url: item.url,
-      summary: clampSummary(ev.summary),
-      category: ev.category ?? 'その他',
+      // 本文が取れなかったものは summary を付けない（公開UIはタイトル＋リンクだけを出す）
+      summary: ev ? clampSummary(ev.summary) : null,
+      category: ev?.category ?? 'その他',
       importanceScore,
       tags: JSON.stringify(['hacker-news', `hn-score:${item.score}`]),
       publishedAt: new Date(item.time * 1000).toISOString(),
     }).onConflictDoNothing();
     if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(item.title); }
   }
+  if (noBody > 0) console.log(`  HN: ${noBody}件は本文が取れなかったため要約なしで登録`);
   return inserted;
 }
 
@@ -396,8 +470,12 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   let m: RegExpExecArray | null;
   while ((m = entryRegex.exec(xml)) !== null) {
     const chunk = m[1];
+    // ここでデコードすると title と description の両方に効く。素通しだと `Apple&#039;s` が
+    // そのままメール本文に出て、`GPT&#45;5.6 Sol` は固有名が割れる（2026-09-10 監査・本番1,483件）。
     const get = (tag: string) =>
-      (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim();
+      decodeHtmlEntities(
+        (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim(),
+      );
     const title = get('title').replace(/\s+/g, ' ');
     const link = chunk.match(/<link[^>]+href="([^"]+)"[^>]*rel="alternate"/)?.[1]
                ?? chunk.match(/<link[^>]+rel="alternate"[^>]+href="([^"]+)"/)?.[1]
@@ -645,8 +723,16 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
   }
 
   // RSS型ソース（TechCrunch AI等）
+  //
+  // 上限が無いと、evolveSources() が毎日最大8件を自動追加する分だけ1回の実行コストが増え続ける
+  // （ソース1件につきLLM評価1回）。ただし単純な LIMIT は末尾のソースを永久に飢えさせる
+  // ＝[[pattern-throughput-starvation]] の6例目を自分で作ることになる。
+  // そこで **最後に取得した時刻が古い順**に回して、上限は安全弁としてだけ効かせる。
+  const RSS_PER_RUN = 120; // 現状68本。増殖の暴走を止める天井であって、日常の絞りではない。
   const rssSources = await db.select().from(schema.sources)
-    .where(and(eq(schema.sources.type, 'rss' as any), eq(schema.sources.status, 'active')));
+    .where(and(eq(schema.sources.type, 'rss' as any), eq(schema.sources.status, 'active')))
+    .orderBy(sql`COALESCE(${schema.sources.lastHitAt}, '') ASC`)
+    .limit(RSS_PER_RUN);
   for (const target of rssSources) {
     try {
       const inserted = await collectFromRSS(target, sevenDaysAgo);
@@ -852,7 +938,17 @@ async function sendDigestPush(reportId: number | null): Promise<void> {
   const pub = process.env.VAPID_PUBLIC_KEY, priv = process.env.VAPID_PRIVATE_KEY;
   if (!pub || !priv) { console.log('[Push] VAPID未設定のためスキップ'); return; }
 
-  const subs = (await client.execute(`SELECT endpoint, p256dh, auth FROM push_subscriptions`)).rows;
+  // LIMIT無し・1件ずつ順にawait だったため、応答しないホストが並ぶだけで配信全体が詰まっていた。
+  // 上限を掛け、既にDBにある行も許可リストで濾し、1件ずつタイムアウトを持たせる（2026-09-10 監査）。
+  const PUSH_MAX = 5000;
+  const allSubs = (await client.execute({
+    sql: `SELECT endpoint, p256dh, auth FROM push_subscriptions ORDER BY rowid LIMIT ?`,
+    args: [PUSH_MAX],
+  })).rows;
+  const subs = allSubs.filter(s => isAllowedPushEndpoint(String(s.endpoint)));
+  if (allSubs.length !== subs.length) {
+    console.warn(`[Push] 許可外のendpoint ${allSubs.length - subs.length}件をスキップ`);
+  }
   if (subs.length === 0) { console.log('[Push] 購読者なし'); return; }
 
   const webpush = await import('web-push');
@@ -868,15 +964,25 @@ async function sendDigestPush(reportId: number | null): Promise<void> {
   });
 
   let sent = 0, pruned = 0;
-  for (const s of subs) {
-    const subscription = { endpoint: String(s.endpoint), keys: { p256dh: String(s.p256dh), auth: String(s.auth) } };
-    try {
-      await webpush.default.sendNotification(subscription, payload);
-      sent++;
-    } catch (e: any) {
-      const code = e?.statusCode;
-      if (code === 404 || code === 410) { // 購読失効 → 掃除
-        await client.execute({ sql: `DELETE FROM push_subscriptions WHERE endpoint = ?`, args: [String(s.endpoint)] });
+  const SEND_TIMEOUT_MS = 10_000;
+  const BATCH = 20;
+  for (let i = 0; i < subs.length; i += BATCH) {
+    // 直列だと1件の遅延が全体を止める。小さなバッチで並列にし、各件にタイムアウトを掛ける。
+    const results = await Promise.all(subs.slice(i, i + BATCH).map(async (s) => {
+      const endpoint = String(s.endpoint);
+      const subscription = { endpoint, keys: { p256dh: String(s.p256dh), auth: String(s.auth) } };
+      try {
+        await webpush.default.sendNotification(subscription, payload, { timeout: SEND_TIMEOUT_MS });
+        return { ok: true, stale: false, endpoint };
+      } catch (e: any) {
+        const code = e?.statusCode;
+        return { ok: false, stale: code === 404 || code === 410, endpoint };
+      }
+    }));
+    for (const r of results) {
+      if (r.ok) { sent++; continue; }
+      if (r.stale) { // 購読失効 → 掃除
+        await client.execute({ sql: `DELETE FROM push_subscriptions WHERE endpoint = ?`, args: [r.endpoint] });
         pruned++;
       }
     }
@@ -1114,18 +1220,26 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
         <h2 style="color:#0ea5e9;font-size:16px;margin:24px 0 4px;">✨ あなたへのおすすめ記事</h2>
         <p style="font-size:13px;color:#64748b;margin:0 0 10px;">あなたの興味に近い新着 ${ranked.length}件です。タイトルを押すとサイトで記事を開けます。</p>
         ${items}` : '';
+      // 特定電子メール法4条の表示義務＋RFC8058（Gmail/Yahooの一括送信者要件）のワンクリック解除。
+      // これが無いと有料配信に切り替えた瞬間、法令違反であると同時に到達率が構造的に落ちる。
+      const unsubUrl = unsubscribeUrl(siteUrl, String(r.uid));
       const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;margin:0 auto;color:#0f172a;padding:8px 4px;">
         <h1 style="font-size:20px;margin:0 0 2px;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日のダイジェスト</h1>
         <p style="font-size:12px;color:#94a3b8;margin:0 0 16px;">${today}</p>
         ${reportHtml ? `<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:8px;">${reportHtml}</div>` : ''}
         ${recsBlock}
-        <p style="font-size:11px;color:#94a3b8;margin-top:20px;border-top:1px solid #e2e8f0;padding-top:12px;">配信の停止・再開は <a href="${siteUrl}" style="color:#0ea5e9;">サイト</a> にログインし、右上の「プロフィール」から切り替えられます。</p>
+        ${mailFooter(unsubUrl, siteUrl)}
       </div>`;
 
       await transporter.sendMail({
-        from: `Cernoval <${user}>`, to: r.email,
+        from: `${SITE_NAME} <${user}>`, to: r.email,
         subject: `☀️ 今日のダイジェスト ${today}`,
         html,
+        headers: {
+          'List-Unsubscribe': `<${unsubUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          'List-Id': `${SITE_NAME} Daily Digest <digest.${new URL(siteUrl).hostname}>`,
+        },
       });
       sent++;
     } catch (e: any) {
@@ -3169,7 +3283,7 @@ async function main() {
     // v4: 本文ディープ抽出のみ実行（バックフィル・検証用）。
     // 滞留分(imp>=7・本文なし 約6600件)の回収用。冪等＝試行記録により再実行しても未試行/一過性失敗だけを拾う。
     if (pipelineMode === 'deep') {
-      await runDeepExtraction(Number(process.env.DEEP_LIMIT ?? 1500));
+      await runDeepExtraction(envLimit('DEEP_LIMIT', 1500, 5000));
       console.log('=== Deep extract mode 完了 ===');
       process.exit(0);
     }
@@ -3231,7 +3345,7 @@ async function main() {
     // v4.5: 本文チャンク埋め込みのみ実行（バックフィル）
     if (pipelineMode === 'chunks') {
       // CHUNK_LIMIT で1回の処理件数を指定（deepのDEEP_LIMITと同じ運用）。バックフィルは大きめに回す。
-      await runChunkEmbeddings(Number(process.env.CHUNK_LIMIT ?? 2000));
+      await runChunkEmbeddings(envLimit('CHUNK_LIMIT', 2000, 10000));
       console.log('=== Chunks mode 完了 ===');
       process.exit(0);
     }

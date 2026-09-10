@@ -1,0 +1,7 @@
+# Root Directory を v2 に切り替えた場合、CLI はこちらを読む。ルート側と同じ内容を持たせる。
+# 理由はルートの .vercelignore 冒頭のコメントを参照。
+.env*
+!.env.example
+
+backups
+private-backups

@@ -1,9 +1,15 @@
 // link-terms のテスト。ケースは全て 2026-09-10 の本番実測で実際に起きた誤接続から取っている。
+//
+// ⚠️ このテストが通ることは「未知データで動く」の証拠にならない。規則はどれも1つの観測失敗に
+//    1対1で対応しており、hold-out から導かれたものが1つも無い＝過学習の実証。実際、別期間
+//    （06-20 / 07-08 / 08-13・595本）では 18/18 通過のまま適合率56.5%・誤接続40%で、
+//    塞いだはずの型が別入口から3種再発した。詳細は link-terms.ts のヘッダ。
+//    次にやるべきは規則の追加ではなく、ラベル定義の明文化と hold-out 評価セットの固定。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   stripInternalIdPrefix, extractAsciiPhrases, extractJaProperNouns,
-  extractLinkTerms, isHubTerm, isUsableLinkTerm, baseFormOf, sharedLinkTerms, type PosToken,
+  extractLinkTerms, isHubTerm, isUsableLinkTerm, baseFormOf, sharedLinkTerms, classifyTerms, type PosToken,
 } from './link-terms';
 
 const N = 22712; // 実測時の本番コーパス件数
@@ -97,18 +103,53 @@ test('頭の語だけを取り出すことはしない（Listen Labs → Listen 
 });
 
 // --- 規則②: 重複判定 ---
-test('Siri AI と Siri は同じものとして重複判定される', () => {
-  assert.deepEqual(sharedLinkTerms(['Siri AI'], ['Siri']), ['Siri']);
+test('完全一致だけを重複とみなす', () => {
   assert.deepEqual(sharedLinkTerms(['AirPods 5', 'AirPods'], ['AirPods']), ['AirPods']);
+  assert.deepEqual(sharedLinkTerms(['Siri'], ['Siri']), ['Siri']);
+});
+
+test('前方一致では重複にしない（Pixel Watch 5 と Pixel 11 を1件に潰さない）', () => {
+  // 2026-09-10 実測: 前方一致のみで成立した31組のうち約26組が誤マージだった
+  assert.deepEqual(sharedLinkTerms(['Pixel Watch 5'], ['Pixel 11']), []);
+  assert.deepEqual(sharedLinkTerms(['Pixel Watch 5'], ['Pixel Tag']), []);
+  assert.deepEqual(sharedLinkTerms(['DeepSeek V4 Pro 0813'], ['DeepSeek Harness']), []);
+  assert.deepEqual(sharedLinkTerms(['Siri AI'], ['Siri']), [], '守れていた唯一の例も代償に見合わない');
 });
 
 test('短い一致では重複にしない（誤merge＝サイレントな欠落を避ける）', () => {
   assert.deepEqual(sharedLinkTerms(['Nx Plugin'], ['Nx']), []);
   assert.deepEqual(sharedLinkTerms(['Shopify'], ['Salesforce']), []);
+  assert.deepEqual(sharedLinkTerms(['GPT'], ['GPT']), [], '3文字以下は一致しても採らない');
 });
 
 test('自分の記事にしか無い語は接続に使えない', () => {
   assert.equal(isUsableLinkTerm('Besxar', 1, N), false);
   assert.equal(isUsableLinkTerm('Accenture', 6, N), true);
   assert.equal(isUsableLinkTerm('OpenAI', 1388, N), false);
+});
+
+// --- 最希少の1語だけを同一性に使う（連鎖マージ対策・2026-09-10 実測） ---
+test('一般名と固有名が同居したら固有名を選ぶ（iPhone(280) より iPhone Duo(5)）', () => {
+  const DF: Record<string, number> = { 'iPhone': 280, 'iPhone Duo': 5, 'iOS': 192, 'Apple': 727 };
+  const r = sharedOrPrimary(['iPhone', 'iPhone Duo', 'iOS', 'Apple'], DF);
+  assert.equal(r.primary, 'iPhone Duo');
+  assert.deepEqual(r.hubs, ['Apple'], 'ハブは捨てずに多様性制御用に返す');
+});
+
+test('AirPods と iPhone Duo は別の出来事になる（21本の連鎖マージ防止）', () => {
+  const DF: Record<string, number> = { 'iPhone': 280, 'iPhone Duo': 5, 'AirPods': 51, 'Apple': 727 };
+  const a = sharedOrPrimary(['iPhone', 'iPhone Duo', 'Apple'], DF).primary;
+  const b = sharedOrPrimary(['AirPods', 'Apple'], DF).primary;
+  assert.equal(a, 'iPhone Duo'); assert.equal(b, 'AirPods');
+  assert.notEqual(a, b, '同一性キーが違う＝別の出来事');
+});
+
+function sharedOrPrimary(terms: string[], DF: Record<string, number>) {
+  return classifyTerms(terms, (t) => DF[t] ?? 0, 22818);
+}
+
+test('2文字以下のASCII略語は接続語にしない（IT → gemma-4-12b-it の誤接続）', () => {
+  const t = extractLinkTerms('AIコンピューティングパワーがITセクターを30兆ドル規模に押し上げ');
+  assert.ok(!t.includes('IT'), JSON.stringify(t));
+  assert.ok(extractLinkTerms('AWSとIBMが提携').includes('AWS'), '3文字は残す');
 });
