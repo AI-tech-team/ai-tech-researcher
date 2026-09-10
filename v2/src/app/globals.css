@@ -3,37 +3,191 @@
 @import 'tailwindcss';
 
 @theme {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --font-outfit: var(--font-outfit), 'Outfit', sans-serif;
+  --font-sans: var(--font-inter), 'Hiragino Sans', 'Yu Gothic UI', ui-sans-serif, system-ui, sans-serif;
+  /* 見出しは明朝。決定「方向Aの骨格に方向Bの意匠」の骨格側。
+     和文の明朝は端末のものを使う（Noto Serif JP を web font で読むと数MBになり、
+     せっかく詰めた初回表示が台無しになる。メール版で「端末の明朝に落ちる前提で組む」と
+     決めたのと同じ判断）。 */
+  --font-serif: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', 'Times New Roman', serif;
+  /* 番号・日付・件数は等幅。桁が揃う＝方向Bから持ち込む意匠。欧文だけなので実測で軽い。 */
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   テーマ（決定: レイアウトは1つ、テーマは2つ／正本は明るい側）
+
+   なぜ変数で切り替えるか:
+     暗色決め打ちの Tailwind クラス（text-slate-* / text-white / bg-white/*）が
+     公開UIに668箇所ある。手で書き換えると必ず塗り残しが出て、明るくした瞬間に
+     「白地に白文字」が生まれる。Tailwind v4 は色を CSS 変数で持つので、
+     **クラスは触らず変数側を差し替える**。塗り残しが原理的に起きない。
+
+   3状態を正しく扱う:
+     素の :root          … 明（正本）。ここに全色を定義する
+     @media dark ＋:not([data-theme="light"]) … 端末が暗い（既定）／明を選んだ人は勝つ
+     [data-theme="dark"] … 読者が暗を選んだ
+   ══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --bg-color: #03060f;
-  --card-bg: rgba(8, 14, 28, 0.88);
-  --accent-blue: #38bdf8;
-  --accent-purple: #818cf8;
-  --accent-emerald: #10b981;
-  --text-main: #f1f5f9;
-  --text-muted: #64748b;
-  --border-glass: rgba(255, 255, 255, 0.06);
+  color-scheme: light;
+
+  /* 地とインク。Tailwind の slate ランプを反転させる（950=地 … 50=最も濃い） */
+  --color-slate-950: #f2f0ec;
+  --color-slate-900: #e9e5df;
+  --color-slate-800: #ddd8d0;
+  --color-slate-700: #c3bdb3;
+  --color-slate-600: #8b919b;
+  --color-slate-500: #6c727c;
+  --color-slate-400: #545b66;
+  --color-slate-300: #3a4049;
+  --color-slate-200: #2c313a;
+  --color-slate-100: #22262d;
+  --color-slate-50:  #1b1e24;
+  /* 「白」は最も濃いインクを意味する。見出しの text-white がこれになる。
+     同時に bg-white/[0.02] は「2%のインク＝紙よりわずかに沈んだ面」、
+     border-white/10 は「10%のインク＝罫」になり、方向Aの罫で仕切る作りに一致する。 */
+  --color-white: #15171b;
+
+  /* アクセントは1色（決定）。明では濃紺。青系はすべてここへ寄せる。 */
+  --color-sky-200: #2b4a7d; --color-sky-300: #24406e; --color-sky-400: #1f3a68;
+  --color-sky-500: #1f3a68; --color-sky-600: #18305a;
+  --color-cyan-200: #2b4a7d; --color-cyan-300: #24406e; --color-cyan-400: #1f3a68; --color-cyan-500: #1f3a68;
+  --color-indigo-200: #2b4a7d; --color-indigo-300: #24406e; --color-indigo-400: #1f3a68;
+  --color-indigo-500: #1f3a68; --color-indigo-600: #18305a;
+  --color-violet-300: #24406e; --color-violet-400: #1f3a68;
+  --color-purple-300: #24406e; --color-purple-500: #1f3a68;
+
+  /* 意味を持つ色だけは別に残す（良/注意/悪）。アクセントとは役割が違う。 */
+  --color-emerald-300: #2c6a45; --color-emerald-400: #2c6a45; --color-emerald-500: #2c6a45;
+  --color-emerald-900: #ecf4ee; --color-emerald-950: #f3f8f5;
+  --color-amber-300: #8a6310; --color-amber-400: #8a6310; --color-amber-500: #93690f;
+  --color-rose-500: #a8281c; --color-red-300: #a8281c; --color-red-400: #a8281c; --color-red-500: #a8281c;
+
+  /* カテゴリ色（記事の分類＝装飾ではなく情報なので残すが、紙の上で読める濃さにする） */
+  --cat-llm: #1f5f7a; --cat-agent: #3b4a86; --cat-tool: #1f6045;
+  --cat-hw: #8a4a12; --cat-biz: #8d3763; --cat-paper: #5a3f8c; --cat-other: #5b616b;
+
+  --bg-color: #f2f0ec;
+  --card-bg: #fffefb;
+  --accent-blue: #1f3a68;
+  --accent-purple: #3b4a86;
+  --accent-emerald: #2c6a45;
+  --text-main: #15171b;
+  --text-muted: #6c727c;
+  --border-glass: rgba(21, 23, 27, 0.10);
+  --rule-strong: rgba(21, 23, 27, 0.22);
+  --card-bg-hover: #ffffff;
+  --accent-soft: rgba(31, 58, 104, 0.07);
+  --shadow-hover: 0 2px 10px rgba(21, 23, 27, 0.08);
+  --glow: none;
+  --splash-bg: #f2f0ec;
+  --scroll-thumb: rgba(21, 23, 27, 0.16);
+  --scroll-thumb-hover: rgba(21, 23, 27, 0.28);
+}
+
+/* 端末が暗い（＝既定のまま何も選んでいない人はここに来る）。明を選んだ人には適用しない。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-slate-950: #0f1114; --color-slate-900: #171a1f; --color-slate-800: #1e222a;
+    --color-slate-700: #2b313b; --color-slate-600: #848a95; --color-slate-500: #969db0;
+    --color-slate-400: #b4bac4; --color-slate-300: #cbd0d9; --color-slate-200: #dcdfe5;
+    --color-slate-100: #e8e9ec; --color-slate-50: #f2f3f5;
+    --color-white: #ffffff;
+
+    --color-sky-200: #bcd0ff; --color-sky-300: #93a7ff; --color-sky-400: #7d94ff;
+    --color-sky-500: #6b84f7; --color-sky-600: #5b73e0;
+    --color-cyan-200: #bcd0ff; --color-cyan-300: #93a7ff; --color-cyan-400: #7d94ff; --color-cyan-500: #6b84f7;
+    --color-indigo-200: #bcd0ff; --color-indigo-300: #93a7ff; --color-indigo-400: #7d94ff;
+    --color-indigo-500: #6b84f7; --color-indigo-600: #5b73e0;
+    --color-violet-300: #93a7ff; --color-violet-400: #7d94ff;
+    --color-purple-300: #93a7ff; --color-purple-500: #6b84f7;
+
+    --color-emerald-300: #7fc5a0; --color-emerald-400: #6cbb92; --color-emerald-500: #4aa87a;
+    --color-emerald-900: #122018; --color-emerald-950: #0d1712;
+    --color-amber-300: #e0b565; --color-amber-400: #d9a94f; --color-amber-500: #cf9c3c;
+    --color-rose-500: #ff8d81; --color-red-300: #ff8d81; --color-red-400: #ff7c6e; --color-red-500: #f2695c;
+
+    --cat-llm: #6fc3e8; --cat-agent: #93a7ff; --cat-tool: #62d3a4;
+    --cat-hw: #f0a35f; --cat-biz: #ef8fbd; --cat-paper: #b79dfa; --cat-other: #8b919b;
+
+    --bg-color: #0f1114;
+    --card-bg: #171a1f;
+    --accent-blue: #93a7ff;
+    --accent-purple: #93a7ff;
+    --accent-emerald: #7fc5a0;
+    --text-main: #e8e9ec;
+    --text-muted: #848a95;
+    --border-glass: rgba(255, 255, 255, 0.08);
+  --rule-strong: rgba(255, 255, 255, 0.18);
+  --card-bg-hover: #1c2028;
+  --accent-soft: rgba(147, 167, 255, 0.10);
+  --shadow-hover: 0 2px 14px rgba(0, 0, 0, 0.45);
+    --rule-strong: rgba(255, 255, 255, 0.18);
+    --card-bg-hover: #1c2028;
+    --accent-soft: rgba(147, 167, 255, 0.10);
+    --shadow-hover: 0 2px 14px rgba(0, 0, 0, 0.45);
+    --glow: none;
+    --splash-bg: #0f1114;
+    --scroll-thumb: rgba(255, 255, 255, 0.10);
+    --scroll-thumb-hover: rgba(255, 255, 255, 0.18);
+  }
+}
+
+/* 読者が暗を明示的に選んだ。端末の設定より優先する。 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-slate-950: #0f1114; --color-slate-900: #171a1f; --color-slate-800: #1e222a;
+  --color-slate-700: #2b313b; --color-slate-600: #848a95; --color-slate-500: #969db0;
+  --color-slate-400: #b4bac4; --color-slate-300: #cbd0d9; --color-slate-200: #dcdfe5;
+  --color-slate-100: #e8e9ec; --color-slate-50: #f2f3f5;
+  --color-white: #ffffff;
+
+  --color-sky-200: #bcd0ff; --color-sky-300: #93a7ff; --color-sky-400: #7d94ff;
+  --color-sky-500: #6b84f7; --color-sky-600: #5b73e0;
+  --color-cyan-200: #bcd0ff; --color-cyan-300: #93a7ff; --color-cyan-400: #7d94ff; --color-cyan-500: #6b84f7;
+  --color-indigo-200: #bcd0ff; --color-indigo-300: #93a7ff; --color-indigo-400: #7d94ff;
+  --color-indigo-500: #6b84f7; --color-indigo-600: #5b73e0;
+  --color-violet-300: #93a7ff; --color-violet-400: #7d94ff;
+  --color-purple-300: #93a7ff; --color-purple-500: #6b84f7;
+
+  --color-emerald-300: #7fc5a0; --color-emerald-400: #6cbb92; --color-emerald-500: #4aa87a;
+  --color-emerald-900: #122018; --color-emerald-950: #0d1712;
+  --color-amber-300: #e0b565; --color-amber-400: #d9a94f; --color-amber-500: #cf9c3c;
+  --color-rose-500: #ff8d81; --color-red-300: #ff8d81; --color-red-400: #ff7c6e; --color-red-500: #f2695c;
+
+  --cat-llm: #6fc3e8; --cat-agent: #93a7ff; --cat-tool: #62d3a4;
+  --cat-hw: #f0a35f; --cat-biz: #ef8fbd; --cat-paper: #b79dfa; --cat-other: #8b919b;
+
+  --bg-color: #0f1114;
+  --card-bg: #171a1f;
+  --accent-blue: #93a7ff;
+  --accent-purple: #93a7ff;
+  --accent-emerald: #7fc5a0;
+  --text-main: #e8e9ec;
+  --text-muted: #848a95;
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --glow: none;
+  --splash-bg: #0f1114;
+  --scroll-thumb: rgba(255, 255, 255, 0.10);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.18);
 }
 
 body {
   margin: 0;
-  font-family: var(--font-inter), 'Inter', sans-serif;
+  font-family: var(--font-sans);
   background: var(--bg-color);
   color: var(--text-main);
-  background-image:
-    radial-gradient(ellipse at 0% 0%, rgba(56, 189, 248, 0.13) 0%, transparent 55%),
-    radial-gradient(ellipse at 100% 100%, rgba(129, 140, 248, 0.13) 0%, transparent 55%),
-    radial-gradient(ellipse at 50% 80%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
+  /* 方向Aは静謐。3色のグラデーショングローは方向Bの名残なので落とす。 */
+  background-image: var(--glow);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3, .font-outfit {
-  font-family: var(--font-outfit), 'Outfit', sans-serif;
+/* 見出しは明朝。ここが方向Aの「見やすさ」の正体で、ゴシックに戻すと消える。 */
+h1, h2, h3, .font-outfit, .font-serif-jp {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 /* モバイルのタップ遅延(ダブルタップズーム判定の待ち)を無くし、灰色のタップハイライトも消す。
@@ -52,18 +206,18 @@ button, a, [role="button"], summary {
   border-radius: 16px;
   padding: 18px;
   transition: border-color 0.25s, box-shadow 0.25s;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: none;
 }
 .glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-hover);
 }
 
 /* ── Article row (news reader + glass hybrid) ────────────── */
 .article-row {
   display: flex;
-  background: rgba(6, 11, 22, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.055);
+  background: var(--card-bg);
+  border: 1px solid var(--border-glass);
   border-radius: 10px;
   overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
@@ -71,24 +225,22 @@ button, a, [role="button"], summary {
   -webkit-backdrop-filter: blur(12px);
 }
 .article-row:hover {
-  border-color: rgba(255, 255, 255, 0.11);
-  background: rgba(10, 18, 36, 0.95);
-  box-shadow: 0 4px 28px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255,255,255,0.04);
+  border-color: var(--rule-strong);
+  background: var(--card-bg-hover);
+  box-shadow: var(--shadow-hover);
 }
 
 /* ── Gradient text ───────────────────────────────────────── */
 .gradient-text {
-  background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  /* 決定「アクセントは1色」。2色のグラデーション文字は方向Bの名残なので単色にする。 */
+  color: var(--accent-blue);
 }
 
 /* ── Primary button ──────────────────────────────────────── */
 .btn-primary {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #94a3b8;
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  color: var(--text-muted);
   padding: 6px 14px;
   border-radius: 7px;
   font-weight: 600;
@@ -101,9 +253,9 @@ button, a, [role="button"], summary {
   text-transform: uppercase;
 }
 .btn-primary:hover:not(:disabled) {
-  background: rgba(56, 189, 248, 0.1);
-  border-color: rgba(56, 189, 248, 0.3);
-  color: #38bdf8;
+  background: var(--accent-soft);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
 }
 
 /* ── Sidebar item ────────────────────────────────────────── */
@@ -126,13 +278,13 @@ button, a, [role="button"], summary {
   letter-spacing: 0.02em;
 }
 .sidebar-item:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: #94a3b8;
+  background: var(--accent-soft);
+  color: var(--text-main);
 }
 .sidebar-item.active {
-  background: rgba(56, 189, 248, 0.07);
+  background: var(--accent-soft);
   color: var(--accent-blue);
-  border-color: rgba(56, 189, 248, 0.15);
+  border-color: var(--accent-blue);
 }
 
 /* ── Stat chip (terminal style) ──────────────────────────── */
@@ -156,8 +308,8 @@ button, a, [role="button"], summary {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 6px #10b981;
+  background: var(--accent-emerald);
+  box-shadow: none;
   animation: livepulse 2.5s ease-in-out infinite;
   flex-shrink: 0;
 }
@@ -169,8 +321,8 @@ button, a, [role="button"], summary {
 /* ── Scrollbar ───────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 10px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.13); }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 
 /* ── 起動スプラッシュ（セッション初回ロードのブランド表示）─────────── */
 /* 消える処理はopacityのみのCSSアニメ（コンポジタ駆動）。visibilityやJSタイマーは使わない:
@@ -179,7 +331,7 @@ button, a, [role="button"], summary {
 .splash {
   position: fixed; inset: 0; z-index: 9999;
   display: flex; align-items: center; justify-content: center;
-  background: #03060f;
+  background: var(--splash-bg);
   pointer-events: none;
   animation: splashAutoOut 0.35s ease 0.8s forwards;
 }

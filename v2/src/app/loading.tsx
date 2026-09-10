@@ -4,7 +4,7 @@
 export default function HomeLoading() {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 border-b border-white/5 bg-[#03060f]/85 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-white/5 bg-[var(--bg-color)]/85 backdrop-blur-md">
         <div className="max-w-5xl mx-auto flex items-center justify-between px-4 sm:px-6 py-3">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-white/10 animate-pulse" />

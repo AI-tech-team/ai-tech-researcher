@@ -30,7 +30,7 @@ export function OverlayShell({ children }: { children: React.ReactNode }) {
   if (pathname === '/') return null;
 
   return (
-    <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain bg-[#03060f]">
+    <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain bg-[var(--bg-color)]">
       {children}
     </div>
   );

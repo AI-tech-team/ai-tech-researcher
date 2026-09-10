@@ -8,13 +8,10 @@ import { ShareButtons } from '@/components/ShareButtons';
 import { AiBadge } from '@/components/AiBadge';
 import { noSummaryReason } from '@/lib/no-summary';
 import { SITE_URL } from '@/lib/site';
+import { CATEGORY_COLORS } from '@/lib/category-colors';
 
 // 記事本文の表示部。モーダル(ArticleDetailModal)と全画面ページ(/articles/[id])の両方で共用する。
 // 状態(fav/rl/read)とトグル操作は親が供給する（モーダルは楽観patch、ページはServer Action）。
-const CATEGORY_COLORS: Record<string, string> = {
-  'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
-  'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#475569',
-};
 
 interface Props {
   article: ArticleDetail;
@@ -31,7 +28,7 @@ interface Props {
 export function ArticleDetailContent({
   article, fav, rl, read, onToggleFav, onToggleRl, onToggleRead, onShowInList,
 }: Props) {
-  const color = CATEGORY_COLORS[article.category ?? ''] ?? '#475569';
+  const color = CATEGORY_COLORS[article.category ?? ''] ?? 'var(--cat-other)';
   const safeUrl = safeHttpUrl(article.url); // javascript:/data:等を弾いてから href に使う
 
   return (
@@ -64,7 +61,7 @@ export function ArticleDetailContent({
           <p className="text-xs text-slate-500 mt-1">{article.title}</p>
         )}
         <div className="flex items-center gap-2 mt-1.5 font-mono text-[10px] text-slate-600">
-          {article.sourceValue && <span style={{ color: `${color}90` }}>{article.sourceValue}</span>}
+          {article.sourceValue && <span style={{ color: `color-mix(in srgb, ${color} 56%, transparent)` }}>{article.sourceValue}</span>}
           {article.publishedAt && <><span>·</span><span>{new Date(article.publishedAt).toLocaleDateString('ja-JP')}</span></>}
         </div>
       </div>

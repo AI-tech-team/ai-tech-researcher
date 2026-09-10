@@ -63,10 +63,10 @@ export function FeedbackModal({ open, onClose }: Props) {
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          className="fixed inset-0 z-[70] bg-[#03060f] overflow-y-auto"
+          className="fixed inset-0 z-[70] bg-[var(--bg-color)] overflow-y-auto"
         >
           {/* トップバー（タイトル＋閉じる） */}
-          <header className="sticky top-0 z-10 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+          <header className="sticky top-0 z-10 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
             <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
               <div className="flex items-center gap-2">
                 <MessageSquare size={16} className="text-sky-400" />

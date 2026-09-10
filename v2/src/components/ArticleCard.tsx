@@ -4,16 +4,8 @@ import { useState, useRef, useLayoutEffect } from 'react';
 import { Star, Bookmark, ExternalLink, CheckCircle2, Newspaper } from 'lucide-react';
 import type { CollectedItem } from '@/types';
 import { safeHttpUrl } from '@/lib/safeUrl';
+import { CATEGORY_COLORS } from '@/lib/category-colors';
 
-const CATEGORY_COLORS: Record<string, string> = {
-  'LLM推論':          '#38bdf8',
-  'エージェント':      '#818cf8',
-  'ツール/フレームワーク': '#34d399',
-  'ハードウェア':      '#fb923c',
-  'ビジネス応用':      '#f472b6',
-  '研究/論文':         '#a78bfa',
-  'その他':           '#475569',
-};
 
 interface ArticleCardProps {
   item: CollectedItem;
@@ -51,7 +43,7 @@ export function ArticleCard({
     }
   }, [item.summary, summaryExpanded]);
 
-  const color  = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
+  const color  = CATEGORY_COLORS[item.category ?? ''] ?? 'var(--cat-other)';
   // 正規化スコアが利用可能で2以上差があれば表示、なければ生スコア
   const displayScore = (item.normalizedImportanceScore != null &&
     Math.abs((item.normalizedImportanceScore) - (item.importanceScore ?? 5)) >= 2)
@@ -85,7 +77,7 @@ export function ArticleCard({
         {/* Row 1: category + badges + actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-[10px] font-bold tracking-widest uppercase"
-            style={{ color: isRead ? `${color}70` : color }}>
+            style={{ color: isRead ? `color-mix(in srgb, ${color} 44%, transparent)` : color }}>
             {item.category ?? 'OTHER'}
           </span>
 
@@ -196,7 +188,7 @@ export function ArticleCard({
           ))}
           <span className="ml-auto flex items-center gap-2 text-slate-600">
             {item.sourceValue && (
-              <span style={{ color: isRead ? '#475569' : `${color}90` }}>{item.sourceValue}</span>
+              <span style={{ color: isRead ? 'var(--cat-other)' : `color-mix(in srgb, ${color} 56%, transparent)` }}>{item.sourceValue}</span>
             )}
             <span>·</span>
             <span>{timeAgo(dateStr)}</span>

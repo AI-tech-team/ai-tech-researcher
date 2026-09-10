@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Outfit } from "next/font/google";
+import { Inter, IBM_Plex_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { ToastProvider } from "@/components/Toast";
@@ -20,10 +20,17 @@ const siteJsonLd = {
 };
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const outfit = Outfit({ subsets: ["latin"], variable: "--font-outfit" });
+// 番号・日付・件数を等幅にする（決定「方向Bの意匠を移植」）。欧文のみなので実測で軽い。
+// 和文の明朝／ゴシックは端末のものを使う（globals.css の --font-serif を参照）。
+const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex-mono" });
 
 // スプラッシュのセッションゲート（静的定数・外部入力なし）。sessionStorage不可(プライベートモード等)でも
 // catchで握って毎回表示にフォールバックするだけ＝閉じ込めは起きない。
+// 保存済みテーマ("light"/"dark")を最初のペイント前に反映する。未選択("system")なら何も貼らず、
+// CSS の prefers-color-scheme に任せる（3状態のうち既定を壊さない）。
+const THEME_INIT_JS =
+  "try{var t=localStorage.getItem('cv_theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}";
+
 const SPLASH_SESSION_GATE_JS =
   "try{if(sessionStorage.getItem('kt_splash')){document.getElementById('kt-splash').style.display='none'}else{sessionStorage.setItem('kt_splash','1')}}catch(e){}";
 
@@ -65,7 +72,10 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {
   return (
-    <html lang="ja" className={`${inter.variable} ${outfit.variable} h-full antialiased`}>
+    <html lang="ja" className={`${inter.variable} ${plexMono.variable} h-full antialiased`} suppressHydrationWarning>
+      {/* 読者が選んだテーマを、描画前に html へ貼る。ここでやらないと
+          「明を選んでいるのに一瞬暗い画面が出る」チラつきが必ず出る。 */}
+      <head><script dangerouslySetInnerHTML={{ __html: THEME_INIT_JS }} /></head>
       <body className="min-h-full">
         {/* アクセシビリティ: キーボード/スクリーンリーダー向けのスキップリンク（Tabで最初に当たる） */}
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-sky-600 focus:text-white focus:text-sm focus:font-bold">

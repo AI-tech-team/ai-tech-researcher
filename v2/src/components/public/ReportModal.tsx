@@ -38,7 +38,7 @@ export function ReportModal({ report, onClose, onArticleRef }: Props) {
             initial={{ y: 30, opacity: 0, scale: 0.98 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: 20, opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 320 }}
             onClick={e => e.stopPropagation()}
-            className="relative w-full sm:max-w-2xl max-h-[90vh] sm:max-h-[85vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#070b16] shadow-2xl"
+            className="relative w-full sm:max-w-2xl max-h-[90vh] sm:max-h-[85vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[var(--card-bg)] shadow-2xl"
           >
             <button onClick={onClose}
               className="absolute top-3 right-3 z-10 p-1.5 rounded-full bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-colors">

@@ -2,8 +2,8 @@
 // 記事本文のサーバ取得が終わるまでの間、ModalShellと同じ見た目で表示する。
 export default function ArticleOverlayLoading() {
   return (
-    <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto bg-[#03060f]">
-      <header className="sticky top-0 z-10 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+    <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto bg-[var(--bg-color)]">
+      <header className="sticky top-0 z-10 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
         <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-white/10 animate-pulse" />
@@ -13,7 +13,7 @@ export default function ArticleOverlayLoading() {
         </div>
       </header>
       <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8">
-        <div className="rounded-2xl border border-white/10 bg-[#070b16] p-6 space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-[var(--card-bg)] p-6 space-y-4">
           <div className="h-3 w-24 rounded bg-white/10 animate-pulse" />
           <div className="h-7 w-5/6 rounded bg-white/10 animate-pulse" />
           <div className="h-7 w-2/3 rounded bg-white/10 animate-pulse" />

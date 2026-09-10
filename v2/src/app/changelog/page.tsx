@@ -26,9 +26,9 @@ const tierOf = (e: { version: string; milestone?: boolean }): Tier =>
   e.milestone ? 'major' : /\.0$/.test(e.version) ? 'minor' : 'patch';
 
 const DOT_STYLE: Record<Tier, string> = {
-  major: 'absolute -left-[30px] top-1 w-3 h-3 rounded-full bg-sky-400 ring-4 ring-[#03060f] shadow-[0_0_10px_2px_rgba(56,189,248,0.5)]',
-  minor: 'absolute -left-[28px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-4 ring-[#03060f] shadow-[0_0_7px_1px_rgba(52,211,153,0.55)]',
-  patch: 'absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-slate-600 ring-4 ring-[#03060f]',
+  major: 'absolute -left-[30px] top-1 w-3 h-3 rounded-full bg-sky-400 ring-4 ring-[var(--bg-color)] shadow-[0_0_10px_2px_rgba(56,189,248,0.5)]',
+  minor: 'absolute -left-[28px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-4 ring-[var(--bg-color)] shadow-[0_0_7px_1px_rgba(52,211,153,0.55)]',
+  patch: 'absolute -left-[27px] top-1.5 w-2 h-2 rounded-full bg-slate-600 ring-4 ring-[var(--bg-color)]',
 };
 const VERSION_STYLE: Record<Tier, string> = {
   major: 'text-xs font-bold font-mono px-2 py-0.5 rounded-md border border-sky-500/40 text-sky-200 bg-sky-500/15',
@@ -39,7 +39,7 @@ const VERSION_STYLE: Record<Tier, string> = {
 export default function ChangelogPage() {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
         <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">

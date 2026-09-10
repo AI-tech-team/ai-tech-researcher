@@ -17,15 +17,13 @@ import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import { PushToggle } from '@/components/public/PushToggle';
+import { ThemeToggle } from '@/components/public/ThemeToggle';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
 import { noSummaryReason } from '@/lib/no-summary';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION, SITE_TAGLINE } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
+import { CATEGORY_COLORS } from '@/lib/category-colors';
 
-const CATEGORY_COLORS: Record<string, string> = {
-  'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
-  'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#475569',
-};
 
 // 初心者向け：テーマ（カテゴリ）の大まかな説明。ホームの「注目のテーマ」でホバー/選択時に出す
 const CATEGORY_DESC: Record<string, string> = {
@@ -83,7 +81,7 @@ function reportLead(content: string, max = 200): string {
 function PubCard({ item, featured = false, lead = false }: {
   item: CollectedItem; featured?: boolean; lead?: boolean;
 }) {
-  const color = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
+  const color = CATEGORY_COLORS[item.category ?? ''] ?? 'var(--cat-other)';
   const title = item.titleJa || item.title || '無題';
   const outlets = item.storyOutlets ?? [];
   const multi = (item.storyCount ?? 1) > 1 && outlets.length > 0;
@@ -131,7 +129,7 @@ function PubCard({ item, featured = false, lead = false }: {
       })()}
       <div className="flex items-center gap-2 flex-wrap font-mono text-[10px] text-slate-600 mt-0.5">
         {item.tags?.slice(0, 3).map(t => <span key={t}>#{t}</span>)}
-        {item.sourceValue && <span className="ml-auto truncate max-w-[50%]" style={{ color: `${color}90` }}>{item.sourceValue}</span>}
+        {item.sourceValue && <span className="ml-auto truncate max-w-[50%]" style={{ color: `color-mix(in srgb, ${color} 56%, transparent)` }}>{item.sourceValue}</span>}
       </div>
     </Link>
   );
@@ -439,7 +437,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   return (
     <div className="min-h-screen overflow-y-auto">
       {/* ── トップバー ── */}
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
         <div className="max-w-5xl mx-auto flex items-center justify-between px-4 sm:px-6 py-3">
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
@@ -484,6 +482,8 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                   </div>
               )}
             </div>
+            {/* 配色の切替（明／端末に合わせる／暗）。狭い画面では場所を食うので隠す。 */}
+            <ThemeToggle className="hidden md:flex" />
             {/* 検索: デスクトップは⌘Kヒント付きピル、モバイルはアイコン */}
             <button onClick={() => setSearchOpen(true)} title="記事を検索 (⌘K)"
               className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 text-xs transition-colors">
@@ -614,13 +614,12 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           <motion.section
             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
             onClick={() => openReportObj(heroReport)}
-            className="cursor-pointer rounded-3xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.08] via-sky-500/[0.04] to-indigo-500/[0.04] p-7 sm:p-10 hover:border-emerald-500/30 transition-colors group relative overflow-hidden"
+            className="cursor-pointer rounded-2xl border border-white/10 bg-[var(--card-bg)] border-l-2 border-l-sky-500 p-7 sm:p-10 hover:border-white/20 transition-colors group relative overflow-hidden"
           >
             {/* ほんのり光るグロー */}
-            <div className="pointer-events-none absolute -top-24 -right-24 w-64 h-64 rounded-full bg-emerald-400/10 blur-3xl" />
-            <p className="text-[11px] sm:text-xs font-bold tracking-[0.2em] uppercase text-emerald-300/80 mb-2">今日のAI、3分で。</p>
+            <p className="text-[11px] sm:text-xs font-bold tracking-[0.2em] uppercase text-sky-400 mb-2">今日のAI、3分で。</p>
             <div className="flex items-center gap-2 mb-4 font-mono text-[11px]">
-              <span className="flex items-center gap-1.5 text-emerald-400">
+              <span className="flex items-center gap-1.5 text-sky-400">
                 <FileText size={13} /> デイリーレポート
               </span>
               <span className="text-slate-600">·</span>
@@ -629,7 +628,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
             <p className="text-lg sm:text-xl text-slate-100 leading-relaxed font-medium">
               {reportLead(heroReport.content ?? '', 260) || 'AIの最新動向を自動で集め、要約・分析してお届けします。'}
             </p>
-            <span className="inline-flex items-center gap-1.5 mt-5 text-sm font-bold text-emerald-300 group-hover:gap-2.5 transition-all">
+            <span className="inline-flex items-center gap-1.5 mt-5 text-sm font-bold text-sky-400 group-hover:gap-2.5 transition-all">
               全文を読む <ArrowRight size={15} />
             </span>
           </motion.section>
@@ -749,13 +748,16 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {themes.map(([cat, cnt]) => {
-                const color = CATEGORY_COLORS[cat] ?? '#475569';
+                const color = CATEGORY_COLORS[cat] ?? 'var(--cat-other)';
                 const active = selectedCategory === cat;
                 return (
                   <button key={cat} title={CATEGORY_DESC[cat] ?? ''}
                     onClick={() => setSelectedCategory(active ? null : cat)}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors ${active ? 'ring-2 ring-offset-0' : 'hover:bg-white/[0.04]'}`}
-                    style={{ borderColor: `${color}${active ? '60' : '28'}`, background: `${color}${active ? '22' : '10'}` }}>
+                    style={{
+                      borderColor: `color-mix(in srgb, ${color} ${active ? 38 : 16}%, transparent)`,
+                      background: `color-mix(in srgb, ${color} ${active ? 13 : 6}%, transparent)`,
+                    }}>
                     <span className="font-bold" style={{ color }}>{cat}</span>
                     <span className="font-mono text-[10px] text-slate-500">{cnt}</span>
                   </button>

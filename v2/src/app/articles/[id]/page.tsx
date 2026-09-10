@@ -28,7 +28,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
         <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
@@ -43,7 +43,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
       </header>
 
       <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8">
-        <article className="rounded-2xl border border-white/10 bg-[#070b16]">
+        <article className="rounded-2xl border border-white/10 bg-[var(--card-bg)]">
           <ArticleView article={article} />
         </article>
         <div className="mt-6">

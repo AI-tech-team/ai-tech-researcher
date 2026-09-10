@@ -26,9 +26,9 @@ export function ModalShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto overscroll-contain bg-[#03060f]" onClick={close}>
+    <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto overscroll-contain bg-[var(--bg-color)]" onClick={close}>
       <div className="min-h-full" onClick={e => e.stopPropagation()}>
-        <header className="sticky top-0 z-10 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+        <header className="sticky top-0 z-10 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
           <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
             <Link href="/" className="flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
@@ -43,7 +43,7 @@ export function ModalShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
         <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8 pb-[max(2rem,env(safe-area-inset-bottom))]">
-          <article className="rounded-2xl border border-white/10 bg-[#070b16]">
+          <article className="rounded-2xl border border-white/10 bg-[var(--card-bg)]">
             {children}
           </article>
         </main>

@@ -6,11 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { getMyReadLater, getMyFavorites } from '@/app/actions';
 import type { CollectedItem } from '@/types';
 import { noSummaryShort } from '@/lib/no-summary';
+import { CATEGORY_COLORS } from '@/lib/category-colors';
 
-const CATEGORY_COLORS: Record<string, string> = {
-  'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
-  'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#475569',
-};
 
 type Tab = 'readlater' | 'favorites';
 
@@ -78,7 +75,7 @@ export function SavedItemsModal({ open, onClose, onOpenArticle, onToggleReadLate
             initial={{ y: 30, opacity: 0, scale: 0.98 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: 20, opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 320 }}
             onClick={e => e.stopPropagation()}
-            className="relative w-full sm:max-w-xl max-h-[90vh] sm:max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#070b16] shadow-2xl overflow-hidden"
+            className="relative w-full sm:max-w-xl max-h-[90vh] sm:max-h-[85vh] flex flex-col rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[var(--card-bg)] shadow-2xl overflow-hidden"
           >
             <button onClick={onClose}
               className="absolute top-3 right-3 z-10 p-1.5 rounded-full bg-black/40 hover:bg-white/10 text-slate-400 hover:text-white transition-colors">
@@ -111,7 +108,7 @@ export function SavedItemsModal({ open, onClose, onOpenArticle, onToggleReadLate
               ) : (
                 <div className="py-1">
                   {items.map(item => {
-                    const color = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
+                    const color = CATEGORY_COLORS[item.category ?? ''] ?? 'var(--cat-other)';
                     const title = item.titleJa || item.title || '無題';
                     return (
                       <div key={item.id}

@@ -7,11 +7,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { searchArticles } from '@/app/actions';
 import type { CollectedItem } from '@/types';
 import { noSummaryShort } from '@/lib/no-summary';
+import { CATEGORY_COLORS } from '@/lib/category-colors';
 
-const CATEGORY_COLORS: Record<string, string> = {
-  'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
-  'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#475569',
-};
 
 // 公開UIのグローバル検索（⌘K）。記事をタイトル/サマリーで横断検索して即ジャンプ。
 export function SearchPalette({ open, onClose, onSelect }: {
@@ -82,7 +79,7 @@ export function SearchPalette({ open, onClose, onSelect }: {
             initial={{ y: -16, opacity: 0, scale: 0.98 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: -10, opacity: 0 }}
             transition={{ type: 'spring', damping: 30, stiffness: 340 }}
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#070b16] shadow-2xl overflow-hidden"
+            className="w-full max-w-xl rounded-2xl border border-white/10 bg-[var(--card-bg)] shadow-2xl overflow-hidden"
           >
             {/* 入力 */}
             <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/5">
@@ -117,7 +114,7 @@ export function SearchPalette({ open, onClose, onSelect }: {
               ) : (
                 <div className="py-1">
                   {results.map((item, idx) => {
-                    const color = CATEGORY_COLORS[item.category ?? ''] ?? '#475569';
+                    const color = CATEGORY_COLORS[item.category ?? ''] ?? 'var(--cat-other)';
                     const highlighted = idx === highlightedIndex;
                     return (
                       <button key={item.id}

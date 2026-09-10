@@ -3,13 +3,10 @@ import { BrainCircuit, ArrowLeft } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
 import type { CollectedItem } from '@/types';
 import { noSummaryShort } from '@/lib/no-summary';
+import { CATEGORY_COLORS } from '@/lib/category-colors';
 
 // カテゴリ/タグの記事一覧ページ本体（サーバ描画）。/category/[name] と /tag/[name] で共用。
 // 各記事は /articles/[id] への本物リンク。公開SEOページなのでユーザー状態は扱わない。
-const CATEGORY_COLORS: Record<string, string> = {
-  'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
-  'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#94a3b8',
-};
 
 export function ArticleListView({ kicker, title, articles, topSlot, emptyText, paginationSlot, bottomSlot }: {
   kicker: string; title: string; articles: CollectedItem[];
@@ -20,7 +17,7 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText, p
 }) {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[#03060f]/85 border-b border-white/5">
+      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
         <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
@@ -51,7 +48,7 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText, p
               <div key={a.id} className="rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] p-4 transition-colors group relative">
                 <div className="flex items-center gap-2 mb-1 font-mono text-[10px]">
                   {a.category && (
-                    <Link href={`/category/${encodeURIComponent(a.category)}`} scroll={false} className="relative z-10 hover:underline underline-offset-2" style={{ color: CATEGORY_COLORS[a.category] ?? '#94a3b8' }}>{a.category}</Link>
+                    <Link href={`/category/${encodeURIComponent(a.category)}`} scroll={false} className="relative z-10 hover:underline underline-offset-2" style={{ color: CATEGORY_COLORS[a.category] ?? 'var(--cat-other)' }}>{a.category}</Link>
                   )}
                   <span className="text-amber-400/80">★{a.importanceScore ?? 0}</span>
                   {a.sourceValue && <span className="text-slate-600 truncate">· {a.sourceValue}</span>}
