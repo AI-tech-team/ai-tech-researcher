@@ -58,6 +58,10 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          # 配信停止リンクの署名に使う。Vercel 側と同一値でないと /api/unsubscribe が検証に失敗する。
+          # 未設定だと unsubscribeUrl() が受信者ごとに例外を投げ、try/catch に飲まれて「0/N件」で
+          # 静かに終わる（2026-09-10 の是正でリンクを入れた際に渡し忘れていた）。
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
           REPORT_TO: ${{ secrets.REPORT_TO }}   # 失敗通知メールの宛先
         run: cd v2 && npx tsx daily_pipeline.ts
 
@@ -85,6 +89,10 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          # 配信停止リンクの署名に使う。Vercel 側と同一値でないと /api/unsubscribe が検証に失敗する。
+          # 未設定だと unsubscribeUrl() が受信者ごとに例外を投げ、try/catch に飲まれて「0/N件」で
+          # 静かに終わる（2026-09-10 の是正でリンクを入れた際に渡し忘れていた）。
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
           REPORT_TO: ${{ secrets.REPORT_TO }}   # 失敗通知メールの宛先
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}    # v10: Web Push（未設定なら送信スキップ）
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
@@ -101,6 +109,10 @@ jobs:
           GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          # 配信停止リンクの署名に使う。Vercel 側と同一値でないと /api/unsubscribe が検証に失敗する。
+          # 未設定だと unsubscribeUrl() が受信者ごとに例外を投げ、try/catch に飲まれて「0/N件」で
+          # 静かに終わる（2026-09-10 の是正でリンクを入れた際に渡し忘れていた）。
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
           REPORT_TO: ${{ secrets.REPORT_TO }}
           PIPELINE_MODE: collect
         run: cd v2 && npx tsx daily_pipeline.ts

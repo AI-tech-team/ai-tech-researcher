@@ -23,11 +23,17 @@ import { SITE_NAME, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src
  * 事業者情報は env（NEXT_PUBLIC_OPERATOR_NAME / _ADDRESS）が入るまで出せないので、
  * 未設定のときはその行を出さない。**課金を始める前に必ず設定すること。**
  */
-function mailFooter(unsubUrl: string, siteUrl: string): string {
-  const lines = [
-    `<a href="${unsubUrl}" style="color:#0ea5e9;">配信を停止する</a>（1クリックで停止します）`,
-    `設定の変更は <a href="${siteUrl}" style="color:#0ea5e9;">${SITE_NAME}</a> のプロフィールから。`,
-  ];
+function mailFooter(unsubUrl: string, siteUrl: string, oneClick = true): string {
+  const lines = oneClick
+    ? [
+      `<a href="${unsubUrl}" style="color:#0ea5e9;">配信を停止する</a>（1クリックで停止します）`,
+      `設定の変更は <a href="${siteUrl}" style="color:#0ea5e9;">${SITE_NAME}</a> のプロフィールから。`,
+    ]
+    : [
+      // 署名が作れないときの退避。法4条が求めるのは「受信拒否の通知先の表示」なので設定ページのURLで要件は満たす。
+      // ワンクリック解除(RFC8058)はGmailの到達率要件であって法定要件ではないため、ここだけを落とす。
+      `<a href="${siteUrl}" style="color:#0ea5e9;">配信を停止する</a>（${SITE_NAME} のプロフィールから停止できます）`,
+    ];
   if (OPERATOR_NAME) lines.push(`送信者: ${escapeHtml(OPERATOR_NAME)}`);
   if (OPERATOR_ADDRESS) lines.push(`所在地: ${escapeHtml(OPERATOR_ADDRESS)}`);
   if (CONTACT_EMAIL) lines.push(`お問い合わせ: <a href="mailto:${CONTACT_EMAIL}" style="color:#0ea5e9;">${CONTACT_EMAIL}</a>`);
@@ -1173,6 +1179,19 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
   const twoDaysAgo = sqlTs(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
   const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
+
+  // 署名が作れるかを「ループの前に一度だけ」判定する。
+  // 経緯: unsubscribeUrl() は AUTH_SECRET 未設定で例外を投げる。それが受信者ごとの try/catch に
+  // 飲まれ、全員ぶん送信失敗しても「0/N件」と出るだけで成功扱いになっていた（2026-09-10）。
+  // 配信を止めるより停止導線を退避させる方が被害が小さいので、送信は続け、代わりにここで声を出す。
+  const canSign = Boolean(process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET);
+  if (!canSign) {
+    console.error(
+      '[Brief] ⚠ AUTH_SECRET が未設定です。ワンクリック配信停止(RFC8058)を出せないため、'
+      + 'フッターと List-Unsubscribe をプロフィール導線に退避して配信を継続します。'
+      + 'GitHub Actions の secrets に Vercel と同一の AUTH_SECRET を追加してください。',
+    );
+  }
   let sent = 0;
 
   for (const r of recipients) {
@@ -1222,13 +1241,13 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
         ${items}` : '';
       // 特定電子メール法4条の表示義務＋RFC8058（Gmail/Yahooの一括送信者要件）のワンクリック解除。
       // これが無いと有料配信に切り替えた瞬間、法令違反であると同時に到達率が構造的に落ちる。
-      const unsubUrl = unsubscribeUrl(siteUrl, String(r.uid));
+      const unsubUrl = canSign ? unsubscribeUrl(siteUrl, String(r.uid)) : siteUrl;
       const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;margin:0 auto;color:#0f172a;padding:8px 4px;">
         <h1 style="font-size:20px;margin:0 0 2px;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日のダイジェスト</h1>
         <p style="font-size:12px;color:#94a3b8;margin:0 0 16px;">${today}</p>
         ${reportHtml ? `<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:8px;">${reportHtml}</div>` : ''}
         ${recsBlock}
-        ${mailFooter(unsubUrl, siteUrl)}
+        ${mailFooter(unsubUrl, siteUrl, canSign)}
       </div>`;
 
       await transporter.sendMail({
@@ -1237,7 +1256,9 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
         html,
         headers: {
           'List-Unsubscribe': `<${unsubUrl}>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          // One-Click を名乗るのは実際にPOSTで停止できるときだけ。署名が無い状態で名乗ると
+          // Gmail が退避先URLへPOSTし、何も起きていないのに「解除済み」と表示される（黙って壊れる方が悪い）。
+          ...(canSign ? { 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } : {}),
           'List-Id': `${SITE_NAME} Daily Digest <digest.${new URL(siteUrl).hostname}>`,
         },
       });
