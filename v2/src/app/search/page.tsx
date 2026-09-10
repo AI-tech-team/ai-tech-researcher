@@ -4,6 +4,7 @@ import { Suspense } from 'react';
 import { searchArticles, searchRelated } from '@/app/actions';
 import { ArticleListView } from '@/components/ArticleListView';
 import { SearchBox } from '@/components/SearchBox';
+import { noSummaryShort } from '@/lib/no-summary';
 
 // 検索結果ページ（共有・履歴・JS無しでも動く）。クライアント専用の SearchPalette を補完する全画面版。
 export async function generateMetadata({ searchParams }: { searchParams: Promise<{ q?: string }> }): Promise<Metadata> {
@@ -31,7 +32,10 @@ async function RelatedSection({ q }: { q: string }) {
             </div>
             <Link href={`/articles/${a.id}`} scroll={false} className="absolute inset-0" aria-label={a.titleJa || a.title || '記事'} />
             <p className="text-sm font-bold text-slate-100 leading-snug group-hover:text-white transition-colors">{a.titleJa || a.title || '無題'}</p>
-            {a.summary && <p className="text-[12px] text-slate-400 leading-relaxed mt-1 line-clamp-2">{a.summary}</p>}
+            {a.summary
+              ? <p className="text-[12px] text-slate-400 leading-relaxed mt-1 line-clamp-2">{a.summary}</p>
+              /* 要約が無いときは空欄にせず理由を1行で（src/lib/no-summary.ts）。警告色は使わない */
+              : <p className="text-[12px] text-slate-500 leading-relaxed mt-1 line-clamp-1">{noSummaryShort(a)}</p>}
           </div>
         ))}
       </div>

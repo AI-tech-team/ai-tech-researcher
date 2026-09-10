@@ -6,6 +6,7 @@ import { Search, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { searchArticles } from '@/app/actions';
 import type { CollectedItem } from '@/types';
+import { noSummaryShort } from '@/lib/no-summary';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
@@ -130,7 +131,9 @@ export function SearchPalette({ open, onClose, onSelect }: {
                           </span>
                           <span className="text-sm text-slate-100 font-medium truncate">{item.titleJa || item.title || '無題'}</span>
                         </div>
-                        {item.summary && <p className="text-[11px] text-slate-500 line-clamp-1">{item.summary}</p>}
+                        {item.summary
+                          ? <p className="text-[11px] text-slate-500 line-clamp-1">{item.summary}</p>
+                          : <p className="text-[11px] text-slate-600 line-clamp-1">{noSummaryShort(item)}</p>}
                       </button>
                     );
                   })}

@@ -5,6 +5,7 @@ import { X, Bookmark, Star, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getMyReadLater, getMyFavorites } from '@/app/actions';
 import type { CollectedItem } from '@/types';
+import { noSummaryShort } from '@/lib/no-summary';
 
 const CATEGORY_COLORS: Record<string, string> = {
   'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
@@ -122,7 +123,9 @@ export function SavedItemsModal({ open, onClose, onOpenArticle, onToggleReadLate
                             </span>
                           </div>
                           <p className="text-sm text-slate-100 font-medium leading-snug">{title}</p>
-                          {item.summary && <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{item.summary}</p>}
+                          {item.summary
+                            ? <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">{item.summary}</p>
+                            : <p className="text-[11px] text-slate-600 line-clamp-1 mt-0.5">{noSummaryShort(item)}</p>}
                         </button>
                         <button
                           onClick={() => tab === 'readlater' ? removeReadLater(item.id) : removeFavorite(item.id)}

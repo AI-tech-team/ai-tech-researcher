@@ -18,6 +18,7 @@ import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import { PushToggle } from '@/components/public/PushToggle';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
+import { noSummaryReason } from '@/lib/no-summary';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION, SITE_TAGLINE } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
 
@@ -112,11 +113,22 @@ function PubCard({ item, featured = false, lead = false }: {
         {title}
       </h3>
       {/* 通常カードも3行表示（要約は平均150字前後あり、2行だと内容が伝わらないという指摘への対応） */}
-      {item.summary && (
+      {item.summary ? (
         <p className={`text-slate-400 leading-relaxed ${lead ? 'text-base line-clamp-3' : 'text-sm line-clamp-3'}`}>
           {item.summary}
         </p>
-      )}
+      ) : (() => {
+        // 要約が無いとき、以前はここが空欄だった。読者には「壊れている」としか見えず、
+        // 見出しだけで要約を書かないという判断がまったく伝わらない。理由を書く（src/lib/no-summary.ts）。
+        // 警告色は使わない ── これは不具合ではなく設計判断なので。
+        const r = noSummaryReason(item);
+        if (!r) return null;
+        return (
+          <p className="text-slate-500 text-sm leading-relaxed border-l-2 border-white/10 pl-3">
+            {r.text}
+          </p>
+        );
+      })()}
       <div className="flex items-center gap-2 flex-wrap font-mono text-[10px] text-slate-600 mt-0.5">
         {item.tags?.slice(0, 3).map(t => <span key={t}>#{t}</span>)}
         {item.sourceValue && <span className="ml-auto truncate max-w-[50%]" style={{ color: `${color}90` }}>{item.sourceValue}</span>}

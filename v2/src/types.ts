@@ -18,6 +18,10 @@ export interface CollectedItem {
   storyId?: number | null;
   storyCount?: number | null;
   storyOutlets?: string[];
+  /** 抽出本文を持っているか。本文そのものは公開面に出さない（第三条）ので有無だけを渡す。 */
+  hasBody?: boolean;
+  /** 本文抽出の失敗タグ（robots_disallow / http_404 等）。要約が無い理由の出し分けに使う。 */
+  extractError?: string | null;
 }
 
 export interface Source {

@@ -6,6 +6,7 @@ import type { ArticleDetail } from '@/app/actions';
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { ShareButtons } from '@/components/ShareButtons';
 import { AiBadge } from '@/components/AiBadge';
+import { noSummaryReason } from '@/lib/no-summary';
 import { SITE_URL } from '@/lib/site';
 
 // 記事本文の表示部。モーダル(ArticleDetailModal)と全画面ページ(/articles/[id])の両方で共用する。
@@ -97,13 +98,22 @@ export function ArticleDetailContent({
         )}
       </div>
 
-      {/* サマリー（AIによる要約） */}
-      {article.summary && (
+      {/* サマリー（AIによる要約）。無い場合は空欄にせず理由を書く（src/lib/no-summary.ts）。
+          クリックして開いたのに何も無い状態は、読者には不具合にしか見えない。 */}
+      {article.summary ? (
         <div className="border-l-2 border-sky-500/30 pl-3">
           <div className="mb-1"><AiBadge label="AI要約" /></div>
           <p className="text-sm text-slate-300 leading-relaxed">{article.summary}</p>
         </div>
-      )}
+      ) : (() => {
+        const r = noSummaryReason(article);
+        if (!r) return null;
+        return (
+          <div className="border-l-2 border-white/10 pl-3">
+            <p className="text-sm text-slate-400 leading-relaxed">{r.text}</p>
+          </div>
+        );
+      })()}
 
       {/* 要点（AIが書き起こした3〜5行）＋なぜ重要か。
           元記事本文は著作権上そのまま出せない(第三条)ため、本文の転載ではなく要約として提示する。 */}

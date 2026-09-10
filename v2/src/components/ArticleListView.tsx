@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { BrainCircuit, ArrowLeft } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
 import type { CollectedItem } from '@/types';
+import { noSummaryShort } from '@/lib/no-summary';
 
 // カテゴリ/タグの記事一覧ページ本体（サーバ描画）。/category/[name] と /tag/[name] で共用。
 // 各記事は /articles/[id] への本物リンク。公開SEOページなのでユーザー状態は扱わない。
@@ -58,7 +59,10 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText, p
                 {/* カード全体を記事へのリンクに（カテゴリリンクは上のz-10で優先） */}
                 <Link href={`/articles/${a.id}`} scroll={false} className="absolute inset-0" aria-label={a.titleJa || a.title || '記事'} />
                 <p className="text-sm font-bold text-slate-100 leading-snug group-hover:text-white transition-colors">{a.titleJa || a.title || '無題'}</p>
-                {a.summary && <p className="text-[12px] text-slate-400 leading-relaxed mt-1 line-clamp-2">{a.summary}</p>}
+                {a.summary
+              ? <p className="text-[12px] text-slate-400 leading-relaxed mt-1 line-clamp-2">{a.summary}</p>
+              /* 要約が無いときは空欄にせず理由を1行で（src/lib/no-summary.ts）。警告色は使わない */
+              : <p className="text-[12px] text-slate-500 leading-relaxed mt-1 line-clamp-1">{noSummaryShort(a)}</p>}
               </div>
             ))}
           </div>

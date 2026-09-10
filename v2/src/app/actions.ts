@@ -45,6 +45,8 @@ function parseCollectedRows(rows: any[]): CollectedItem[] {
     tags: row.tags
       ? (() => { try { return JSON.parse(row.tags); } catch { return null; } })()
       : null,
+    // SQLite は真偽値を 0/1 で返す。UI 側で truthy 判定を誤らないようここで boolean に寄せる。
+    hasBody: row.hasBody == null ? undefined : Boolean(Number(row.hasBody)),
   }));
 }
 
@@ -67,6 +69,10 @@ const COLLECTED_SELECT = {
   sourceType: sources.type,
   storyId: collectedData.storyId,
   storyCount: collectedData.storyCount,
+  // 要約が無い記事に理由を出すために使う（src/lib/no-summary.ts）。
+  // ⚠ rawContent 本体はクライアントに渡さない（第三条）。**有無だけ**を 0/1 で持たせる。
+  hasBody: sql<number>`CASE WHEN ${collectedData.rawContent} IS NOT NULL AND LENGTH(${collectedData.rawContent}) > 200 THEN 1 ELSE 0 END`,
+  extractError: collectedData.extractError,
 };
 
 // v6: ログイン中ユーザーの users.id を取得（未ログインは undefined）
