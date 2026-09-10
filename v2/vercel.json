@@ -6,25 +6,25 @@
   ],
   "redirects": [
     {
-      "source": "/:path*",
+      "source": "/(.*)",
       "has": [
         {
           "type": "host",
           "value": "www.cernoval.com"
         }
       ],
-      "destination": "https://cernoval.com/:path*",
+      "destination": "https://cernoval.com/$1",
       "permanent": true
     },
     {
-      "source": "/:path*",
+      "source": "/(.*)",
       "has": [
         {
           "type": "host",
           "value": "ai-tech-researcher.vercel.app"
         }
       ],
-      "destination": "https://cernoval.com/:path*",
+      "destination": "https://cernoval.com/$1",
       "permanent": true
     }
   ]
