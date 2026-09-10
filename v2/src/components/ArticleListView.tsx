@@ -4,6 +4,7 @@ import { SITE_NAME } from '@/lib/site';
 import type { CollectedItem } from '@/types';
 import { noSummaryShort } from '@/lib/no-summary';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
+import { ObservedFacts } from '@/components/public/ObservedFacts';
 
 // カテゴリ/タグの記事一覧ページ本体（サーバ描画）。/category/[name] と /tag/[name] で共用。
 // 各記事は /articles/[id] への本物リンク。公開SEOページなのでユーザー状態は扱わない。
@@ -50,7 +51,8 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText, p
                   {a.category && (
                     <Link href={`/category/${encodeURIComponent(a.category)}`} scroll={false} className="relative z-10 hover:underline underline-offset-2" style={{ color: CATEGORY_COLORS[a.category] ?? 'var(--cat-other)' }}>{a.category}</Link>
                   )}
-                  <span className="text-amber-400/80">★{a.importanceScore ?? 0}</span>
+                  {/* 決定④: ★ではなく数えただけの事実（ObservedFacts.tsx の先頭コメントに理由） */}
+                  <ObservedFacts item={a} className="text-slate-500" />
                   {a.sourceValue && <span className="text-slate-600 truncate">· {a.sourceValue}</span>}
                 </div>
                 {/* カード全体を記事へのリンクに（カテゴリリンクは上のz-10で優先） */}

@@ -9,6 +9,7 @@ import { AiBadge } from '@/components/AiBadge';
 import { noSummaryReason } from '@/lib/no-summary';
 import { SITE_URL } from '@/lib/site';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
+import { ObservedFacts } from '@/components/public/ObservedFacts';
 
 // 記事本文の表示部。モーダル(ArticleDetailModal)と全画面ページ(/articles/[id])の両方で共用する。
 // 状態(fav/rl/read)とトグル操作は親が供給する（モーダルは楽観patch、ページはServer Action）。
@@ -39,9 +40,8 @@ export function ArticleDetailContent({
           ? <Link href={`/category/${encodeURIComponent(article.category)}`} scroll={false}
               className="font-mono text-[10px] font-bold tracking-widest uppercase hover:underline underline-offset-2" style={{ color }}>{article.category}</Link>
           : <span className="font-mono text-[10px] font-bold tracking-widest uppercase" style={{ color }}>OTHER</span>}
-        <span title="重要度スコア（AIが判定した注目度。お気に入り数ではありません）"
-          className="font-mono text-[10px] px-1.5 py-px rounded border font-bold"
-          style={{ color: '#fb923c', borderColor: '#fb923c28', background: '#fb923c10' }}>重要度 ★{article.importanceScore ?? 0}</span>
+        {/* 決定④: 重要度★は出さない。数えただけの事実だけを添える（src/components/public/ObservedFacts.tsx） */}
+        <ObservedFacts item={article} className="font-mono text-[10px] text-slate-400" />
         {(article.storyCount ?? 1) > 1 && (article.storyOutlets?.length ?? 0) > 0 && (
           <span className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-px rounded">
             <Newspaper size={10} />{article.storyOutlets!.slice(0, 3).join('・')}が報じた

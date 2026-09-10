@@ -7,6 +7,7 @@ import { db } from '@/db';
 import { collectedData, reports, claims, benchmarks, adoptionLogs } from '@/db/schema';
 import { desc, gte, and, lt, eq, count, sql } from 'drizzle-orm';
 import { withRetry } from '@/lib/llm';
+import { CHARS_PER_MINUTE, readableLength } from '@/lib/reading-time';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
 // 比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日がズレる）。
@@ -25,9 +26,6 @@ const CANDIDATE_LIMIT = 120;
 const TOP_N = 40;
 /** 1ドメインが取れる最大枠。上位20本のうち5本がApple関連という日が実在した（2026-09-10 実測）。 */
 const PER_DOMAIN_CAP = 5;
-
-/** 日本語の黙読速度の前提。「3分＝1,800字」はここから決まる。 */
-const CHARS_PER_MINUTE = 600;
 
 /**
  * セクション別の字数上限。読者が「3分／5分／7分」で読み終えられるよう積み上げてある。
@@ -51,13 +49,9 @@ export const SECTION_BUDGET = [
 /** 全文の上限（＝7分）。各セクション上限の合計。 */
 const TOTAL_BUDGET = SECTION_BUDGET.reduce((n, s) => n + s.max, 0);
 
-/**
- * 読者が実際に読む字数。Markdownの記号と余分な空白は読まないので数えない。
- * 読了時間の見積りに使うので、測り方を1か所に固定しておく。
- */
-export function readableLength(s: string): number {
-  return s.replace(/[#*`\-_>|]/g, '').replace(/\s+/g, ' ').trim().length;
-}
+// 読了時間の測り方は表示側（/about）と共通にする（src/lib/reading-time.ts）。
+// ここで別実装を持つと「生成側では3分以内、表示側では3分超」というズレが起きる。
+export { readableLength } from '@/lib/reading-time';
 
 /** 上限を超えたセクションだけを返す。空配列なら約束を守れている。 */
 export function checkBudget(text: string): { name: string; len: number; max: number }[] {

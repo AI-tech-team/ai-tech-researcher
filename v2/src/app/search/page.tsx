@@ -5,6 +5,7 @@ import { searchArticles, searchRelated } from '@/app/actions';
 import { ArticleListView } from '@/components/ArticleListView';
 import { SearchBox } from '@/components/SearchBox';
 import { noSummaryShort } from '@/lib/no-summary';
+import { ObservedFacts } from '@/components/public/ObservedFacts';
 
 // 検索結果ページ（共有・履歴・JS無しでも動く）。クライアント専用の SearchPalette を補完する全画面版。
 export async function generateMetadata({ searchParams }: { searchParams: Promise<{ q?: string }> }): Promise<Metadata> {
@@ -27,7 +28,8 @@ async function RelatedSection({ q }: { q: string }) {
         {related.map((a) => (
           <div key={a.id} className="rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] p-4 transition-colors group relative">
             <div className="flex items-center gap-2 mb-1 font-mono text-[10px]">
-              <span className="text-amber-400/80">★{a.importanceScore ?? 0}</span>
+              {/* 決定④: ★ではなく数えただけの事実（ObservedFacts.tsx の先頭コメントに理由） */}
+              <ObservedFacts item={a} className="text-slate-500" />
               {a.sourceValue && <span className="text-slate-600 truncate">· {a.sourceValue}</span>}
             </div>
             <Link href={`/articles/${a.id}`} scroll={false} className="absolute inset-0" aria-label={a.titleJa || a.title || '記事'} />

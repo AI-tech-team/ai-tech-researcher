@@ -2,7 +2,7 @@
 
 import { db, client } from '@/db';
 import { sources, collectedData, reports, adoptionLogs, claims, userTopicWeights, benchmarks, relations, entities, readingEvents, userArticleState, userProfiles, users, chatMemory, pushSubscriptions } from '@/db/schema';
-import { desc, asc, eq, count, gte, sql, like, or, and, inArray } from 'drizzle-orm';
+import { desc, asc, eq, count, gte, lte, sql, like, or, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
@@ -152,6 +152,45 @@ export async function getReportsData(limit = 40, contentChars = 800) {
   } catch (error) {
     console.error("Failed to fetch reports:", error);
     return [];
+  }
+}
+
+/**
+ * 紹介ページ(/about)が使う「今朝の朝刊」。
+ *
+ * 紹介ページの仕事は「3分で読める」を3分かからずに納得させることなので、説明文ではなく
+ * **今朝の実物**を置く。そのため最新dailyの本文と、その読了時間、そして選別量（何本から何本に絞ったか）を返す。
+ *
+ * 選別量の分母は「前回の朝刊以降に集まった記事数」＝そのレポートが実際に選んだ母集団。
+ * 「昨日1日の件数」ではない（レポートの対象期間とズレるとページの数字が嘘になる）。
+ */
+export async function getLandingDigest() {
+  try {
+    const [latest, prev] = await db.select({
+      id: reports.id, reportDate: reports.reportDate, createdAt: reports.createdAt, content: reports.content,
+    }).from(reports)
+      .where(and(eq(reports.type, 'daily'), sql`length(${reports.content}) > 0`))
+      .orderBy(desc(reports.createdAt))
+      .limit(2);
+    if (!latest?.content) return null;
+
+    // 母集団 = 前回の朝刊から今回の朝刊までに収集された記事。前回が無ければ24時間で代用。
+    const until = latest.createdAt ?? '';
+    const since = prev?.createdAt
+      ?? new Date(new Date(String(until).replace(' ', 'T') + 'Z').getTime() - 86_400_000)
+        .toISOString().replace('T', ' ').slice(0, 19);
+    const [pool] = await db.select({ n: count() }).from(collectedData)
+      .where(and(gte(collectedData.createdAt, since), lte(collectedData.createdAt, until)));
+
+    return {
+      id: latest.id,
+      reportDate: latest.reportDate,
+      content: latest.content,
+      collectedFrom: Number(pool?.n ?? 0),
+    };
+  } catch (error) {
+    console.error('Failed to fetch landing digest:', error);
+    return null;
   }
 }
 

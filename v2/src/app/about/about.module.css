@@ -1,0 +1,229 @@
+/* 紹介ページ(/about)専用のスタイル。
+ *
+ * なぜ Tailwind でなく CSS Module か:
+ *   globals.css のテーマは `--color-white: #15171b` のように Tailwind の色トークン自体を
+ *   差し替えている。つまり `text-white` がこのサイトでは**暗い色**になる。
+ *   紹介ページは黒と白のバンドを交互に敷く別の視覚世界なので、テーマの影響を受けない
+ *   スコープ付きの場所に色を持たせる。ここは意図的に1テーマ（黒白そのものが識別子）。
+ *
+ * 参照した文法: 純黒白の全面バンド／太いサンセリフ／グラデーションは巨大数字にだけ／余白を広く。
+ * 書体は参照サイトと同じく端末のものを使う（和文の重いゴシックをWebフォントで落とすと重すぎる）。
+ */
+
+.page {
+  --ink: #000000;
+  --paper: #ffffff;
+  --on-ink: #f5f5f7;
+  --on-ink-dim: #8e8e94;
+  --on-ink-faint: #4a4a50;
+  --on-paper: #0d0d0f;
+  --on-paper-dim: #5f5f66;
+  --on-paper-faint: #a8a8b0;
+  --hairline-ink: #1a1a1f;
+  --hairline-paper: #e6e6eb;
+
+  /* 夜明け。朝刊が届く 6:00 JST の空の順で 藍→水色→淡金。
+     使うのは「303 → 5」の巨大数字だけ。それ以外には出さない。 */
+  --dawn: linear-gradient(100deg, #a5b4fc 0%, #38bdf8 46%, #fde68a 100%);
+  --accent: #7dd3fc;
+  --accent-paper: #4338ca;
+
+  /* 和文の重いゴシックは端末のものを使う（参照サイトも SF Pro = 端末フォント） */
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN",
+    "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", "Noto Sans JP", sans-serif;
+
+  background: var(--ink);
+  color: var(--on-ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.8;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+.band { padding: 112px 24px; position: relative; }
+.bandInk { background: var(--ink); color: var(--on-ink); }
+.bandPaper { background: var(--paper); color: var(--on-paper); }
+.shell { max-width: 1000px; margin: 0 auto; }
+.shellWide { max-width: 1300px; margin: 0 auto; }
+
+/* ⚠ globals.css が `h1, h2, h3 { font-family: var(--font-serif) }` を**要素セレクタ**で当てている。
+   .page に font-family を置いても継承より要素セレクタが強いので、見出しだけ明朝で出てしまう
+   （実機で発覚・2026-09-11）。紹介ページは太いサンセリフが識別子なので、ここで打ち消す。
+   クラス側の font-weight は 0,1,0 で勝つのでそのまま効く。 */
+.page h1, .page h2, .page h3, .page h4 { font-family: var(--sans); }
+
+/* 見出し。和文に欧文と同じ量の負のトラッキングを掛けると濁点が潰れるので分ける。 */
+.display { font-weight: 800; line-height: 1.06; letter-spacing: -0.024em; margin: 0; }
+.displayJp { font-weight: 900; letter-spacing: -0.014em; line-height: 1.2; margin: 0; }
+.h1 { font-size: clamp(2.5rem, 6.4vw, 4.8rem); }
+.h2 { font-size: clamp(1.9rem, 4.4vw, 3.2rem); }
+
+.eyebrow {
+  font-size: 12px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; margin: 0 0 20px;
+}
+.eyebrowInk { color: var(--accent); }
+.eyebrowPaper { color: var(--accent-paper); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 8px 18px 8px 14px; border-radius: 999px;
+  border: 1px solid #26262c; background: #121217;
+  font-size: 13px; font-weight: 500; color: #d4d4da;
+}
+.pillDot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 4px rgba(125, 211, 252, .15);
+}
+
+.lead { font-size: clamp(1.04rem, 1.7vw, 1.28rem); line-height: 1.82; color: var(--on-ink-dim); margin: 0; }
+.body { font-size: 1.02rem; line-height: 1.9; color: var(--on-ink-dim); max-width: 52ch; margin: 0; }
+.bodyPaper { color: var(--on-paper-dim); }
+.body strong, .lead strong { color: var(--on-ink); font-weight: 600; }
+.bodyPaper strong { color: var(--on-paper); font-weight: 600; }
+.micro { font-size: 13px; color: var(--on-ink-faint); margin: 20px 0 0; }
+
+.grad {
+  background-image: var(--dawn);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.numeral { font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.048em; line-height: .92; }
+
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 26px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 15px 32px; border-radius: 999px;
+  font-size: 15px; font-weight: 600; text-decoration: none; border: 1px solid transparent;
+  transition: transform .18s ease, background-color .18s ease, opacity .18s ease;
+}
+.btnSolid { background: #fff; color: #000; }
+.btnSolid:hover { transform: translateY(-1px); background: #e6e6ec; }
+.btnGhost { color: var(--accent); padding-inline: 4px; }
+.btnGhost:hover { opacity: .72; }
+.page a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 999px; }
+
+/* ── ナビ ── */
+.nav {
+  position: sticky; top: 0; z-index: 30;
+  background: rgba(0, 0, 0, .74); backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--hairline-ink);
+}
+.navInner {
+  max-width: 1300px; margin: 0 auto; padding: 14px 24px;
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+}
+.navBrand { font-weight: 700; font-size: 17px; letter-spacing: -0.02em; color: #fff; text-decoration: none; }
+.navLinks { display: flex; gap: 30px; }
+.navLinks a { font-size: 14px; color: rgba(245, 245, 247, .72); text-decoration: none; transition: color .16s ease; }
+.navLinks a:hover { color: #fff; }
+.navCta {
+  padding: 9px 20px; border-radius: 999px; background: #fff; color: #000;
+  font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+@media (max-width: 880px) { .navLinks { display: none; } }
+
+/* ── ヒーロー ── */
+.hero { padding: 104px 24px 0; text-align: center; overflow: hidden; }
+.hero .lead { margin: 28px auto 0; max-width: 42ch; }
+.hero .row { justify-content: center; margin-top: 40px; }
+/* 夜明けの床。紙面が上ってくる位置に敷く。 */
+.glow {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: 400px; width: min(1500px, 152vw); height: 800px;
+  background: radial-gradient(ellipse 50% 50% at 50% 50%,
+    rgba(56, 189, 248, .18) 0%, rgba(99, 102, 241, .11) 38%, rgba(253, 230, 138, .05) 62%, transparent 74%);
+  pointer-events: none; z-index: 0;
+}
+.heroInner { position: relative; z-index: 1; }
+
+/* ── 朝刊の実物。ページの中心なので本文の可読性を最優先にする ── */
+.paperWrap { background: var(--ink); padding: 0 24px; }
+.frontpage {
+  position: relative; z-index: 1; max-width: 860px; margin: 0 auto;
+  background: #fff; color: var(--on-paper);
+  border-radius: 22px 22px 0 0; text-align: left;
+  padding: 44px clamp(22px, 4.4vw, 60px) 60px;
+  box-shadow: 0 -1px 0 rgba(255, 255, 255, .16), 0 44px 130px -34px rgba(56, 189, 248, .3);
+}
+.fpHead {
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+  gap: 12px 20px; padding-bottom: 18px; border-bottom: 2.5px solid var(--on-paper);
+}
+.fpMast { font-weight: 800; font-size: clamp(20px, 3vw, 27px); letter-spacing: -0.026em; margin: 0; }
+.fpDate { font-size: 13px; color: var(--on-paper-dim); font-variant-numeric: tabular-nums; margin: 3px 0 0; }
+.fpTimer {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px; border-radius: 999px; background: #f1f2f7;
+  font-size: 12.5px; font-weight: 600; color: #3d3d46;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.fpItem { padding: 30px 0; border-bottom: 1px solid var(--hairline-paper); }
+.fpNo { font-weight: 800; font-size: 13px; color: var(--accent-paper); letter-spacing: .02em; margin: 0 0 8px; }
+.fpH { font-weight: 800; letter-spacing: -0.018em; line-height: 1.42; font-size: clamp(1.12rem, 2.2vw, 1.46rem); margin: 0; }
+.fpDl { margin: 16px 0 0; display: grid; gap: 11px; }
+.fpDlRow { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 14px; }
+.fpDt { font-size: 12.5px; font-weight: 700; color: var(--on-paper-faint); padding-top: 3px; letter-spacing: .02em; }
+.fpDd { font-size: 15px; line-height: 1.85; color: #3a3a42; margin: 0; }
+@media (max-width: 620px) {
+  .fpDlRow { grid-template-columns: 1fr; gap: 2px; }
+  .fpDt { padding-top: 0; }
+}
+.fpEnd { padding-top: 30px; }
+.fpEndLine { font-weight: 800; font-size: 19px; letter-spacing: -0.018em; margin: 0; }
+.fpNote { font-size: 13px; color: var(--on-paper-faint); margin: 10px 0 0; line-height: 1.75; }
+.fpMore {
+  margin-top: 24px; padding: 18px 20px; border-radius: 14px; background: #f6f7fa;
+  font-size: 13.5px; color: var(--on-paper-dim); line-height: 1.8;
+}
+.fpMore a { color: var(--accent-paper); font-weight: 600; }
+
+/* ── 選別量 ── */
+.split { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 84px; align-items: center; }
+@media (max-width: 960px) { .split { grid-template-columns: 1fr; gap: 48px; } }
+.ratio { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+.ratioN { font-size: clamp(3.4rem, 8.6vw, 6.6rem); }
+.ratioArrow { font-size: clamp(1.5rem, 3vw, 2.3rem); color: var(--on-ink-faint); font-weight: 300; }
+.dots { display: grid; grid-template-columns: repeat(23, 1fr); gap: 7px; }
+.dots i { display: block; aspect-ratio: 1; border-radius: 50%; background: #1f1f26; }
+.dotPick { background-image: var(--dawn) !important; box-shadow: 0 0 0 3px rgba(56, 189, 248, .16); }
+.dotsCaption {
+  display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 22px;
+  font-size: 12.5px; color: var(--on-ink-dim); font-variant-numeric: tabular-nums;
+}
+.dotsKey { display: inline-flex; align-items: center; gap: 8px; }
+.dotsKey b { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+@media (max-width: 640px) { .dots { grid-template-columns: repeat(17, 1fr); gap: 6px; } }
+
+/* ── 箇条 ── */
+.facts { display: grid; margin-top: 46px; }
+.fact { padding: 26px 0; border-top: 1px solid var(--hairline-paper); }
+.factInk { border-top-color: var(--hairline-ink); }
+.factT { font-size: 17px; font-weight: 800; letter-spacing: -0.016em; margin: 0 0 8px; }
+.factD { font-size: 15px; line-height: 1.86; color: var(--on-paper-dim); max-width: 68ch; margin: 0; }
+.factInk .factD { color: var(--on-ink-dim); }
+.factD strong { color: var(--on-paper); font-weight: 600; }
+.factInk .factD strong { color: var(--on-ink); font-weight: 600; }
+
+.close { text-align: center; }
+.close .row { justify-content: center; margin-top: 36px; }
+.close .lead { max-width: 40ch; margin: 26px auto 0; }
+
+.foot { background: var(--ink); border-top: 1px solid var(--hairline-ink); padding: 34px 24px 56px; }
+.footInner {
+  max-width: 1000px; margin: 0 auto; display: flex; flex-wrap: wrap;
+  gap: 12px 26px; align-items: center; justify-content: space-between;
+  font-size: 13px; color: var(--on-ink-faint);
+}
+.footInner a { color: var(--on-ink-dim); text-decoration: none; }
+.footInner a:hover { color: var(--on-ink); }
+.footLinks { display: flex; gap: 20px; flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  .band { padding: 80px 22px; }
+  .hero { padding-top: 68px; }
+  .frontpage { padding: 30px 20px 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page * { transition: none !important; animation: none !important; }
+}
