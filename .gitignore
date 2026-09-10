@@ -17,3 +17,8 @@ node_modules/
 v2/scripts/_*
 scripts/_*
 .screenshots/
+
+# 平文の秘密値・会員データの暗号化バックアップ。v2/.gitignore にも同じ行があるが、
+# あちらは v2/ 配下にしか効かず、リポジトリ直下の private-backups/ は追跡されてしまう。
+# 公開リポジトリなので、どの階層に置かれても除外されるようここでも指定する（2026-09-10）。
+private-backups/
