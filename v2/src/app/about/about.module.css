@@ -137,48 +137,7 @@
 }
 .heroInner { position: relative; z-index: 1; }
 
-/* ── 朝刊の実物。ページの中心なので本文の可読性を最優先にする ── */
-.paperWrap { background: var(--ink); padding: 0 24px; }
-.frontpage {
-  position: relative; z-index: 1; max-width: 860px; margin: 0 auto;
-  background: #fff; color: var(--on-paper);
-  border-radius: 22px 22px 0 0; text-align: left;
-  padding: 44px clamp(22px, 4.4vw, 60px) 60px;
-  box-shadow: 0 -1px 0 rgba(255, 255, 255, .16), 0 44px 130px -34px rgba(56, 189, 248, .3);
-}
-.fpHead {
-  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
-  gap: 12px 20px; padding-bottom: 18px; border-bottom: 2.5px solid var(--on-paper);
-}
-.fpMast { font-weight: 800; font-size: clamp(20px, 3vw, 27px); letter-spacing: -0.026em; margin: 0; }
-.fpDate { font-size: 13px; color: var(--on-paper-dim); font-variant-numeric: tabular-nums; margin: 3px 0 0; }
-.fpTimer {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 7px 14px; border-radius: 999px; background: #f1f2f7;
-  font-size: 12.5px; font-weight: 600; color: #3d3d46;
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-.fpItem { padding: 30px 0; border-bottom: 1px solid var(--hairline-paper); }
-.fpNo { font-weight: 800; font-size: 13px; color: var(--accent-paper); letter-spacing: .02em; margin: 0 0 8px; }
-.fpH { font-weight: 800; letter-spacing: -0.018em; line-height: 1.42; font-size: clamp(1.12rem, 2.2vw, 1.46rem); margin: 0; }
-.fpDl { margin: 16px 0 0; display: grid; gap: 11px; }
-.fpDlRow { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 14px; }
-.fpDt { font-size: 12.5px; font-weight: 700; color: var(--on-paper-faint); padding-top: 3px; letter-spacing: .02em; }
-.fpDd { font-size: 15px; line-height: 1.85; color: #3a3a42; margin: 0; }
-@media (max-width: 620px) {
-  .fpDlRow { grid-template-columns: 1fr; gap: 2px; }
-  .fpDt { padding-top: 0; }
-}
-.fpEnd { padding-top: 30px; }
-.fpEndLine { font-weight: 800; font-size: 19px; letter-spacing: -0.018em; margin: 0; }
-.fpNote { font-size: 13px; color: var(--on-paper-faint); margin: 10px 0 0; line-height: 1.75; }
-.fpMore {
-  margin-top: 24px; padding: 18px 20px; border-radius: 14px; background: #f6f7fa;
-  font-size: 13.5px; color: var(--on-paper-dim); line-height: 1.8;
-}
-.fpMore a { color: var(--accent-paper); font-weight: 600; }
-
-/* ── 選別量 ── */
+/* ── 選び方（集めた本数 → 載せた本数） ── */
 .split { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 84px; align-items: center; }
 @media (max-width: 960px) { .split { grid-template-columns: 1fr; gap: 48px; } }
 .ratio { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
@@ -222,7 +181,6 @@
 @media (max-width: 640px) {
   .band { padding: 80px 22px; }
   .hero { padding-top: 68px; }
-  .frontpage { padding: 30px 20px 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .page * { transition: none !important; animation: none !important; }
