@@ -15,7 +15,7 @@ import { politeFetch } from './src/lib/robots';
 import { decodeHtmlEntities } from './src/lib/html-entities';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
-import { SITE_NAME, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
+import { SITE_NAME, SITE_URL, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
 
 /**
  * 配信メールの共通フッター。特定電子メール法4条が求める
@@ -42,6 +42,7 @@ function mailFooter(unsubUrl: string, siteUrl: string, oneClick = true): string 
   </p>`;
 }
 import { classifyEntityType } from './src/lib/entity-quality';
+import { stripIdPrefix } from './src/lib/title-prefix';
 import {
   RELATION_TYPES, looksLikeEntity, isValidRelation, orderRelation,
   isValidBenchmarkName, isValidBenchmarkUnit, canonicalBenchmarkName, normalizeBenchmarkScore,
@@ -931,10 +932,33 @@ async function runDailyReportAndDistribute(): Promise<void> {
   const result = await buildDailyReport();
   if (!result) { console.log('[Report] 新着データなし、レポート生成をスキップ'); return; }
   console.log(`[Report] デイリーレポート生成完了 id=${result.inserted?.id}`);
+  // サイト側のキャッシュを捨てさせる。メールより先に叩く（メールのリンクを踏んだ人が
+  // 前日の号を見るのを防ぐ）。非クリティカル＝失敗しても配信は続ける。
+  try { await revalidateSite(result.inserted?.id ?? null); }
+  catch (e: any) { console.warn('[Revalidate] 失敗(非クリティカル):', e.message); }
   await sendPersonalizedBriefs(result.text);
   // v10: Web Push通知（メール購読とは別経路・非クリティカル）。VAPID未設定なら黙ってスキップ。
   try { await sendDigestPush(result.inserted?.id ?? null); }
   catch (e: any) { console.warn('[Push] 通知送信失敗(非クリティカル):', e.message); }
+}
+
+// トップと紹介ページは時間切れISR（stale-while-revalidate）なので、朝刊が出ても
+// 「期限切れ後の最初の訪問者」には前日の号が返る。1日の訪問が少ないと実際に丸一日ずれる
+// （2026-09-11 に発生）。保存直後にオンデマンド再検証を叩いて確実に捨てさせる。
+// REVALIDATE_SECRET 未設定なら黙ってスキップ＝鍵を入れる前でもパイプラインは無傷。
+async function revalidateSite(reportId: number | null): Promise<void> {
+  const secret = process.env.REVALIDATE_SECRET;
+  if (!secret) { console.log('[Revalidate] REVALIDATE_SECRET未設定のためスキップ'); return; }
+  // ベースURLの決定は site.ts に一本化してある（パイプラインは NEXT_PUBLIC_ が無い環境でも動く）。
+  const base = (process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? SITE_URL).replace(/\/+$/, '');
+  const res = await fetch(`${base}/api/revalidate`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ reportId }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  // 本文にはパス一覧しか入らない（秘密は含まれない）ので、そのままログに出して構わない。
+  console.log(`[Revalidate] ${res.status} ${(await res.text()).slice(0, 200)}`);
 }
 
 // v10: 日次ダイジェストのWeb Push通知を全購読へ送る。LLM不使用。
@@ -2556,8 +2580,12 @@ ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
       }));
       for (const it of object.items) {
         if (!it.titleJa || !JA_CHAR.test(it.titleJa)) continue;   // 日本語が無い訳は書かない（英語のまま再保存しない）
+        // 上のプロンプトで渡した `[id] ` を訳文にそのまま残すことがある。頼んでも守られないので
+        // ここで剥がす（本番で1,732件が「[21984] …」の形で公開面に出ていた・src/lib/title-prefix.ts）。
+        const ja = stripIdPrefix(it.titleJa, it.id);
+        if (!ja || !JA_CHAR.test(ja)) continue;
         await db.update(schema.collectedData)
-          .set({ titleJa: it.titleJa.slice(0, 300) })
+          .set({ titleJa: ja.slice(0, 300) })
           .where(eq(schema.collectedData.id, it.id));
         translated++;
       }
