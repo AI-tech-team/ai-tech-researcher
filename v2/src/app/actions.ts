@@ -813,7 +813,8 @@ export interface EntityPage {
   benchmarks: { benchmark: string; score: number; unit: string | null; date: string | null }[];
   relations: { dir: 'out' | 'in'; type: string; other: string }[];
   claims: { predicate: string; value: string }[];
-  articles: { id: number; title: string; category: string | null; importance: number }[];
+  /** 決定④: 重要度スコアは読者に見せない。添えるのは数えただけの事実だけ（components/public/ObservedFacts.tsx） */
+  articles: { id: number; title: string; category: string | null; storyCount: number | null; publishedAt: string | null }[];
 }
 
 export async function getEntityKnowledgePage(name: string): Promise<EntityPage | null> {
@@ -853,9 +854,13 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
     if (ids.length > 0) {
       const arts = await db.select({
         id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa,
-        category: collectedData.category, imp: collectedData.importanceScore,
+        category: collectedData.category,
+        storyCount: collectedData.storyCount, publishedAt: collectedData.publishedAt,
       }).from(collectedData).where(inArray(collectedData.id, ids)).orderBy(desc(collectedData.importanceScore)).limit(12);
-      articles = arts.map(a => ({ id: a.id, title: a.titleJa || a.title || '無題', category: a.category, importance: a.imp ?? 5 }));
+      articles = arts.map(a => ({
+        id: a.id, title: a.titleJa || a.title || '無題', category: a.category,
+        storyCount: a.storyCount, publishedAt: a.publishedAt,
+      }));
     }
 
     return {

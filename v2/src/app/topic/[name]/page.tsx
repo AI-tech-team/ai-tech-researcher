@@ -8,6 +8,7 @@ import { getEntityKnowledgePage } from '@/app/actions';
 import { isPublishableEntity, ENTITY_TYPE_LABELS, classifyEntityType } from '@/lib/entity-quality';
 import { isValidBenchmarkName, isValidBenchmarkUnit, canonicalBenchmarkName, isValidClaim } from '@/lib/knowledge-quality';
 import { JsonLd } from '@/components/JsonLd';
+import { ObservedFacts } from '@/components/public/ObservedFacts';
 
 // ⚠️ 関係タイプ（買収/競合/性能で上回る…）は表示しない。
 // 2026-09-09 の本番実測で /topic/OpenAI が「買収 → Anthropic / Apple / Google / Hugging Face /
@@ -198,7 +199,8 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
                     <Link key={a.id} href={`/articles/${a.id}`} scroll={false}
                       className="flex items-center gap-2 text-[13px] text-slate-300 hover:text-white rounded px-1.5 py-1 hover:bg-white/5 transition-colors group">
                       <span className="truncate flex-1">{a.title}</span>
-                      <span className="font-mono text-[10px] text-slate-600 shrink-0">★{a.importance}</span>
+                      {/* 決定④: ★ではなく数えただけの事実（ObservedFacts.tsx の先頭コメントに理由） */}
+                      <ObservedFacts item={a} className="font-mono text-[10px] text-slate-600 shrink-0" />
                       <ArrowRight size={12} className="text-slate-600 group-hover:text-sky-400 shrink-0" />
                     </Link>
                   ))}
