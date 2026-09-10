@@ -26,6 +26,101 @@ const TOP_N = 40;
 /** 1ドメインが取れる最大枠。上位20本のうち5本がApple関連という日が実在した（2026-09-10 実測）。 */
 const PER_DOMAIN_CAP = 5;
 
+/** 日本語の黙読速度の前提。「3分＝1,800字」はここから決まる。 */
+const CHARS_PER_MINUTE = 600;
+
+/**
+ * セクション別の字数上限。読者が「3分／5分／7分」で読み終えられるよう積み上げてある。
+ *   ハイライトまで        1,800字 = 3分  ← 商品の約束
+ *   ＋トレンド＋カテゴリ  3,000字 = 5分
+ *   ＋インサイト          4,200字 = 7分（＝全文）
+ *
+ * ⚠ この数字は **プロンプトには渡さない**（渡しても効かない。REPORT_SYSTEM_PROMPT のコメント参照）。
+ *   長さは構造指定で抑え、ここは生成後の監視にだけ使う。
+ *   きっかけ: 2026-09-10 に7日分を実測したところ「全体1500〜2000文字」と指示済みなのに
+ *   実際は 4,269〜5,655字（約2.5倍）、ハイライトだけでも 2分38秒〜4分08秒で、
+ *   3分の約束を7日中3日で破っていた。
+ */
+export const SECTION_BUDGET = [
+  { mark: '🔥', name: '今日のハイライト', max: 1800 },
+  { mark: '🚀', name: '急上昇トレンド', max: 400 },
+  { mark: '📊', name: 'カテゴリ別トピック', max: 800 },
+  { mark: '💡', name: 'エンジニアへの実践的インサイト', max: 1200 },
+] as const;
+
+/** 全文の上限（＝7分）。各セクション上限の合計。 */
+const TOTAL_BUDGET = SECTION_BUDGET.reduce((n, s) => n + s.max, 0);
+
+/**
+ * 読者が実際に読む字数。Markdownの記号と余分な空白は読まないので数えない。
+ * 読了時間の見積りに使うので、測り方を1か所に固定しておく。
+ */
+export function readableLength(s: string): number {
+  return s.replace(/[#*`\-_>|]/g, '').replace(/\s+/g, ' ').trim().length;
+}
+
+/** 上限を超えたセクションだけを返す。空配列なら約束を守れている。 */
+export function checkBudget(text: string): { name: string; len: number; max: number }[] {
+  const over: { name: string; len: number; max: number }[] = [];
+  for (const s of SECTION_BUDGET) {
+    // '## 🔥 今日のハイライト' のように見出しの先頭で切り出す
+    const body = text.split(/^## /m).find(p => p.startsWith(s.mark));
+    if (!body) continue;
+    const len = readableLength(body);
+    if (len > s.max) over.push({ name: s.name, len, max: s.max });
+  }
+  return over;
+}
+
+/** 超過の一覧を1行のログにする。 */
+const fmtOver = (over: { name: string; len: number; max: number }[]): string =>
+  over.map(o => `${o.name} ${o.len}/${o.max}字`).join(' / ');
+
+
+/**
+ * レポート生成のsystemプロンプト。
+ *
+ * ⚠ **字数で指示してはいけない**（2026-09-10 に本番データで4回実測）。
+ *   - 「1項目360字以内・全体4200字以内」と書いた版 → ハイライト1本455字・全文9分01秒。全セクション超過
+ *   - さらに実測値を突きつけて書き直させた版 → 1本486字・9分07秒。**むしろ長くなった**
+ *   LLMは文字数を数えられないので、字数の指示は効かないどころか逆効果になる。
+ *
+ *   一方「文の数・項目の数」は数えられる。構造で縛った版は全文2分44秒まで落ちた。
+ *   ただしその版は `### 見出し` が消えて記事タイトルの無い箇条書きになったため、
+ *   **落としてほしくない構造は明示的に required と書く**必要がある。
+ *
+ * 上限の数字（SECTION_BUDGET）はプロンプトには出さず、生成後の checkBudget() の監視にだけ使う。
+ */
+export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナリストです。収集データを元に、AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
+
+【必須構成】
+## 🔥 今日のハイライト
+記事を5点。各項目は必ず次の形で書く（### の見出しは省略しない）。
+
+### 1. （記事の見出しを1行で）
+*   **何が起きたか**: 1〜2文
+*   **なぜ重要か**: 1〜2文
+*   **実務への影響**: 1〜2文
+
+### 2.（以下同じ形で5点まで）
+
+## 🚀 急上昇トレンド
+2〜3文で書く。
+
+## 📊 カテゴリ別トピック
+カテゴリは最大4つ。各カテゴリは ### 見出しで区切る。1カテゴリにつき最大2項目、1項目1〜2文。
+
+## 💡 エンジニアへの実践的インサイト
+4項目以内。1項目1〜2文。
+
+【ルール】
+- **1文を長くしない。** 読点でつないで1文を伸ばすのは禁止。1文はおよそ50〜70字で終える
+- **行数・項目数の指定を超えない。** 書きたいことが多いときは、項目を増やさず優先度の低いものを落とす
+- ハイライトの各項目には必ず ### の見出し（その記事のタイトル）を付ける。見出しの無い箇条書きだけの項目は不可
+- 収集データは前回レポート以降の新着のみ。**前回レポートで既に扱った話題は、新しい進展がある場合だけ「続報」として扱い、単なる繰り返し・焼き直しは禁止**
+- 主観でなく客観的な事実ベースで記述
+- 絵文字・箇条書きを活用`;
+
 function domainOf(url: string | null | undefined): string {
   if (!url) return '';
   try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return ''; }
@@ -179,31 +274,30 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
 
   const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
 
-  const { text } = await withRetry(() => generateText({
-    model: google('gemini-2.5-flash'),
-    system: `あなたはAI技術動向の専門アナリストです。収集データを元に、AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
+  const model = google('gemini-2.5-flash');
+  const system = REPORT_SYSTEM_PROMPT;
 
-【必須構成】
-## 🔥 今日のハイライト
-重要度8以上の記事を中心に3〜5点。各項目は「何が起きたか」「なぜ重要か」「実務への影響」を2〜3行で。
+  const userPrompt = `今日の日付: ${today}${trendText}${evidenceText}${prevSection}\n\n【新着の収集データ（重要度順・${recentData.length}件）】\n${contextStr}`;
 
-## 🚀 急上昇トレンド
-トレンドデータを参考に、今週急増しているカテゴリ・トピックを1段落で解説。
+  const { text } = await withRetry(() => generateText({ model, system, prompt: userPrompt }));
 
-## 📊 カテゴリ別トピック
-カテゴリごとに整理。
-
-## 💡 エンジニアへの実践的インサイト
-実装・採用・評価のポイントを箇条書きで。
-
-【ルール】
-- 全体1500〜2000文字
-- 収集データは前回レポート以降の新着のみ。**前回レポートで既に扱った話題は、新しい進展がある場合だけ「続報」として扱い、単なる繰り返し・焼き直しは禁止**
-- 提示された「検証済みの事実・数値」は積極的に根拠として引用する
-- 主観でなく客観的な事実ベースで記述
-- 絵文字・箇条書きを活用`,
-    prompt: `今日の日付: ${today}${trendText}${evidenceText}${prevSection}\n\n【新着の収集データ（重要度順・${recentData.length}件）】\n${contextStr}`,
-  }));
+  // 長さは REPORT_SYSTEM_PROMPT の構造指定で抑える。ここでは**測るだけ**で書き直させない。
+  //
+  // ⚠ 一度は「超過したら実測値を渡して書き直させる」を実装したが、本番データで測ったら
+  //   ハイライト1本 455字 → 486字 と**悪化した**（2026-09-10）。字数を突きつけても
+  //   LLMは字数を数えられないので効かない。毎日1回APIを余計に叩いて悪くするだけなので外した。
+  //   構造指定が効かなくなったらこのログで気づけるようにしておく（沈黙して伸びるのを防ぐ）。
+  if (text?.trim()) {
+    const total = readableLength(text);
+    const over = checkBudget(text);
+    if (over.length > 0) {
+      console.warn(
+        `[Report] 読了時間が予算超過: ${fmtOver(over)}`
+        + `（全文 ${total}字 ≒ ${(total / CHARS_PER_MINUTE).toFixed(1)}分 / 上限 ${TOTAL_BUDGET}字 = ${TOTAL_BUDGET / CHARS_PER_MINUTE}分）。`
+        + 'プロンプトの構造指定が効かなくなっている可能性があります。',
+      );
+    }
+  }
 
   // LLMが空応答を返すことがある。空レポートを最新dailyとして保存すると購読者メールのダイジェストが消えるため、保存せずnullを返す。
   if (!text?.trim()) { console.warn('[Report] 空レポートのため保存をスキップ'); return null; }
