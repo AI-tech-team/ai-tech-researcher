@@ -15,6 +15,17 @@
       ],
       "destination": "https://cernoval.com/:path*",
       "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "ai-tech-researcher.vercel.app"
+        }
+      ],
+      "destination": "https://cernoval.com/:path*",
+      "permanent": true
     }
   ]
 }
