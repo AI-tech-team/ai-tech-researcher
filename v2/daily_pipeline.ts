@@ -240,7 +240,7 @@ async function filterUnseenUrls<T>(items: T[], getUrl: (i: T) => string | null |
 async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenDaysAgo: string): Promise<number> {
   if (!isSafeFetchUrl(source.value)) return 0; // SSRF対策: 内部/プライベート宛フィードは弾く
   const res = await fetch(source.value, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Cernoval/1.0)' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -385,7 +385,7 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   const url = 'https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.LG+OR+cat:cs.CL&sortBy=submittedDate&sortOrder=descending&max_results=30';
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Cernoval/1.0)' },
     signal: AbortSignal.timeout(20000),
   });
   if (!res.ok) throw new Error(`ArXiv HTTP ${res.status}`);
@@ -457,7 +457,7 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
   const url = `https://api.github.com/search/repositories?q=llm+OR+ai-agent+OR+machine-learning+in:topics+stars:>200+pushed:>${sevenDaysAgo}&sort=stars&order=desc&per_page=15`;
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'KnowledgeTree/1.0', 'Accept': 'application/vnd.github+json' },
+    headers: { 'User-Agent': 'Cernoval/1.0', 'Accept': 'application/vnd.github+json' },
     signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) throw new Error(`GitHub API error: ${res.status}`);
@@ -512,7 +512,7 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
   const url = 'https://paperswithcode.com/api/v1/papers/?format=json&ordering=-date&has_code=true&page=1&items_per_page=30';
 
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Cernoval/1.0)' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`PwC API error: ${res.status}`);
@@ -582,7 +582,7 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
     if (!isSafeFetchUrl(target.value)) continue; // SSRF対策
     try {
       const res = await fetch(target.value, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; KnowledgeTree/1.0)' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Cernoval/1.0)' },
         signal: AbortSignal.timeout(15000),
       });
       const html = await res.text();
@@ -859,9 +859,9 @@ async function sendDigestPush(reportId: number | null): Promise<void> {
   const subject = process.env.VAPID_SUBJECT || 'mailto:noreply@example.com';
   webpush.default.setVapidDetails(subject, pub, priv);
 
-  const siteUrl = process.env.SITE_URL || 'https://ai-tech-researcher.vercel.app';
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || 'https://ai-tech-researcher.vercel.app';
   const payload = JSON.stringify({
-    title: 'Knowledge Tree',
+    title: 'Cernoval',
     body: '今日のダイジェストができました。最新のAI動向をチェック。',
     url: reportId ? `${siteUrl}/reports/${reportId}` : siteUrl,
     tag: 'kt-daily',
@@ -1066,7 +1066,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
   const twoDaysAgo = sqlTs(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
   const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
   let sent = 0;
 
   for (const r of recipients) {
@@ -1123,7 +1123,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
       </div>`;
 
       await transporter.sendMail({
-        from: `Knowledge Tree <${user}>`, to: r.email,
+        from: `Cernoval <${user}>`, to: r.email,
         subject: `☀️ 今日のダイジェスト ${today}`,
         html,
       });
@@ -1146,7 +1146,7 @@ async function sendFailureEmail(error: Error) {
     await transporter.sendMail({
       from: user,
       to: process.env.REPORT_TO || user, // 受信先を分離可能に（未設定なら従来通り自己送信）
-      subject: `🚨 Knowledge Tree パイプライン失敗 ${today}`,
+      subject: `🚨 Cernoval パイプライン失敗 ${today}`,
       // スタックは原因特定に足る先頭6行のみ（フルダンプの機密情報をメールに残さない）。
       text: `デイリーパイプラインが失敗しました。\n\nエラー: ${error.message}\n\nスタックトレース(先頭6行):\n${(error.stack ?? '(なし)').split('\n').slice(0, 6).join('\n')}`,
     });

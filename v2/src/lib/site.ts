@@ -3,11 +3,17 @@
  *  - CONTACT_EMAIL は環境変数で差し替え可能（個人アドレス直書きを避ける。未設定なら空）。
  */
 export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ai-tech-researcher.vercel.app').replace(/\/+$/, '');
-export const SITE_NAME = 'Knowledge Tree';
-export const SITE_TAGLINE = '毎日「育つ」AIリサーチ';
-export const SITE_DESC = '毎日「育つ」AIリサーチ — 最新動向を自動で集め、要約・分析・知識グラフ化してお届けします。';
+export const SITE_NAME = 'Cernoval';
+export const SITE_TAGLINE = '読むべきものだけを、毎朝';
+export const SITE_DESC = '毎日集まる大量のAI関連ニュースから、本当に読むべきものだけを選び、なぜ重要かを添えて毎朝お届けします。';
 /** 問い合わせ／データ削除依頼の窓口。Vercel に NEXT_PUBLIC_CONTACT_EMAIL を設定すると有効化される。 */
 export const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? '';
+/** 巡回時に名乗るUAへ入れる連絡先URL。第三条（スクレイピングのマナー）。
+ *  クロールはサーバ／パイプラインでしか走らないので、NEXT_PUBLIC_ でない SITE_URL も見る。
+ *  SITE_URL 本体には足さないこと（クライアントで undefined になり canonical がずれる）。 */
+export const CRAWL_CONTACT_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
+
 /** プロトコルを除いた表示用ホスト（OG画像のフッター等で使う）。 */
 export const SITE_HOST = SITE_URL.replace(/^https?:\/\//, '');
 

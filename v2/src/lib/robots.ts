@@ -2,8 +2,9 @@
 // 完全なRFC9309実装ではないが「明示的にDisallowされたパスは取りに行かない」を守る保守的ゲート。
 // originごとに6時間メモリキャッシュ（毎回robots.txtを叩かない）。取得失敗/不在は「制限なし」とみなす。
 import { isSafeFetchUrl } from './safeUrl';
+import { CRAWL_CONTACT_URL } from './site';
 
-const UA_TOKEN = 'airesearcher'; // 自分のUA名（User-Agent: KnowledgeTree/1.0）
+const UA_TOKEN = 'cernoval'; // 自分のUA名（User-Agent: Cernoval/1.0）と一致させる
 const TTL_MS = 6 * 60 * 60 * 1000;
 const cache = new Map<string, { rules: string[]; at: number }>();
 
@@ -49,7 +50,7 @@ export async function isAllowedByRobots(targetUrl: string): Promise<boolean> {
     if (isSafeFetchUrl(robotsUrl)) {
       try {
         const res = await fetch(robotsUrl, {
-          headers: { 'User-Agent': 'KnowledgeTree/1.0 (+https://ai-tech-researcher.vercel.app)' },
+          headers: { 'User-Agent': `Cernoval/1.0 (+${CRAWL_CONTACT_URL})` },
           signal: AbortSignal.timeout(5000),
           redirect: 'follow',
         });

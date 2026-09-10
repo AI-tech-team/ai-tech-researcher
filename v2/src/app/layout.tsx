@@ -7,7 +7,7 @@ import { Providers } from "@/components/Providers";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import { BackToTop } from "@/components/BackToTop";
 import { JsonLd } from "@/components/JsonLd";
-import { SITE_URL, SITE_NAME, SITE_DESC } from "@/lib/site";
+import { SITE_URL, SITE_NAME, SITE_DESC, SITE_TAGLINE } from '@/lib/site';
 
 // サイト全体の構造化データ（WebSite＋Organization）。検索ボックス(SearchAction)は
 // URLベースの検索結果(?q=)が無いため今は付けない。
@@ -29,7 +29,7 @@ const SPLASH_SESSION_GATE_JS =
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: `${SITE_NAME} — 毎日「育つ」AIリサーチ`, template: `%s — ${SITE_NAME}` },
+  title: { default: `${SITE_NAME} — ${SITE_TAGLINE}`, template: `%s — ${SITE_NAME}` },
   description: SITE_DESC,
   openGraph: {
     title: SITE_NAME,

@@ -7,7 +7,7 @@ import { SITE_NAME, SITE_DESC } from '@/lib/site';
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: SITE_NAME,
-    short_name: 'Knowledge Tree',
+    short_name: SITE_NAME,
     description: SITE_DESC,
     start_url: '/',
     display: 'standalone',

@@ -1,4 +1,20 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["hnd1"]
+  "framework": "nextjs",
+  "regions": [
+    "hnd1"
+  ],
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.cernoval.com"
+        }
+      ],
+      "destination": "https://cernoval.com/:path*",
+      "permanent": true
+    }
+  ]
 }

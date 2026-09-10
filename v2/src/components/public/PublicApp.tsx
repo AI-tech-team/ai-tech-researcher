@@ -18,7 +18,7 @@ import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import { PushToggle } from '@/components/public/PushToggle';
 import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
-import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION } from '@/lib/site';
+import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION, SITE_TAGLINE } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -433,7 +433,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
               <BrainCircuit className="text-white" size={15} />
             </div>
-            <h1 className="font-bold text-sm font-outfit">Knowledge Tree</h1>
+            <h1 className="font-bold text-sm font-outfit">Cernoval</h1>
           </div>
           <div className="flex items-center gap-2">
             {/* … メニュー（フィードバック / プライバシー / 利用規約 を集約してヘッダーをスッキリ） */}
@@ -872,9 +872,9 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
               <div className="w-5 h-5 rounded-md bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center">
                 <BrainCircuit className="text-white" size={11} />
               </div>
-              <span className="font-mono text-[10px] text-slate-500">Knowledge Tree</span>
+              <span className="font-mono text-[10px] text-slate-500">Cernoval</span>
             </div>
-            <p className="font-mono text-[10px] text-slate-700">毎日「育つ」AIリサーチ · © 2026</p>
+            <p className="font-mono text-[10px] text-slate-700">{SITE_TAGLINE} · © 2026</p>
           </div>
         </footer>
       </main>

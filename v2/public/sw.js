@@ -1,4 +1,4 @@
-/* Knowledge Tree Service Worker — 起動高速化＋基本オフライン。
+/* Cernoval Service Worker — 起動高速化＋基本オフライン。
  *
  * 方針（鮮度を最優先・古い記事を絶対に見せない）:
  *   - ハッシュ付きの静的アセット(_next/static・アイコン・フォント等)= cache-first（中身不変なので安全）
@@ -83,7 +83,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
-  const title = payload.title || 'Knowledge Tree';
+  const title = payload.title || 'Cernoval';
   const options = {
     body: payload.body || '新しい更新があります。',
     icon: payload.icon || '/icon-192.png',

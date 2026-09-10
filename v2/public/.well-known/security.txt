@@ -1,3 +1,3 @@
-Contact: https://ai-tech-researcher.vercel.app/feedback
+Contact: https://cernoval.com/feedback
 Expires: 2027-06-13T00:00:00.000Z
 Preferred-Languages: ja, en
