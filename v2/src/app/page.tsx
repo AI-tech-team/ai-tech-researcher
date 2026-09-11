@@ -22,7 +22,8 @@ export const revalidate = 300;
 const NAV = [
   { href: '/articles', label: '記事を探す' },
   { href: '/search', label: '検索' },
-  { href: '/about', label: 'このサービスについて' },
+  // スマホで入りきらないときに最初に落とす（フッタにも同じリンクがある）。
+  { href: '/about', label: 'このサービスについて', minor: true },
 ];
 
 export default async function Page() {

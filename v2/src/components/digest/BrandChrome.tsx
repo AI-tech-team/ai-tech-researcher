@@ -7,9 +7,10 @@ import s from '@/styles/brand.module.css';
  * 3ページに同じマークアップをコピーすると必ず片方だけ古くなるのでここに1つだけ置く。
  */
 
-export type NavLink = { href: string; label: string };
+/** `minor: true` は、画面が狭いときに最初に落とすリンク（フッタにも置いてあるもの）。 */
+export type NavLink = { href: string; label: string; minor?: boolean };
 
-export function BrandNav({ links, cta }: { links: NavLink[]; cta?: NavLink }) {
+export function BrandNav({ links, cta, right }: { links: NavLink[]; cta?: NavLink; right?: React.ReactNode }) {
   return (
     <nav className={s.nav}>
       <div className={s.navInner}>
@@ -17,11 +18,15 @@ export function BrandNav({ links, cta }: { links: NavLink[]; cta?: NavLink }) {
         <div className={s.navLinks}>
           {links.map(l => (
             l.href.startsWith('#')
-              ? <a key={l.href} href={l.href}>{l.label}</a>
-              : <Link key={l.href} href={l.href}>{l.label}</Link>
+              ? <a key={l.href} href={l.href} className={l.minor ? s.navMinor : undefined}>{l.label}</a>
+              : <Link key={l.href} href={l.href} className={l.minor ? s.navMinor : undefined}>{l.label}</Link>
           ))}
         </div>
-        {cta ? <Link className={s.navCta} href={cta.href}>{cta.label}</Link> : <span />}
+        {/* 右端は「CTA」か「操作(検索・ログイン等)」のどちらか。両方無いページでも
+            space-between のためのダミーを置いて、ワードマークが中央に寄らないようにする。 */}
+        {right ? <div className={s.navRight}>{right}</div>
+          : cta ? <Link className={s.navCta} href={cta.href}>{cta.label}</Link>
+          : <span />}
       </div>
     </nav>
   );

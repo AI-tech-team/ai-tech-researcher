@@ -13,6 +13,8 @@ import {
   toggleFavorite, toggleReadLater,
   getMyProfile, subscribeEmailDigest,
 } from '@/app/actions';
+import { BrandNav } from '@/components/digest/BrandChrome';
+import s from '@/styles/brand.module.css';
 import { SearchPalette } from '@/components/public/SearchPalette';
 import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
@@ -74,8 +76,10 @@ function timeAgo(dateStr: string | null): string {
   return new Date(dateStr).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
 }
 
-// 記事一覧のカード。以前は「今日の一押し(lead)」「見どころ(featured)」で大きさを変えていたが、
+// 記事一覧の1件。以前は「今日の一押し(lead)」「見どころ(featured)」で大きさを変えていたが、
 // 記事を前に出して強弱を付けるのは朝刊の仕事なので、一覧では全部同じ大きさにした（2026-09-11）。
+// 2026-09-12: 箱（角丸カード＋影）をやめ、罫だけで仕切る行にした。朝刊の「過去の号」と同じ組み方で、
+// 表と裏で紙面の作りが揃う。
 function PubCard({ item }: { item: CollectedItem }) {
   const color = CATEGORY_COLORS[item.category ?? ''] ?? 'var(--cat-other)';
   const title = item.titleJa || item.title || '無題';
@@ -86,41 +90,31 @@ function PubCard({ item }: { item: CollectedItem }) {
     // ウィンドウをスクロールさせ、オーバーレイを開いた瞬間に背面が最下部へ飛ぶ。
     <Link href={`/articles/${item.id}`} scroll={false}
       onClick={() => { pubScrollY = window.scrollY; }}
-      className="group cursor-pointer rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 transition-all duration-200 flex flex-col gap-2.5 p-5">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-mono text-[10px] font-bold tracking-widest uppercase" style={{ color }}>
-          {item.category ?? 'OTHER'}
-        </span>
+      className={s.riverItem}>
+      <div className={s.riverTop}>
+        <span className={s.riverCat} style={{ color }}>{item.category ?? 'OTHER'}</span>
         {multi && (
-          <span title={outlets.join('、')} className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300/90">
-            <Newspaper size={10} />{outlets.length}媒体が報じた
+          <span title={outlets.join('、')} className={s.riverMulti}>
+            <Newspaper size={11} />{outlets.length}媒体が報じた
           </span>
         )}
-        <span className="ml-auto font-mono text-[10px] text-slate-600">{timeAgo(item.publishedAt ?? item.createdAt)}</span>
+        <span className={s.riverTime}>{timeAgo(item.publishedAt ?? item.createdAt)}</span>
       </div>
-      <h3 className="font-bold leading-snug text-white group-hover:text-sky-300 transition-colors text-base">
-        {title}
-      </h3>
-      {/* 通常カードも3行表示（要約は平均150字前後あり、2行だと内容が伝わらないという指摘への対応） */}
+      <h3 className={s.riverTitle}>{title}</h3>
+      {/* 3行まで表示（要約は平均150字前後あり、2行だと内容が伝わらないという指摘への対応） */}
       {item.summary ? (
-        <p className="text-slate-400 leading-relaxed text-sm line-clamp-3">
-          {item.summary}
-        </p>
+        <p className={s.riverSummary}>{item.summary}</p>
       ) : (() => {
         // 要約が無いとき、以前はここが空欄だった。読者には「壊れている」としか見えず、
         // 見出しだけで要約を書かないという判断がまったく伝わらない。理由を書く（src/lib/no-summary.ts）。
         // 警告色は使わない ── これは不具合ではなく設計判断なので。
         const r = noSummaryReason(item);
         if (!r) return null;
-        return (
-          <p className="text-slate-500 text-sm leading-relaxed border-l-2 border-white/10 pl-3">
-            {r.text}
-          </p>
-        );
+        return <p className={s.riverNote}>{r.text}</p>;
       })()}
-      <div className="flex items-center gap-2 flex-wrap font-mono text-[10px] text-slate-600 mt-0.5">
+      <div className={s.riverFoot}>
         {item.tags?.slice(0, 3).map(t => <span key={t}>#{t}</span>)}
-        {item.sourceValue && <span className="ml-auto truncate max-w-[50%]" style={{ color: `color-mix(in srgb, ${color} 56%, transparent)` }}>{item.sourceValue}</span>}
+        {item.sourceValue && <span className={s.riverSource}>{item.sourceValue}</span>}
       </div>
     </Link>
   );
@@ -158,12 +152,11 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const [savedOpen, setSavedOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
-  // 「…」メニューはカーソルが離れたら閉じる（gap通過のチラつき防止に小遅延・再侵入でキャンセル）。
-  // 外側クリックは覆い被せ用divではなくdocumentリスナで判定（divで覆うとボタンを隠してhoverが壊れるため）。
+  // 「…」メニューの開閉はタップ/クリックだけで完結させる。
+  // 以前はホバーで閉じる小遅延を併用していたが、指には hover が無く、スマホでは
+  // 「開いた直後に合成された mouseleave で閉じる」事故の温床にしかならない。
+  // 外側クリックは覆い被せ用divではなくdocumentリスナで判定（divで覆うとボタンを隠すため）。
   const infoMenuRef = useRef<HTMLDivElement>(null);
-  const infoMenuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelInfoClose = () => { if (infoMenuTimer.current) clearTimeout(infoMenuTimer.current); };
-  const scheduleInfoClose = () => { cancelInfoClose(); infoMenuTimer.current = setTimeout(() => setInfoMenuOpen(false), 180); };
   useEffect(() => {
     if (!infoMenuOpen) return;
     const onDown = (e: PointerEvent) => {
@@ -408,94 +401,92 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
 
   return (
     <div className="min-h-screen overflow-y-auto">
-      {/* ── トップバー ── */}
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-5xl mx-auto flex items-center justify-between px-4 sm:px-6 py-3">
-          {/* ブランドは朝刊（トップ）へ戻る導線。ここが行き止まりだと、記事を探しに来た人が本紙に戻れない。 */}
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <span className="font-bold text-sm font-outfit group-hover:text-sky-300 transition-colors">Cernoval</span>
-          </Link>
-          <div className="flex items-center gap-2">
-            {/* … メニュー（フィードバック / プライバシー / 利用規約 を集約してヘッダーをスッキリ） */}
-            <div ref={infoMenuRef} className="relative" onMouseEnter={cancelInfoClose} onMouseLeave={scheduleInfoClose}>
+      {/* ── トップバー ──
+          表（朝刊）と同じ黒いマストヘッドを共有する。ここが別物だと、同じサイトの
+          裏表ではなく「別のサイトに飛ばされた」ように見える（2026-09-12 に統一）。 */}
+      <BrandNav
+        links={[
+          { href: '/', label: '朝刊' },
+          { href: '/topic', label: 'トピック' },
+          { href: '/about', label: 'このサービスについて', minor: true },
+        ]}
+        right={
+          <>
+            {/* 検索: デスクトップは⌘Kヒント付きのピル、モバイルはアイコン */}
+            <button onClick={() => setSearchOpen(true)} title="記事を検索 (⌘K)" aria-label="記事を検索"
+              className={`${s.navBtn} ${s.navPill} ${s.navWide}`}>
+              <Search size={14} /> 検索 <span className={s.navKbd}>⌘K</span>
+            </button>
+            <button onClick={() => setSearchOpen(true)} title="記事を検索" aria-label="記事を検索"
+              className={`${s.navBtn} ${s.navNarrow}`}>
+              <Search size={18} />
+            </button>
+
+            {/* … メニュー: 配色・規約類・通知をまとめる。
+                配色の切替は以前 md 以上でしか出しておらず、**スマホでは切り替えられなかった**。 */}
+            <div ref={infoMenuRef} className={s.navMenuWrap}>
               <button onClick={() => setInfoMenuOpen(v => !v)} title="メニュー" aria-label="メニュー"
-                className="flex items-center px-2 py-1.5 rounded-lg hover:bg-white/10 text-slate-400 transition-colors">
+                aria-expanded={infoMenuOpen} className={s.navBtn}>
                 <MoreHorizontal size={18} />
               </button>
               {infoMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-52 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
-                    <Link href="/about" scroll={false} onClick={() => setInfoMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors whitespace-nowrap">
-                      <Info size={14} className="shrink-0 text-slate-400" /> このサービスについて
+                <div className={s.navMenu}>
+                  <p className={s.navMenuHead}>配色</p>
+                  <div style={{ padding: '0 14px 8px' }}><ThemeToggle onDark /></div>
+                  <div className={s.navMenuSep} />
+                  <Link href="/about" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
+                    <Info size={14} /> このサービスについて
+                  </Link>
+                  {feedbackAvailable && (
+                    <Link href="/feedback" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
+                      <MessageSquare size={14} /> フィードバック
                     </Link>
-                    {feedbackAvailable && (
-                      <Link href="/feedback" scroll={false} onClick={() => setInfoMenuOpen(false)}
-                        className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                        <MessageSquare size={14} className="text-slate-400" /> フィードバック
-                      </Link>
-                    )}
-                    <Link href="/privacy" scroll={false} onClick={() => setInfoMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                      <Shield size={14} className="text-slate-400" /> プライバシー
-                    </Link>
-                    <Link href="/terms" scroll={false} onClick={() => setInfoMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                      <ScrollText size={14} className="text-slate-400" /> 利用規約
-                    </Link>
-                    <Link href="/changelog" scroll={false} onClick={() => setInfoMenuOpen(false)}
-                      className="flex items-center gap-2 px-3 py-2 text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                      <History size={14} className="text-slate-400" /> 更新履歴
-                    </Link>
-                    {/* 通知トグル（未対応環境・VAPID未設定なら自動で非表示） */}
-                    <div className="border-t border-white/5 my-1" />
-                    <PushToggle loggedIn={!!session?.user} onDone={() => setInfoMenuOpen(false)} />
-                  </div>
+                  )}
+                  <Link href="/privacy" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
+                    <Shield size={14} /> プライバシー
+                  </Link>
+                  <Link href="/terms" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
+                    <ScrollText size={14} /> 利用規約
+                  </Link>
+                  <Link href="/changelog" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
+                    <History size={14} /> 更新履歴
+                  </Link>
+                  {/* 通知トグル（未対応環境・VAPID未設定なら自動で非表示） */}
+                  <div className={s.navMenuSep} />
+                  <PushToggle loggedIn={!!session?.user} onDone={() => setInfoMenuOpen(false)} />
+                </div>
               )}
             </div>
-            {/* 配色の切替（明／端末に合わせる／暗）。狭い画面では場所を食うので隠す。 */}
-            <ThemeToggle className="hidden md:flex" />
-            {/* 検索: デスクトップは⌘Kヒント付きピル、モバイルはアイコン */}
-            <button onClick={() => setSearchOpen(true)} title="記事を検索 (⌘K)"
-              className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-slate-400 text-xs transition-colors">
-              <Search size={13} /> 検索
-              <span className="font-mono text-[10px] text-slate-600 border border-white/10 rounded px-1">⌘K</span>
-            </button>
-            <button onClick={() => setSearchOpen(true)} title="記事を検索"
-              className="sm:hidden p-1.5 rounded-lg hover:bg-white/10 text-slate-400 transition-colors">
-              <Search size={16} />
-            </button>
+
+            {/* アカウント */}
             {status === 'loading' ? (
-              <div className="w-7 h-7 rounded-full bg-white/10 animate-pulse" />
+              <div className={s.navAvatar} style={{ background: 'rgba(255,255,255,.1)' }} />
             ) : session?.user ? (
-              <div className="relative">
+              <div className={s.navMenuWrap}>
                 {/* アカウント＝1つのメニューに集約。ログアウトは中に隠す＋確認を出す（誤操作防止） */}
-                <button onClick={() => setMenuOpen(v => !v)} title="アカウント"
-                  className="flex items-center gap-1.5 pl-1 pr-1.5 py-0.5 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors">
+                <button onClick={() => setMenuOpen(v => !v)} title="アカウント" aria-label="アカウント"
+                  aria-expanded={menuOpen} className={s.navBtn}>
                   {session.user.image
-                    /* Googleアバター(24px・外部画像)。next/imageに通すとVercel画像最適化課金が乗る割に
+                    /* Googleアバター(26px・外部画像)。next/imageに通すとVercel画像最適化課金が乗る割に
                        効果が無いため<img>のまま。寸法明示＋no-referrerで安定描画。 */
                     /* eslint-disable-next-line @next/next/no-img-element */
-                    ? <img src={session.user.image} alt="" width={24} height={24} loading="lazy" referrerPolicy="no-referrer" className="w-6 h-6 rounded-full" />
-                    : <div className="w-6 h-6 rounded-full bg-sky-500/20 flex items-center justify-center text-sky-400 text-[10px] font-bold">{(session.user.name ?? '?').slice(0, 1)}</div>}
-                  <span className="hidden sm:inline text-[11px] text-slate-300 font-medium max-w-[88px] truncate">{session.user.name ?? 'アカウント'}</span>
-                  <ChevronDown size={12} className={`text-slate-500 transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
+                    ? <img src={session.user.image} alt="" width={26} height={26} loading="lazy" referrerPolicy="no-referrer" className={s.navAvatar} />
+                    : <User size={18} />}
+                  <ChevronDown size={12} style={{ transform: menuOpen ? 'rotate(180deg)' : undefined }} />
                 </button>
                 {menuOpen && (
                   <>
                     {/* 外側クリックで閉じる */}
                     <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                    <div className="absolute right-0 mt-1.5 w-48 z-50 rounded-xl border border-white/10 bg-[#0a0f1e] shadow-2xl overflow-hidden py-1">
+                    <div className={s.navMenu}>
                       {session.user.email && (
-                        <div className="px-3 py-2 border-b border-white/5">
-                          <p className="text-[11px] text-slate-500 truncate">{session.user.email}</p>
-                        </div>
+                        <p className={s.navMenuHead} style={{ textTransform: 'none', letterSpacing: 0 }}>{session.user.email}</p>
                       )}
-                      <button onClick={() => { setMenuOpen(false); setProfileOpen(true); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-200 hover:bg-white/5 transition-colors">
-                        <User size={14} className="text-slate-400" /> プロフィール
+                      <button onClick={() => { setMenuOpen(false); setProfileOpen(true); }} className={s.navMenuItem}>
+                        <User size={14} /> プロフィール
                       </button>
                       <button onClick={() => { setMenuOpen(false); if (window.confirm('ログアウトしますか？')) signOut(); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-300 hover:bg-red-500/10 hover:text-red-300 transition-colors">
+                        className={s.navMenuItem}>
                         <LogOut size={14} /> ログアウト
                       </button>
                     </div>
@@ -503,25 +494,26 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                 )}
               </div>
             ) : (
-              <button onClick={() => signIn('google')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-sky-500/20 bg-sky-500/5 hover:bg-sky-500/10 text-sky-400 text-xs font-bold transition-colors">
-                <LogIn size={13} /> ログイン
+              <button onClick={() => signIn('google')} className={`${s.navBtn} ${s.navPill}`}>
+                <LogIn size={14} /> ログイン
               </button>
             )}
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
-      <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-10 outline-none">
+      <main id="main-content" tabIndex={-1} className={`${s.listShell} outline-none pb-24`}>
 
         {/* ── ページの頭 ──
             ここは朝刊ではなく「朝刊に載らなかったものも含めた全部」。何のページかを最初に言う。
+            朝刊と同じ「小さいラベル＋大きい見出し」の落差で組む（版面を表と揃える）。
             旧トップにあったログイン誘導のバナーは置かない（読むのにログインは要らない、という約束と矛盾する）。 */}
-        <section className="space-y-2">
-          <h1 className="text-xl sm:text-2xl font-bold text-white">記事を探す</h1>
-          <p className="text-[13px] text-slate-400 leading-relaxed">
+        <section className={s.listHead}>
+          <p className={s.listEyebrow}>Archive</p>
+          <h1 className={s.listTitle}>記事を探す</h1>
+          <p className={s.listLead}>
             集めた記事を新しい順に並べています。今朝の分だけでよければ{' '}
-            <Link href="/" className="text-sky-400 hover:text-sky-300 underline underline-offset-2">朝刊</Link>
+            <Link href="/">朝刊</Link>
             {' '}をどうぞ。
           </p>
         </section>
@@ -621,7 +613,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
 
         {/* ── 注目のテーマ（直近記事のタグ頻度） ── */}
         {themes.length > 0 && (
-          <section>
+          <section className={s.listSection}>
             <div className="flex items-center gap-2 mb-3 text-sky-400">
               <Hash size={16} />
               <h2 className="text-sm font-bold font-outfit">注目のテーマ</h2>
@@ -661,32 +653,32 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
             同じ選別を一覧でもう一度やると、朝刊とは違う5本が並んで「どちらが本紙の選別か」が濁る。 */}
 
         {/* ── 最新の記事 ── */}
-        <section>
-          <h2 className="text-sm font-bold font-outfit text-slate-300 mb-4">最新の記事</h2>
+        <section className={s.listSection}>
+          <h2 className={s.listSectionTitle}>最新の記事</h2>
           {isLoading ? (
-            <div className="grid grid-cols-1 gap-3">
+            <div className={s.river}>
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-28 rounded-2xl border border-white/5 bg-white/[0.02] animate-pulse" />
+                <div key={i} className="h-32 border-b border-[var(--border-glass)] animate-pulse" />
               ))}
             </div>
           ) : feed.length > 0 ? (
             <>
-              <div className="grid grid-cols-1 gap-3">
+              <div className={s.river}>
                 {feed.map(item => (
                   <PubCard key={item.id} item={item} />
                 ))}
               </div>
               {/* 第2波（フィード残りの後追い）実行中は先頭件の下にスケルトンを出し、上から順に埋まる様子を示す */}
               {belowFoldPending ? (
-                <div className="grid grid-cols-1 gap-3 mt-3" aria-hidden>
+                <div aria-hidden>
                   {Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="h-28 rounded-2xl border border-white/5 bg-white/[0.02] animate-pulse" />
+                    <div key={i} className="h-32 border-b border-[var(--border-glass)] animate-pulse" />
                   ))}
                 </div>
               ) : hasMore ? (
-                <div className="flex justify-center pt-6">
+                <div className="flex justify-center pt-9">
                   <button onClick={loadMore} disabled={loadingMore}
-                    className="px-5 py-2.5 rounded-xl border border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.06] text-sm font-bold transition-colors disabled:opacity-40">
+                    className="px-6 py-3 rounded-full border border-[var(--border-glass)] text-[var(--text-main)] hover:bg-[var(--accent-soft)] text-sm font-bold transition-colors disabled:opacity-40">
                     {loadingMore ? '読み込み中…' : 'もっと読む'}
                   </button>
                 </div>
@@ -699,7 +691,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
 
         {/* ── 未ログイン向け末尾CTA（控えめ） ── */}
         {!sessionUserId && (
-          <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-7 text-center space-y-3">
+          <section className={`${s.listSection} rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-7 text-center space-y-3`}>
             <p className="text-base sm:text-lg text-white font-bold">もっと自分のための場所にする</p>
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
               ログインすると <span className="text-sky-300">あなた向けのおすすめ</span> / <span className="text-sky-300">後で読む</span> / <span className="text-sky-300">興味学習</span> が使えます。閲覧は無料でずっと続けられます。
@@ -716,7 +708,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           </section>
         )}
 
-        <footer className="pt-8 border-t border-white/5">
+        <footer className={`${s.listSection} pt-8 border-t border-white/5`}>
           {/* グループ化したフッター（サービス / 規約 / フィードバック）。横一列の窮屈さを解消 */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-7 max-w-2xl mx-auto">
             <div>

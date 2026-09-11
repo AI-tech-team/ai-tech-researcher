@@ -61,21 +61,32 @@ const OPTIONS: { key: Choice; label: string; Icon: typeof Sun }[] = [
   { key: 'dark', label: '暗い', Icon: Moon },
 ];
 
-export function ThemeToggle({ className = '' }: { className?: string }) {
+/**
+ * `onDark`: 常に黒い面（ブランドのナビ／その中のメニュー）に置くとき。
+ * テーマ変数由来の色は「明」を選んだ読者には暗い色になり、黒地の上で見えなくなるため、
+ * その場合だけ literal の色に切り替える。
+ */
+export function ThemeToggle({ className = '', onDark = false }: { className?: string; onDark?: boolean }) {
   const choice = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   return (
     <div role="group" aria-label="配色"
-      className={`flex items-center rounded-lg border border-white/10 overflow-hidden ${className}`}>
+      className={`flex items-center rounded-lg overflow-hidden ${onDark ? '' : 'border border-white/10'} ${className}`}
+      style={onDark ? { border: '1px solid #26262c' } : undefined}>
       {OPTIONS.map(({ key, label, Icon }) => {
         const active = choice === key;
         return (
           <button key={key} type="button" title={label} aria-label={label} aria-pressed={active}
             onClick={() => choose(key)}
-            className={`px-2 py-1.5 transition-colors ${active
-              ? 'bg-sky-500/15 text-sky-400'
-              : 'text-slate-600 hover:text-slate-400 hover:bg-white/5'}`}>
-            <Icon size={13} />
+            className={onDark
+              ? 'px-3 py-2 transition-colors'
+              : `px-2 py-1.5 transition-colors ${active
+                ? 'bg-sky-500/15 text-sky-400'
+                : 'text-slate-600 hover:text-slate-400 hover:bg-white/5'}`}
+            style={onDark
+              ? { color: active ? '#7dd3fc' : '#8e8e94', background: active ? 'rgba(125,211,252,.14)' : 'transparent' }
+              : undefined}>
+            <Icon size={14} />
           </button>
         );
       })}
