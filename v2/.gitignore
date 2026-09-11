@@ -18,6 +18,7 @@
 /out/
 # OneDrive がハンドルを掴んで .next を unlink できないときの退避先（EPERM 対策）
 /.next-stale-*/
+/.next.old.*/
 
 # production
 /build

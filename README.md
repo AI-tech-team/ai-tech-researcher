@@ -37,9 +37,17 @@ cd v2 && npm run dev
 
 ## デプロイ（Vercel）
 
+**リポジトリのルート**で実行する。Vercel プロジェクト側の Root Directory が `v2` に設定されているため、
+`--cwd v2` や `cd v2` で実行すると `…/v2/v2 does not exist` で失敗する。
+
 ```bash
-vercel --prod --cwd v2
+npx vercel --prod --archive=tgz
 ```
+
+`--archive=tgz` はファイルを1つのtarにまとめて送る。付けないとファイル数が多いときに
+**アカウントの1日アップロード上限（5000）**を消費し、丸1日デプロイできなくなる。
+アップロード対象から外すものは `v2/.vercelignore`（Root Directory 側）に書く
+── ルートの `.vercelignore` だけでは効かないことがある。
 
 ## GitHub自動運用
 

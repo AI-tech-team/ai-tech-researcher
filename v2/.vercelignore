@@ -5,3 +5,13 @@
 
 backups
 private-backups
+
+# ローカルの退避ビルド。OneDrive が .next のハンドルを掴んで unlink できないとき（EPERM）に
+# mv して残るもので、1個あたり 230〜260MB・このPCには15個 3.3GB あった。
+# ⚠ Vercel CLI の既定除外は `.next` だけ。ここに書かないと全部アップロードされ、
+# 途中で "Upload aborted" → **アカウントの1日アップロード上限(5000)を焼き切る**（2026-09-12 実際に起きた）。
+.next-stale-*
+.next.old.*
+
+# 実機確認用のスクリーンショット（デプロイには不要）
+.screenshots
