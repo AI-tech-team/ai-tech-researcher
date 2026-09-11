@@ -41,7 +41,7 @@
   min-height: 100vh;
 }
 
-.band { padding: 112px 24px; position: relative; }
+.band { padding: 96px 24px; position: relative; }
 .bandInk { background: var(--ink); color: var(--on-ink); }
 .bandPaper { background: var(--paper); color: var(--on-paper); }
 .shell { max-width: 1000px; margin: 0 auto; }
@@ -137,7 +137,7 @@
   position: absolute; left: 10%; top: 130px;
   width: min(1250px, 128vw); height: 760px;
   background: radial-gradient(ellipse 50% 50% at 50% 50%,
-    rgba(56, 189, 248, .17) 0%, rgba(99, 102, 241, .1) 38%, rgba(253, 230, 138, .05) 62%, transparent 74%);
+    rgba(56, 189, 248, .3) 0%, rgba(99, 102, 241, .17) 36%, rgba(253, 230, 138, .08) 60%, transparent 76%);
   pointer-events: none; z-index: 0;
 }
 
@@ -167,10 +167,12 @@
 /* ── 箇条。3つは順序ではなく並列なので横に並べる ── */
 .facts {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 60px; border-top: 1px solid var(--hairline-paper);
+  margin-top: 60px;
+  border-top: 1px solid var(--hairline-paper);
+  border-bottom: 1px solid var(--hairline-paper);
 }
-.factsInk { border-top-color: var(--hairline-ink); }
-.fact { padding: 28px 34px 0 0; }
+.factsInk { border-top-color: var(--hairline-ink); border-bottom-color: var(--hairline-ink); }
+.fact { padding: 28px 34px 30px 0; }
 .fact + .fact { border-left: 1px solid var(--hairline-paper); padding-left: 34px; }
 .factsInk .fact + .fact { border-left-color: var(--hairline-ink); }
 .factT { font-size: 19px; font-weight: 800; letter-spacing: -0.018em; line-height: 1.5; margin: 0 0 12px; }
@@ -180,8 +182,8 @@
 .factInk .factD strong { color: var(--on-ink); font-weight: 600; }
 @media (max-width: 900px) {
   .facts { grid-template-columns: 1fr; }
-  .fact { padding: 26px 0 0; }
-  .fact + .fact { border-left: 0; border-top: 1px solid var(--hairline-paper); padding-left: 0; padding-top: 26px; }
+  .fact { padding: 26px 0; }
+  .fact + .fact { border-left: 0; border-top: 1px solid var(--hairline-paper); padding-left: 0; }
   .factsInk .fact + .fact { border-top-color: var(--hairline-ink); }
 }
 
