@@ -123,14 +123,16 @@ export default async function AboutPage() {
 
       {/* ══ 何を基準に選ぶか ══ */}
       <section className={`${s.band} ${s.bandPaper}`}>
-        <div className={s.shell}>
+        <div className={s.shellWide}>
           <p className={`${s.eyebrow} ${s.eyebrowPaper}`}>基準</p>
-          <h2 className={`${s.displayJp} ${s.h2}`}>順位は、<br />付けません。</h2>
-          <p className={`${s.body} ${s.bodyPaper}`} style={{ marginTop: 28, fontSize: '1.06rem' }}>
-            1位から{picked || 5}位ではありません。
-            <strong>「3番目だから読み飛ばしていい」という記事は入れていない</strong>ので、順位も★も点数も付けていません。
-            全部、渡したくて渡しています。
-          </p>
+          <div className={s.headSplit}>
+            <h2 className={`${s.displayJp} ${s.h2}`}>順位は、<br />付けません。</h2>
+            <p className={`${s.body} ${s.bodyPaper}`} style={{ fontSize: '1.06rem', maxWidth: 'none' }}>
+              1位から{picked || 5}位ではありません。
+              <strong>「3番目だから読み飛ばしていい」という記事は入れていない</strong>ので、順位も★も点数も付けていません。
+              全部、渡したくて渡しています。
+            </p>
+          </div>
 
           <div className={s.facts}>
             <div className={s.fact}>
@@ -160,16 +162,18 @@ export default async function AboutPage() {
 
       {/* ══ 約束 ══ */}
       <section className={`${s.band} ${s.bandInk}`} id="promise">
-        <div className={s.shell}>
+        <div className={s.shellWide}>
           <p className={`${s.eyebrow} ${s.eyebrowInk}`}>約束</p>
-          <h2 className={`${s.displayJp} ${s.h2}`}>3分を、<br />超えない。</h2>
-          <p className={s.body} style={{ marginTop: 28 }}>
-            長さは1つだけです。「短い版」と「詳しい版」を選ばせません。
-            毎朝、3分で読み終わる長さで出します。
-            {seconds > 0 && <>ちなみに今朝の分は<strong>{formatReadingTime(seconds)}</strong>でした（600字/分で算出）。</>}
-          </p>
+          <div className={s.headSplit}>
+            <h2 className={`${s.displayJp} ${s.h2}`}>3分を、<br />超えない。</h2>
+            <p className={s.body} style={{ maxWidth: 'none' }}>
+              長さは1つだけです。「短い版」と「詳しい版」を選ばせません。
+              毎朝、3分で読み終わる長さで出します。
+              {seconds > 0 && <>ちなみに今朝の分は<strong>{formatReadingTime(seconds)}</strong>でした（600字/分で算出）。</>}
+            </p>
+          </div>
 
-          <div className={s.facts}>
+          <div className={`${s.facts} ${s.factsInk}`}>
             <div className={`${s.fact} ${s.factInk}`}>
               <p className={s.factT}>全文は載せない</p>
               <p className={s.factD}>

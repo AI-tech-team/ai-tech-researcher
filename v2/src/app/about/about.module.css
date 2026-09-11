@@ -55,9 +55,11 @@
 
 /* 見出し。和文に欧文と同じ量の負のトラッキングを掛けると濁点が潰れるので分ける。 */
 .display { font-weight: 800; line-height: 1.06; letter-spacing: -0.024em; margin: 0; }
-.displayJp { font-weight: 900; letter-spacing: -0.014em; line-height: 1.2; margin: 0; }
-.h1 { font-size: clamp(2.5rem, 6.4vw, 4.8rem); }
-.h2 { font-size: clamp(1.9rem, 4.4vw, 3.2rem); }
+.displayJp { font-weight: 900; letter-spacing: -0.014em; line-height: 1.14; margin: 0; }
+/* 参照サイトの効き目は「巨大な見出し」と「12pxのラベル」の落差そのものなので、
+   見出しは画面幅いっぱいまで伸ばす。中間サイズで揃えると全部が同じ重さに見えて平板になる。 */
+.h1 { font-size: clamp(2.7rem, 8.4vw, 6.4rem); }
+.h2 { font-size: clamp(2rem, 5.4vw, 4rem); }
 
 .eyebrow {
   font-size: 12px; font-weight: 700; letter-spacing: .07em;
@@ -123,19 +125,21 @@
 }
 @media (max-width: 880px) { .navLinks { display: none; } }
 
-/* ── ヒーロー ── */
-.hero { padding: 104px 24px 0; text-align: center; overflow: hidden; }
-.hero .lead { margin: 28px auto 0; max-width: 42ch; }
-.hero .row { justify-content: center; margin-top: 40px; }
-/* 夜明けの床。紙面が上ってくる位置に敷く。 */
+/* ── ヒーロー ──
+   中央揃えをやめて左揃えにした（2026-09-11）。中央に寄せると行が短く折り返され、
+   1440pxの画面でも文字が真ん中の狭い帯に閉じ込められて、見出しの大きさが効かなくなる。 */
+.hero { padding: 116px 24px 108px; overflow: hidden; }
+.heroInner { position: relative; z-index: 1; max-width: 1300px; margin: 0 auto; }
+.hero .lead { margin: 34px 0 0; max-width: 44ch; }
+.hero .row { margin-top: 46px; }
+/* 夜明けの床。見出しの背後から昇らせる。 */
 .glow {
-  position: absolute; left: 50%; transform: translateX(-50%);
-  top: 400px; width: min(1500px, 152vw); height: 800px;
+  position: absolute; left: 10%; top: 130px;
+  width: min(1250px, 128vw); height: 760px;
   background: radial-gradient(ellipse 50% 50% at 50% 50%,
-    rgba(56, 189, 248, .18) 0%, rgba(99, 102, 241, .11) 38%, rgba(253, 230, 138, .05) 62%, transparent 74%);
+    rgba(56, 189, 248, .17) 0%, rgba(99, 102, 241, .1) 38%, rgba(253, 230, 138, .05) 62%, transparent 74%);
   pointer-events: none; z-index: 0;
 }
-.heroInner { position: relative; z-index: 1; }
 
 /* ── 選び方（集めた本数 → 載せた本数） ── */
 .split { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 84px; align-items: center; }
@@ -154,15 +158,32 @@
 .dotsKey b { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 @media (max-width: 640px) { .dots { grid-template-columns: repeat(17, 1fr); gap: 6px; } }
 
-/* ── 箇条 ── */
-.facts { display: grid; margin-top: 46px; }
-.fact { padding: 26px 0; border-top: 1px solid var(--hairline-paper); }
-.factInk { border-top-color: var(--hairline-ink); }
-.factT { font-size: 17px; font-weight: 800; letter-spacing: -0.016em; margin: 0 0 8px; }
-.factD { font-size: 15px; line-height: 1.86; color: var(--on-paper-dim); max-width: 68ch; margin: 0; }
+/* ── セクションの導入（大見出し｜本文）──
+   縦に積むと本文が左端の狭い幅に閉じ込められ、画面の右半分が丸ごと空く。
+   見出しを左・本文を右に置いて横幅を使い切る。順序ではないので番号は振らない。 */
+.headSplit { display: grid; grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr); gap: 22px 72px; align-items: end; }
+@media (max-width: 900px) { .headSplit { grid-template-columns: 1fr; gap: 20px; align-items: start; } }
+
+/* ── 箇条。3つは順序ではなく並列なので横に並べる ── */
+.facts {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 60px; border-top: 1px solid var(--hairline-paper);
+}
+.factsInk { border-top-color: var(--hairline-ink); }
+.fact { padding: 28px 34px 0 0; }
+.fact + .fact { border-left: 1px solid var(--hairline-paper); padding-left: 34px; }
+.factsInk .fact + .fact { border-left-color: var(--hairline-ink); }
+.factT { font-size: 19px; font-weight: 800; letter-spacing: -0.018em; line-height: 1.5; margin: 0 0 12px; }
+.factD { font-size: 14.5px; line-height: 1.92; color: var(--on-paper-dim); margin: 0; }
 .factInk .factD { color: var(--on-ink-dim); }
 .factD strong { color: var(--on-paper); font-weight: 600; }
 .factInk .factD strong { color: var(--on-ink); font-weight: 600; }
+@media (max-width: 900px) {
+  .facts { grid-template-columns: 1fr; }
+  .fact { padding: 26px 0 0; }
+  .fact + .fact { border-left: 0; border-top: 1px solid var(--hairline-paper); padding-left: 0; padding-top: 26px; }
+  .factsInk .fact + .fact { border-top-color: var(--hairline-ink); }
+}
 
 .close { text-align: center; }
 .close .row { justify-content: center; margin-top: 36px; }
