@@ -295,46 +295,6 @@ export async function getArticlesByCategory(category: string, limit = 40, offset
   }
 }
 
-// 「今日の注目」: フィード上部に出す、直近の重要記事。
-// フィードは新着順のため、1日52本ある重要度9-10の記事が下に沈む（Techmeme等が川の上に必ず数本置くのと同じ理由）。
-// 直近48hを重要度→新着で並べ、同一ストーリー(別媒体の同報道)を畳んで数本だけ返す。LLMコストゼロ・既存列のみ。
-// 記事が薄い時間帯でも空にならないよう、48hで足りなければ7日→30日と窓を広げる。
-export async function getTodayHighlights(limit = 6, anonymous = false): Promise<CollectedItem[]> {
-  try {
-    const userId = anonymous ? undefined : await currentUserId();
-    const base = await cached(`highlights:${limit}`, 90_000, async () => {
-      const pick = async (days: number) => {
-        const cutoff = sqlTs(new Date(Date.now() - days * 24 * 60 * 60 * 1000));
-        return db.select(COLLECTED_SELECT)
-          .from(collectedData)
-          .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-          .where(gte(collectedData.createdAt, cutoff))
-          .orderBy(desc(collectedData.importanceScore), desc(collectedData.createdAt))
-          .limit(limit * 8); // ストーリー重複を畳む余地を持って多めに取る
-      };
-      let rows = await pick(2);
-      if (rows.length < limit) rows = await pick(7);
-      if (rows.length < limit) rows = await pick(30);
-      const items = parseCollectedRows(rows);
-      // 同一ストーリーは代表1件に畳む
-      const seen = new Set<number>();
-      const out: CollectedItem[] = [];
-      for (const it of items) {
-        if (it.storyId != null) { if (seen.has(it.storyId)) continue; seen.add(it.storyId); }
-        out.push(it);
-        if (out.length >= limit) break;
-      }
-      return out;
-    });
-    const items = base.map(i => ({ ...i }));
-    await overlayUserState(items, userId);
-    return items;
-  } catch (error) {
-    await logError('getTodayHighlights', error, { alert: true });
-    return [];
-  }
-}
-
 // タグ別の記事一覧（公開URLページ /tag/[name] 用）。tags は JSON配列文字列なので "tag" の含有で判定。
 export async function getArticlesByTag(tag: string, limit = 40, offset = 0): Promise<CollectedItem[]> {
   try {
@@ -1155,6 +1115,31 @@ export async function getReportById(id: number): Promise<Report | null> {
   }
 }
 
+/**
+ * 過去の朝刊（バックナンバー）の見出しだけ。トップと朝刊ページの末尾に出す。
+ *
+ * 本文を返さない（`getReportsData` は本文の頭800字を返す）。ここで欲しいのは日付だけで、
+ * 本文を載せると号の数だけペイロードが線形に増える＝表示に使わないものを配ることになる。
+ */
+export async function getRecentDigests(limit = 7, excludeId?: number) {
+  try {
+    const lim = Math.min(Math.max(limit, 1), 60);
+    return await cached(`recentDigests:${lim}:${excludeId ?? 0}`, 300_000, () => db.select({
+      id: reports.id, type: reports.type, reportDate: reports.reportDate,
+    }).from(reports)
+      .where(and(
+        eq(reports.type, 'daily'),
+        sql`length(${reports.content}) > 0`,
+        excludeId ? sql`${reports.id} <> ${excludeId}` : sql`1 = 1`,
+      ))
+      .orderBy(desc(reports.createdAt))
+      .limit(lim));
+  } catch (error) {
+    console.error('Failed to fetch recent digests:', error);
+    return [];
+  }
+}
+
 // 公開UIのパーソナライズ向け: ログインユーザーの「お気に入り」記事一覧
 export async function getMyFavorites(): Promise<CollectedItem[]> {
   try {
@@ -1307,16 +1292,16 @@ export async function getRecommendations(): Promise<CollectedItem[]> {
 // ─── ページロード最適化: 複数クエリを1HTTP往復で取得 ────────────────────────
 
 // Phase 1: 記事・ソース・レポートなど即表示が必要なコアデータを1往復で取得
+// 朝刊（レポート）と「今日の注目」はここには含めない（2026-09-11）。本紙はトップ `/` が
+// サーバーコンポーネントとして直接引いており、記事一覧 `/articles` の側では使わない。
 export async function getCoreData(articleLimit = 60) {
-  const [srcs, data, reportsData, activity, counts, highlights] = await Promise.all([
+  const [srcs, data, activity, counts] = await Promise.all([
     getSourcesData(),
     getCollectedDataList(articleLimit, 0),
-    getReportsData(),
     getActivityData(),
     getArticleCounts(),
-    getTodayHighlights(6),
   ]);
-  return { srcs, data, reportsData, activity, counts, highlights };
+  return { srcs, data, activity, counts };
 }
 
 // SSR(公開ホーム)専用のコアデータ。auth()/cookies を一切読まないのが唯一にして最大の役割。
@@ -1327,13 +1312,11 @@ export async function getCoreData(articleLimit = 60) {
 // ユーザー別状態(お気に入り/後で読む/既読)とsrcs(オーナー限定)は載せない。ログイン中の状態は
 // 従来どおりクライアント側の getCoreData 再取得で後から上書きされる。
 export async function getPublicCoreData(articleLimit = 12) {
-  const [data, reportsData, counts, highlights] = await Promise.all([
+  const [data, counts] = await Promise.all([
     getCollectedDataList(articleLimit, 0, true),
-    getReportsData(),
     getArticleCounts(true),
-    getTodayHighlights(6, true),
   ]);
-  return { data, reportsData, counts, highlights };
+  return { data, counts };
 }
 
 // ── v10: Web Push通知の購読 ─────────────────────────────────────────

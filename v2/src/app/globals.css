@@ -79,7 +79,6 @@
   --accent-soft: rgba(31, 58, 104, 0.07);
   --shadow-hover: 0 2px 10px rgba(21, 23, 27, 0.08);
   --glow: none;
-  --splash-bg: #f2f0ec;
   --scroll-thumb: rgba(21, 23, 27, 0.16);
   --scroll-thumb-hover: rgba(21, 23, 27, 0.28);
 }
@@ -127,7 +126,6 @@
     --accent-soft: rgba(147, 167, 255, 0.10);
     --shadow-hover: 0 2px 14px rgba(0, 0, 0, 0.45);
     --glow: none;
-    --splash-bg: #0f1114;
     --scroll-thumb: rgba(255, 255, 255, 0.10);
     --scroll-thumb-hover: rgba(255, 255, 255, 0.18);
   }
@@ -167,7 +165,6 @@
   --text-muted: #848a95;
   --border-glass: rgba(255, 255, 255, 0.08);
   --glow: none;
-  --splash-bg: #0f1114;
   --scroll-thumb: rgba(255, 255, 255, 0.10);
   --scroll-thumb-hover: rgba(255, 255, 255, 0.18);
 }
@@ -325,30 +322,42 @@ button, a, [role="button"], summary {
 ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
 
 /* ── 起動スプラッシュ（セッション初回ロードのブランド表示）─────────── */
-/* 消える処理はopacityのみのCSSアニメ（コンポジタ駆動）。visibilityやJSタイマーは使わない:
-   ハイドレーションでメインスレッドが塞がっても確実に0.8〜1.15sでフェードアウトする。
+/* 中身は「選別」。たくさんの点のうち数個だけが夜明けの色で灯る＝毎朝やっていることそのもの。
+   旧版は Knowledge Tree 時代の「球根から新芽が育つ」緑のアニメで、改名後もそのまま残っていた
+   （サイトを開いて最初に見えるのが旧製品のロゴ、という状態だった。2026-09-11 差し替え）。
+
+   消える処理はopacityのみのCSSアニメ（コンポジタ駆動）。visibilityやJSタイマーは使わない:
+   ハイドレーションでメインスレッドが塞がっても確実に0.78〜1.13sでフェードアウトする。
    pointer-events:none 常時＝操作は一切ブロックしない（純装飾）。 */
 .splash {
   position: fixed; inset: 0; z-index: 9999;
   display: flex; align-items: center; justify-content: center;
-  background: var(--splash-bg);
+  /* 地は純黒。表側（朝刊・紹介ページ）の地と同じで、スプラッシュから紙面へ継ぎ目なく渡る。 */
+  background: #000;
   pointer-events: none;
-  animation: splashAutoOut 0.35s ease 0.8s forwards;
+  animation: splashAutoOut 0.34s ease 0.78s forwards;
 }
-/* 新芽が育つ: 電球フェードイン → 茎が伸び → 葉が開き → 種が灯る（0.75sで完結） */
-.splash svg { filter: drop-shadow(0 10px 34px rgba(34,211,238,0.18)); }
-.splash__bulb { animation: splashFadeIn 0.3s ease both; }
-.splash__bglow { transform-box: fill-box; transform-origin: center; animation: splashGlow 0.8s ease-out both; }
-.splash__stem { transform-box: fill-box; transform-origin: 50% 100%; animation: splashStem 0.35s cubic-bezier(0.2,0.7,0.3,1) 0.05s both; }
-.splash__leafL { transform-box: fill-box; transform-origin: 100% 70%; animation: splashLeaf 0.3s cubic-bezier(0.2,0.8,0.3,1) 0.3s both; }
-.splash__leafR { transform-box: fill-box; transform-origin: 0% 70%; animation: splashLeaf 0.3s cubic-bezier(0.2,0.8,0.3,1) 0.4s both; }
-.splash__seed { animation: splashFadeIn 0.25s ease 0.5s both; }
+/* 点が一斉に現れ（0.16s）→ 選ばれた5点が順に灯る（0.16〜0.64s）→ 0.78sから消え始める。
+   ⚠ 最後の点が灯り終わる時刻がフェード開始より後ろだと、5点目が一度も見えない（実機で発覚）。
+      いま: 0.40s(遅延) + 0.24s(長さ) = 0.64s < 0.78s。タイミングを変えるときはこの不等式を保つ。 */
+.splash svg { width: min(380px, 62vw); height: auto; }
+.splash__grid { animation: splashFadeIn 0.16s ease both; }
+.splash__picks circle {
+  transform-box: fill-box; transform-origin: center;
+  animation: splashPick 0.24s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+/* 5点は同時でなく、わずかにずらして灯す（＝選んでいる過程に見せる）。 */
+.splash__picks circle:nth-of-type(1) { animation-delay: 0.16s; }
+.splash__picks circle:nth-of-type(2) { animation-delay: 0.22s; }
+.splash__picks circle:nth-of-type(3) { animation-delay: 0.28s; }
+.splash__picks circle:nth-of-type(4) { animation-delay: 0.34s; }
+.splash__picks circle:nth-of-type(5) { animation-delay: 0.40s; }
+.splash__glow { animation: splashGlow 0.7s ease-out both; }
 @keyframes splashFadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes splashStem { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-@keyframes splashLeaf { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
-@keyframes splashGlow { 0% { opacity: 0.08; } 60% { opacity: 0.42; } 100% { opacity: 0.2; } }
+@keyframes splashPick { from { opacity: 0; transform: scale(0.2); } to { opacity: 1; transform: scale(1); } }
+@keyframes splashGlow { 0% { opacity: 0; } 70% { opacity: 0.85; } 100% { opacity: 0.62; } }
 @keyframes splashAutoOut { to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .splash__bulb, .splash__bglow, .splash__stem, .splash__leafL, .splash__leafR, .splash__seed { animation: none; }
+  .splash__grid, .splash__picks circle, .splash__glow { animation: none; }
   .splash { animation-delay: 0.4s; }
 }

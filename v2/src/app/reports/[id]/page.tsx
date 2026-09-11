@@ -1,15 +1,26 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { BrainCircuit, ArrowLeft, ArrowRight } from 'lucide-react';
 import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { getReportById, getAdjacentReports } from '@/app/actions';
-import { ReportView } from '@/components/ReportView';
+import { parseDigest, digestReadingSeconds } from '@/lib/digest';
+import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
+import { IssueHeader } from '@/components/digest/IssueHeader';
+import { DigestBody } from '@/components/digest/DigestBody';
 import { JsonLd } from '@/components/JsonLd';
+import s from '@/styles/brand.module.css';
 
-const TYPE_LABEL: Record<string, string> = { daily: 'デイリーレポート', weekly: '週次レポート', monthly: '月次レポート' };
+const TYPE_LABEL: Record<string, string> = { daily: '朝刊', weekly: '週次のまとめ', monthly: '月次のまとめ' };
 
-// レポートごとの全画面ページ。直リンク/リロード/共有/検索インデックス向けにSSRする。
+const NAV = [
+  { href: '/articles', label: '記事を探す' },
+  { href: '/search', label: '検索' },
+  { href: '/about', label: 'このサービスについて' },
+];
+
+// 号ごとの全画面ページ。直リンク/リロード/共有/検索インデックス向けにSSRする。
+// 版面はトップ（今朝の朝刊）と同じ（`DigestBody`）。過去の号だけ別の見た目になると、
+// リンクを踏んだ読者には「別のサイトに来た」ように見える。
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const report = await getReportById(Number(id));
@@ -38,9 +49,13 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const report = await getReportById(Number(id));
   if (!report) notFound();
 
-  // レポートは自前生成のIP → Article として構造化（記事ページは第三者著作なので付けない）。
   const label = TYPE_LABEL[report.type] ?? 'レポート';
+  const content = report.content ?? '';
+  const parsed = parseDigest(content);
+  const seconds = digestReadingSeconds(content);
   const adj = await getAdjacentReports(report.type, report.reportDate);
+
+  // レポートは自前生成のIP → Article として構造化（記事ページは第三者著作なので付けない）。
   const articleJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Article',
@@ -55,59 +70,49 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   };
 
   return (
-    <div className="min-h-screen">
+    <div className={s.page}>
       <JsonLd data={articleJsonLd} />
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
-              <BrainCircuit className="text-white" size={15} />
-            </div>
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav links={NAV} cta={{ href: '/', label: '今朝の朝刊' }} />
 
-      <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8 pb-[max(2rem,env(safe-area-inset-bottom))]">
-        <article className="rounded-2xl border border-white/10 bg-[var(--card-bg)]">
-          <ReportView report={report} />
-        </article>
+      <IssueHeader
+        eyebrow={report.type === 'daily' ? 'バックナンバー' : label}
+        title={label}
+        reportDate={report.reportDate}
+        seconds={seconds}
+        picked={parsed.highlights.length}
+      />
 
-        {/* 前後の同種レポートへのナビ */}
-        {(adj.prev || adj.next) && (
-          <nav className="mt-5 flex items-stretch justify-between gap-3">
-            {adj.prev ? (
-              <Link href={`/reports/${adj.prev.id}`} scroll={false}
-                className="flex-1 flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-3.5 py-2.5 transition-colors group">
-                <ArrowLeft size={15} className="text-slate-500 group-hover:text-sky-400 shrink-0" />
-                <span className="min-w-0">
-                  <span className="block text-[10px] text-slate-600">前の{label}</span>
-                  <span className="block text-xs font-bold text-slate-300 truncate">{adj.prev.reportDate}</span>
-                </span>
-              </Link>
-            ) : <span className="flex-1" />}
-            {adj.next ? (
-              <Link href={`/reports/${adj.next.id}`} scroll={false}
-                className="flex-1 flex items-center justify-end gap-2 rounded-xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-3.5 py-2.5 transition-colors group text-right">
-                <span className="min-w-0">
-                  <span className="block text-[10px] text-slate-600">次の{label}</span>
-                  <span className="block text-xs font-bold text-slate-300 truncate">{adj.next.reportDate}</span>
-                </span>
-                <ArrowRight size={15} className="text-slate-500 group-hover:text-sky-400 shrink-0" />
-              </Link>
-            ) : <span className="flex-1" />}
-          </nav>
-        )}
-
-        <div className="mt-6">
-          <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> 一覧に戻る
-          </Link>
-        </div>
+      <main id="main-content" className={`${s.bandPaper} ${s.paper}`}>
+        <DigestBody digest={parsed} />
       </main>
+
+      <section className={`${s.bandInk} ${s.band}`} style={{ paddingBlock: 64 }}>
+        <div className={s.measure}>
+          <p className={`${s.eyebrow} ${s.eyebrowInk}`}>前後の号</p>
+          <div className={s.backList}>
+            {adj.prev && (
+              <Link className={s.backItem} href={`/reports/${adj.prev.id}`}>
+                <span className={s.backDate}>{adj.prev.reportDate}</span>
+                <span className={s.backLabel}>前の{label}</span>
+                <span className={s.backGo}>読む ›</span>
+              </Link>
+            )}
+            {adj.next && (
+              <Link className={s.backItem} href={`/reports/${adj.next.id}`}>
+                <span className={s.backDate}>{adj.next.reportDate}</span>
+                <span className={s.backLabel}>次の{label}</span>
+                <span className={s.backGo}>読む ›</span>
+              </Link>
+            )}
+          </div>
+          <div className={s.row} style={{ marginTop: 30 }}>
+            <Link className={`${s.btn} ${s.btnSolid}`} href="/">今朝の朝刊を読む</Link>
+            <Link className={`${s.btn} ${s.btnGhost}`} href="/articles">記事を探す&nbsp;›</Link>
+          </div>
+        </div>
+      </section>
+
+      <BrandFooter />
     </div>
   );
 }

@@ -62,6 +62,33 @@ test('ハイライトのセクションだけを切り出す', () => {
   assert.ok(!s.includes('急上昇トレンド'), 'ここで切れていないと読了時間が過大になる');
 });
 
+test('コロンが太字の内側にある古い形も取れる（バックナンバーが空にならない）', () => {
+  // 2026-09-10 のプロンプト改訂より前の全レポートはこの形。落とすと過去の号が見出しだけになる。
+  const md = `## 🔥 今日のハイライト
+
+### 1. 🚀 Google NotebookLMがGemini 3.5で研究を自動化
+*   **何が起きたか:** GoogleがNotebookLMを刷新しました。
+*   **なぜ重要か:** 研究開発プロセスが効率化します。
+`;
+  const hi = parseHighlights(md);
+  assert.deepEqual(hi[0].points.map(p => p.label), ['何が起きたか', 'なぜ重要か']);
+  assert.match(hi[0].points[0].text, /^GoogleがNotebookLM/);
+});
+
+test('ラベルの無い箇条書きも本文として残す（欠落させない）', () => {
+  const md = `## 🔥 今日のハイライト
+
+### 1. 見出し
+*   ラベルの無い一文です。
+*   **Show-Harness**はVLMだけでロボットを操作できます。
+`;
+  const hi = parseHighlights(md);
+  assert.equal(hi[0].points.length, 2);
+  assert.deepEqual(hi[0].points.map(p => p.label), ['', '']);
+  // 文中の強調をラベルと誤認しない（コロンが無いので本文のまま）
+  assert.match(hi[0].points[1].text, /^Show-HarnessはVLMだけで/);
+});
+
 test('ラベル名を決め打ちしない（生成側の文言が変わっても取れる）', () => {
   const md = `## 🔥 今日のハイライト
 

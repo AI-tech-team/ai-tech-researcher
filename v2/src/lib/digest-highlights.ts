@@ -34,9 +34,20 @@ function cleanTitle(raw: string): string {
     .trim();
 }
 
-/** Markdownの強調記号を落として本文だけにする。 */
-function cleanText(raw: string): string {
-  return raw.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+/**
+ * 読者が読む本文だけにする。Markdownの強調記号と、本文に混じる内部IDの参照を落とす。
+ *
+ * 内部IDは `（ID:4201, 4040）` `[ID:4189]` の形で古いレポートの文末に入っている
+ * （生成時に収集データの行番号をそのまま書かせていた名残）。読者には意味が無いうえ、
+ * 数字が記事番号に見えるので落とす。**リンクにはしない**: このIDは当時のDBの行を指していて、
+ * 今の記事IDと一致する保証が無く、誤ったリンクは欠落より悪い（失敗の非対称性）。
+ */
+export function cleanText(raw: string): string {
+  return raw
+    .replace(/\*\*/g, '')
+    .replace(/\s*[（([]\s*ID\s*[:：][\d,\s]*\d\s*[）)\]]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** レポート本文から「今日のハイライト」セクションの生Markdownを取り出す。無ければ null。 */
@@ -60,9 +71,18 @@ export function parseHighlights(markdown: string): Highlight[] {
 
     const points: HighlightPoint[] = [];
     for (const line of lines.slice(1)) {
-      // "*   **何が起きたか**: 本文" / "- **なぜ重要か**：本文"
-      const m = line.match(/^\s*[*\-+]\s+\*\*(.+?)\*\*\s*[:：]\s*(.+)$/);
-      if (m) points.push({ label: cleanText(m[1]), text: cleanText(m[2]) });
+      const li = line.match(/^\s*[*\-+]\s+(.+)$/);
+      if (!li) continue;
+      const body = li[1];
+      // ラベル付き。コロンが**太字の内側**にある古い形にも合わせる。
+      //   新: "*   **何が起きたか**: 本文"（2026-09-10 のプロンプト改訂以降）
+      //   旧: "*   **何が起きたか:** 本文"（それ以前の全レポート＝バックナンバー）
+      // 旧形を落としていたため、過去の号は見出しだけが並んで本文が消えていた（2026-09-11 実機で発見）。
+      const lab = body.match(/^\*\*\s*(.+?)\s*[:：]\s*\*\*\s*(.+)$/)
+        ?? body.match(/^\*\*\s*(.+?)\s*\*\*\s*[:：]\s*(.+)$/);
+      // コロンを要求するのは、`**Show-Harness**は…` のような文中の強調をラベルと誤認しないため。
+      if (lab) points.push({ label: cleanText(lab[1]), text: cleanText(lab[2]) });
+      else points.push({ label: '', text: cleanText(body) });
     }
     out.push({ title, points });
   }

@@ -32,7 +32,13 @@ const THEME_INIT_JS =
   "try{var t=localStorage.getItem('cv_theme');if(t==='light'||t==='dark'){document.documentElement.setAttribute('data-theme',t)}}catch(e){}";
 
 const SPLASH_SESSION_GATE_JS =
-  "try{if(sessionStorage.getItem('kt_splash')){document.getElementById('kt-splash').style.display='none'}else{sessionStorage.setItem('kt_splash','1')}}catch(e){}";
+  "try{if(sessionStorage.getItem('cv_splash')){document.getElementById('cv-splash').style.display='none'}else{sessionStorage.setItem('cv_splash','1')}}catch(e){}";
+
+// 起動スプラッシュの点の配置。7列×4行のうち5点だけが夜明けの色で灯る＝毎朝の選別そのもの。
+// 5という数はハイライトの本数（＝商品の約束）に合わせてある。
+const SPLASH_COLS = [12, 32, 52, 72, 92, 112, 132];
+const SPLASH_ROWS = [14, 34, 54, 74];
+const SPLASH_PICKS: [number, number][] = [[52, 14], [12, 34], [92, 34], [132, 54], [32, 74]];
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -81,24 +87,34 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-sky-600 focus:text-white focus:text-sm focus:font-bold">
           メインコンテンツへスキップ
         </a>
-        {/* 起動スプラッシュ「新芽が育つ」: サーバー描画＋CSSのみで完結（Reactハイドレーションに依存しない）。
+        {/* 起動スプラッシュ「選別」: たくさんの点のうち5点だけが夜明けの色で灯る。
+            サーバー描画＋CSSのみで完結（Reactハイドレーションに依存しない）。
             旧実装はJSタイマー＋visibility付きCSSで消していたが、どちらもメインスレッド依存のため
             ハイドレーション中(数秒)はアニメが凍って居座った。opacityのみのフェード（コンポジタ駆動）に変更。
             直後のインラインscriptで「同一セッション2回目以降は出さない」(sessionStorage)。 */}
-        <div aria-hidden id="kt-splash" className="splash">
-          <svg width="132" height="145" viewBox="0 0 100 110">
-            <circle className="splash__bglow" cx="50" cy="44" r="30" fill="#22d3ee" opacity="0.2" />
-            <g className="splash__bulb">
-              <circle cx="50" cy="44" r="26" fill="#0a1326" stroke="#38bdf8" strokeWidth="3.4" />
-              <path d="M40 66 L41.5 80 L58.5 80 L60 66 Z" fill="#0a1326" stroke="#38bdf8" strokeWidth="3.4" strokeLinejoin="round" />
-              <line x1="43" y1="85" x2="57" y2="85" stroke="#64748b" strokeWidth="2.6" strokeLinecap="round" />
-              <line x1="44" y1="90" x2="56" y2="90" stroke="#64748b" strokeWidth="2.6" strokeLinecap="round" />
-              <line x1="45" y1="95" x2="55" y2="95" stroke="#64748b" strokeWidth="2.6" strokeLinecap="round" />
+        <div aria-hidden id="cv-splash" className="splash">
+          <svg width="216" height="132" viewBox="0 0 144 88">
+            <defs>
+              {/* 夜明け（藍→水色→淡金）。userSpaceOnUse なので5点が空の別々の場所の色になる。 */}
+              <linearGradient id="cvDawn" gradientUnits="userSpaceOnUse" x1="0" y1="88" x2="144" y2="0">
+                <stop offset="0%" stopColor="#a5b4fc" />
+                <stop offset="38%" stopColor="#38bdf8" />
+                <stop offset="88%" stopColor="#fde68a" />
+              </linearGradient>
+              <radialGradient id="cvGlow">
+                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.5" />
+                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+            <ellipse className="splash__glow" cx="72" cy="46" rx="84" ry="50" fill="url(#cvGlow)" />
+            <g className="splash__grid" fill="#2b2b34">
+              {SPLASH_ROWS.flatMap(y => SPLASH_COLS.map(x => (
+                <circle key={`${x}-${y}`} cx={x} cy={y} r="3.4" />
+              )))}
             </g>
-            <rect className="splash__stem" x="48.4" y="44" width="3.2" height="22" rx="1.6" fill="#34d399" />
-            <path className="splash__leafL" d="M50 54 C44 50 37 47 32 49 C35 54 43 55 50 54 Z" fill="#34d399" />
-            <path className="splash__leafR" d="M50 50 C56 46 63 43 68 45 C65 50 57 51 50 50 Z" fill="#5fe6ab" />
-            <circle className="splash__seed" cx="50" cy="44" r="2.2" fill="#eafff5" />
+            <g className="splash__picks" fill="url(#cvDawn)">
+              {SPLASH_PICKS.map(([x, y]) => <circle key={`p${x}-${y}`} cx={x} cy={y} r="4.6" />)}
+            </g>
           </svg>
         </div>
         {/* 同一セッション2回目以降はスプラッシュを出さない（描画前に同期実行する必要があるためインライン）。

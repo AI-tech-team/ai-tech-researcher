@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BrainCircuit, LogIn, LogOut, FileText, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, Flame, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
+import { BrainCircuit, LogIn, LogOut, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -18,7 +18,7 @@ import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import { PushToggle } from '@/components/public/PushToggle';
 import { ThemeToggle } from '@/components/public/ThemeToggle';
-import type { CollectedItem, Report, ReadingProfile, KnowledgeStats } from '@/types';
+import type { CollectedItem, ReadingProfile, KnowledgeStats } from '@/types';
 import { noSummaryReason } from '@/lib/no-summary';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION, SITE_TAGLINE } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
@@ -46,12 +46,22 @@ const ABOVE_FOLD = 12;
 // 復元してローディングのちらつき(=再読み込み感)を防ぐ、モジュールレベルの簡易スナップショット。
 // 同一ブラウザ内のみ・短時間TTL。ログイン/ログアウトはOAuthのフルリロードで自然にクリアされる。
 type PubSnapshot = {
-  items: CollectedItem[]; reports: Report[]; total: number | null;
+  items: CollectedItem[]; total: number | null;
   offset: number; hasMore: boolean; stats: KnowledgeStats | null; at: number;
-  highlights: CollectedItem[];
 };
 let pubSnapshot: PubSnapshot | null = null;
 const SNAP_TTL = 5 * 60_000;
+
+/**
+ * 記事へ出ていったときのスクロール位置。戻ってきたら1回だけ使って捨てる。
+ *
+ * なぜ要るか（2026-09-11）: 一覧をトップ `/` から `/articles` へ降ろしたことで、記事は
+ * オーバーレイでなく全画面ページになった。`/articles/[id]` は `/articles` の**子**なので、
+ * インターセプト（`(.)`/`(..)` のどちらでも）が効かない＝親の一覧に重ねられない。
+ * ブラウザの復元は「一覧が描かれる前」に走るため必ず先頭に戻ってしまう（実機で確認）。
+ * そこで出ていく瞬間の位置を覚えておき、一覧が描き終わってから戻す。
+ */
+let pubScrollY: number | null = null;
 
 function timeAgo(dateStr: string | null): string {
   if (!dateStr) return '';
@@ -64,23 +74,9 @@ function timeAgo(dateStr: string | null): string {
   return new Date(dateStr).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
 }
 
-// レポートのMarkdownから本文リード（先頭の段落）を抽出
-function reportLead(content: string, max = 200): string {
-  const body = content.split('\n')
-    .filter(l => l.trim() && !/^#{1,6}\s/.test(l) && !/^[-=*]{3,}$/.test(l));
-  const text = body.join(' ')
-    .replace(/\[ID:\d+\]/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[#*_`>]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return text.length > max ? text.slice(0, max) + '…' : text;
-}
-
-// 公開トップで使うエディトリアル型の記事カード（lead=雑誌一面 / featured=見どころ / 通常=フィード）
-function PubCard({ item, featured = false, lead = false }: {
-  item: CollectedItem; featured?: boolean; lead?: boolean;
-}) {
+// 記事一覧のカード。以前は「今日の一押し(lead)」「見どころ(featured)」で大きさを変えていたが、
+// 記事を前に出して強弱を付けるのは朝刊の仕事なので、一覧では全部同じ大きさにした（2026-09-11）。
+function PubCard({ item }: { item: CollectedItem }) {
   const color = CATEGORY_COLORS[item.category ?? ''] ?? 'var(--cat-other)';
   const title = item.titleJa || item.title || '無題';
   const outlets = item.storyOutlets ?? [];
@@ -89,30 +85,25 @@ function PubCard({ item, featured = false, lead = false }: {
     // scroll={false} 必須: 付けないと Next.js が @modal スロット(DOM上はフィードの後ろ)まで
     // ウィンドウをスクロールさせ、オーバーレイを開いた瞬間に背面が最下部へ飛ぶ。
     <Link href={`/articles/${item.id}`} scroll={false}
-      className={`group cursor-pointer rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 transition-all duration-200 flex flex-col gap-2.5 ${lead ? 'p-6 sm:p-7' : 'p-5'}`}>
+      onClick={() => { pubScrollY = window.scrollY; }}
+      className="group cursor-pointer rounded-2xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-black/20 transition-all duration-200 flex flex-col gap-2.5 p-5">
       <div className="flex items-center gap-2 flex-wrap">
-        {lead && (
-          <span className="flex items-center gap-1 font-mono text-[10px] font-bold tracking-widest uppercase text-amber-300 bg-amber-500/10 border border-amber-500/20 px-1.5 py-px rounded">
-            <Sparkles size={10} /> 今日の一押し
-          </span>
-        )}
         <span className="font-mono text-[10px] font-bold tracking-widest uppercase" style={{ color }}>
           {item.category ?? 'OTHER'}
         </span>
         {multi && (
-          <span title={outlets.join('、')}
-            className={`flex items-center gap-0.5 font-mono text-[10px] ${lead || featured ? 'text-cyan-200 border border-cyan-500/25 bg-cyan-500/10 px-1.5 py-px rounded' : 'text-cyan-300/90'}`}>
+          <span title={outlets.join('、')} className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300/90">
             <Newspaper size={10} />{outlets.length}媒体が報じた
           </span>
         )}
         <span className="ml-auto font-mono text-[10px] text-slate-600">{timeAgo(item.publishedAt ?? item.createdAt)}</span>
       </div>
-      <h3 className={`font-bold leading-snug text-white group-hover:text-sky-300 transition-colors ${lead ? 'text-xl sm:text-2xl' : featured ? 'text-lg' : 'text-base'}`}>
+      <h3 className="font-bold leading-snug text-white group-hover:text-sky-300 transition-colors text-base">
         {title}
       </h3>
       {/* 通常カードも3行表示（要約は平均150字前後あり、2行だと内容が伝わらないという指摘への対応） */}
       {item.summary ? (
-        <p className={`text-slate-400 leading-relaxed ${lead ? 'text-base line-clamp-3' : 'text-sm line-clamp-3'}`}>
+        <p className="text-slate-400 leading-relaxed text-sm line-clamp-3">
           {item.summary}
         </p>
       ) : (() => {
@@ -137,7 +128,7 @@ function PubCard({ item, featured = false, lead = false }: {
 
 // page.tsx(サーバ)がSSRで先に取得して渡す初期フィード。これがあれば初回/遷移直後に
 // Client Server Action(getCoreData)を叩かずに描画できる＝@modal遷移時のabortを踏まない。
-export type PublicInitial = { data: CollectedItem[]; reportsData: Report[]; counts: { total: number }; highlights?: CollectedItem[] };
+export type PublicInitial = { data: CollectedItem[]; counts: { total: number } };
 
 export function PublicApp({ initialData }: { initialData?: PublicInitial | null }) {
   const { toast } = useToast();
@@ -148,11 +139,8 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   // 初期値は スナップショット(戻り) → SSR初期データ → 空 の順で復元。
   // いずれかがあれば即表示・スケルトンを出さない（戻りのちらつき＆遷移直後の空表示を防ぐ）。
   const [collectedItems, setCollectedItems] = useState<CollectedItem[]>(() => pubSnapshot?.items ?? initialData?.data ?? []);
-  const [highlights, setHighlights] = useState<CollectedItem[]>(() => pubSnapshot?.highlights ?? initialData?.highlights ?? []);
-  const [reportsList, setReportsList] = useState<Report[]>(() => pubSnapshot?.reports ?? initialData?.reportsData ?? []);
   const [stats, setStats] = useState<KnowledgeStats | null>(() => pubSnapshot?.stats ?? null);
   const [totalArticles, setTotalArticles] = useState<number | null>(() => pubSnapshot?.total ?? initialData?.counts?.total ?? null);
-  const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [recommendations, setRecommendations] = useState<CollectedItem[]>([]);
   const [readLater, setReadLater] = useState<CollectedItem[]>([]);
   const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
@@ -190,7 +178,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   // scroll: false 必須（Linkのscroll={false}と同じ理由）。付けないとオーバーレイを開いた瞬間に
   // Next.js が @modal スロットの位置まで背面をスクロールさせてしまう。
   const openArticle = (id: number) => router.push(`/articles/${id}`, { scroll: false });
-  const openReportObj = (r: Report) => router.push(`/reports/${r.id}`, { scroll: false });
 
   // パーソナライズの再取得（プロフィール保存後など）
   const reloadPersonalization = async () => {
@@ -199,20 +186,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
     setRecommendations(recs as CollectedItem[]);
     setReadLater(rl as CollectedItem[]);
     setReadingProfile(prof as ReadingProfile | null);
-  };
-
-  // 未ログインの初訪問でウェルカム・ストリップを出す（1度閉じれば再表示しない）
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (sessionUserId) { setWelcomeOpen(false); return; }
-    try {
-      if (typeof window === 'undefined') return;
-      if (!localStorage.getItem('welcome_v1_dismissed')) setWelcomeOpen(true);
-    } catch {}
-  }, [sessionUserId]);
-  const dismissWelcome = () => {
-    setWelcomeOpen(false);
-    try { localStorage.setItem('welcome_v1_dismissed', '1'); } catch {}
   };
 
   // ログイン済みで未購読なら「毎朝ダイジェスト」購読プロンプトを一度だけ出す（同意ベース）
@@ -275,14 +248,12 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
         // ナビゲーション中断でabortされても無限スケルトンで止まらないよう数回リトライ。
         for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
           try {
-            const { data, reportsData, counts, highlights: hl } = await getCoreData(ABOVE_FOLD);
+            const { data, counts } = await getCoreData(ABOVE_FOLD);
             if (cancelled) return;
             const first = data as CollectedItem[];
             setCollectedItems(first);
             setOffset(first.length);
-            setReportsList(reportsData as Report[]);
             setTotalArticles((counts as { total: number }).total);
-            if (hl) setHighlights(hl as CollectedItem[]);
             setIsLoading(false);
             break;
           } catch {
@@ -316,8 +287,28 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   useEffect(() => {
     // 第1波だけ／第2波の途中では焼き付けない（戻り時に先頭12件で固定化するのを防ぐ）。
     if (isLoading || belowFoldPending) return;
-    pubSnapshot = { items: collectedItems, reports: reportsList, total: totalArticles, offset, hasMore, stats, at: Date.now(), highlights };
-  }, [collectedItems, reportsList, totalArticles, offset, hasMore, stats, isLoading, belowFoldPending, highlights]);
+    pubSnapshot = { items: collectedItems, total: totalArticles, offset, hasMore, stats, at: Date.now() };
+  }, [collectedItems, totalArticles, offset, hasMore, stats, isLoading, belowFoldPending]);
+
+  // 記事から戻ってきたら、出ていったときの位置に戻す（1回きり）。
+  // 一覧が描き終わる前に戻すと、まだ紙面が短くて目的の位置まで下がれないので、
+  // 第2波（フィード残りの取得）が終わってから実行する。
+  const scrollRestored = useRef(false);
+  useEffect(() => {
+    if (scrollRestored.current || pubScrollY == null) return;
+    if (isLoading || belowFoldPending || collectedItems.length === 0) return;
+    const y = pubScrollY;
+    pubScrollY = null;
+    scrollRestored.current = true;
+    // ブラウザ／ルータ側の復元があとから走ってこちらを上書きすることがあるので、
+    // 位置が合うまで短い間隔でやり直す（合っていれば1回で終わる）。届かない高さなら数回で諦める。
+    let tries = 0;
+    const tick = () => {
+      window.scrollTo(0, y);
+      if (++tries < 6 && Math.abs(window.scrollY - y) > 4) setTimeout(tick, 70);
+    };
+    requestAnimationFrame(tick);
+  }, [isLoading, belowFoldPending, collectedItems.length]);
 
   // ログインユーザー向けパーソナライズ（行動ベース推薦・後で読む・読書DNA）。
   // 未ログインでは何も出さない。手動の興味設定に依存しない getRecommendations を使う。
@@ -404,30 +395,11 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
     }
   };
   const feedbackAvailable = !!FEEDBACK_FORM_ACTION || !!CONTACT_EMAIL;
-  const heroReport = reportsList.find(r => r.type === 'daily') ?? reportsList[0] ?? null;
-  const weeklyReport = reportsList.find(r => r.type === 'weekly') ?? null;
-  const monthlyReport = reportsList.find(r => r.type === 'monthly') ?? null;
-  // カテゴリ絞り込み中はそのカテゴリの記事のみを対象に。featuredと最新の二分割もカテゴリ内で行う
-  const filteredItems = selectedCategory
+  // カテゴリ絞り込み中はそのカテゴリの記事のみ。一覧は新着順の一本道にした（2026-09-11）。
+  // 以前は上位を「今日の注目」として抜いて二分割していたが、選別は朝刊の仕事に一本化した。
+  const feed = selectedCategory
     ? collectedItems.filter(i => i.category === selectedCategory)
     : collectedItems;
-  // 今日の注目: 未選択時はサーバ算出(直近48h・重要度→新着・同一ストーリー畳み)を使う。
-  // フィードは新着順なので重要記事が沈む問題への対策(Techmeme等が川の上に数本置くのと同じ)。
-  // カテゴリ選択中は highlights(全体基準)が合わないため、そのカテゴリ内の重要度上位をクライアントで出す。
-  const dedupeByStory6 = (items: CollectedItem[]): CollectedItem[] => {
-    const seen = new Set<number>(); const out: CollectedItem[] = [];
-    for (const it of items) {
-      if (it.storyId != null) { if (seen.has(it.storyId)) continue; seen.add(it.storyId); }
-      out.push(it);
-      if (out.length >= 6) break;
-    }
-    return out;
-  };
-  const featured = selectedCategory
-    ? dedupeByStory6([...filteredItems].sort((a, b) => (b.importanceScore ?? 0) - (a.importanceScore ?? 0)))
-    : highlights;
-  const featuredIds = new Set(featured.map(f => f.id));
-  const feed = filteredItems.filter(i => !featuredIds.has(i.id));
 
   // 注目のテーマ: 直近記事のカテゴリ頻度（タグはHNスコア等のノイズが多いので使わない）
   const catCounts = new Map<string, number>();
@@ -439,12 +411,13 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
       {/* ── トップバー ── */}
       <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
         <div className="max-w-5xl mx-auto flex items-center justify-between px-4 sm:px-6 py-3">
-          <div className="flex items-center gap-2.5">
+          {/* ブランドは朝刊（トップ）へ戻る導線。ここが行き止まりだと、記事を探しに来た人が本紙に戻れない。 */}
+          <Link href="/" className="flex items-center gap-2.5 group">
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
               <BrainCircuit className="text-white" size={15} />
             </div>
-            <h1 className="font-bold text-sm font-outfit">Cernoval</h1>
-          </div>
+            <span className="font-bold text-sm font-outfit group-hover:text-sky-300 transition-colors">Cernoval</span>
+          </Link>
           <div className="flex items-center gap-2">
             {/* … メニュー（フィードバック / プライバシー / 利用規約 を集約してヘッダーをスッキリ） */}
             <div ref={infoMenuRef} className="relative" onMouseEnter={cancelInfoClose} onMouseLeave={scheduleInfoClose}>
@@ -544,36 +517,17 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
 
       <main id="main-content" tabIndex={-1} className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-10 outline-none">
 
-        {/* ── ウェルカム・ストリップ（未ログイン初訪問のみ） ── */}
-        {welcomeOpen && !sessionUserId && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-            className="relative rounded-2xl border border-sky-500/20 bg-gradient-to-br from-sky-500/[0.08] to-indigo-500/[0.04] p-4 sm:p-5 pr-10"
-          >
-            <button onClick={dismissWelcome} aria-label="閉じる"
-              className="absolute top-2.5 right-2.5 p-1 rounded-md hover:bg-white/10 text-slate-500 hover:text-white transition-colors">
-              <X size={14} />
-            </button>
-            <p className="text-sm sm:text-base text-slate-100 leading-relaxed">
-              <span className="font-bold text-white">毎朝、AI業界の最新ニュースを自動で集めて日本語で要約。</span>
-              <span className="text-slate-400"> サクッと読む / 保存 / 検索。ログインすれば<span className="text-sky-300 font-semibold">毎朝のダイジェストをメールでも</span>受け取れます。</span>
-            </p>
-            <div className="flex items-center gap-3 mt-3 flex-wrap">
-              <button onClick={() => signIn('google')}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-xs font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
-                <LogIn size={13} /> Googleで30秒で始める
-              </button>
-              <button onClick={dismissWelcome}
-                className="text-[11px] text-slate-400 hover:text-slate-200 transition-colors">
-                とりあえず読む →
-              </button>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-2.5">
-              続行すると Google アカウントでログインします。{' '}
-              <Link href="/privacy" className="underline underline-offset-2 hover:text-slate-300 transition-colors">プライバシーポリシー</Link>
-            </p>
-          </motion.div>
-        )}
+        {/* ── ページの頭 ──
+            ここは朝刊ではなく「朝刊に載らなかったものも含めた全部」。何のページかを最初に言う。
+            旧トップにあったログイン誘導のバナーは置かない（読むのにログインは要らない、という約束と矛盾する）。 */}
+        <section className="space-y-2">
+          <h1 className="text-xl sm:text-2xl font-bold text-white">記事を探す</h1>
+          <p className="text-[13px] text-slate-400 leading-relaxed">
+            集めた記事を新しい順に並べています。今朝の分だけでよければ{' '}
+            <Link href="/" className="text-sky-400 hover:text-sky-300 underline underline-offset-2">朝刊</Link>
+            {' '}をどうぞ。
+          </p>
+        </section>
 
         {/* ── ログイン済み: 毎朝ダイジェスト購読プロンプト（未購読のみ・一度きり・同意ベース） ── */}
         {digestPromptOpen && sessionUserId && (
@@ -609,80 +563,9 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           </motion.div>
         )}
 
-        {/* ── 今日のAI（最新レポート要約） ── */}
-        {heroReport && (
-          <motion.section
-            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
-            onClick={() => openReportObj(heroReport)}
-            className="cursor-pointer rounded-2xl border border-white/10 bg-[var(--card-bg)] border-l-2 border-l-sky-500 p-7 sm:p-10 hover:border-white/20 transition-colors group relative overflow-hidden"
-          >
-            {/* ほんのり光るグロー */}
-            <p className="text-[11px] sm:text-xs font-bold tracking-[0.2em] uppercase text-sky-400 mb-2">今日のAI、3分で。</p>
-            <div className="flex items-center gap-2 mb-4 font-mono text-[11px]">
-              <span className="flex items-center gap-1.5 text-sky-400">
-                <FileText size={13} /> デイリーレポート
-              </span>
-              <span className="text-slate-600">·</span>
-              <span className="text-slate-500">{heroReport.reportDate}</span>
-            </div>
-            <p className="text-lg sm:text-xl text-slate-100 leading-relaxed font-medium">
-              {reportLead(heroReport.content ?? '', 260) || 'AIの最新動向を自動で集め、要約・分析してお届けします。'}
-            </p>
-            <span className="inline-flex items-center gap-1.5 mt-5 text-sm font-bold text-sky-400 group-hover:gap-2.5 transition-all">
-              全文を読む <ArrowRight size={15} />
-            </span>
-          </motion.section>
-        )}
-
-        {/* ── 信頼スタッツ・ストリップ ── */}
-        <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap font-mono text-[10px] sm:text-[11px] text-slate-500 -mt-4">
-          <span className="flex items-center gap-1.5">
-            <span className="live-dot" style={{ width: 5, height: 5 }} />
-            <span><span className="text-slate-300 font-bold">{(totalArticles ?? collectedItems.length).toLocaleString()}</span>件 分析中</span>
-          </span>
-          <span className="text-slate-700">·</span>
-          <span>毎朝 <span className="text-slate-300 font-bold">06:00 JST</span> 更新</span>
-          {stats && stats.entities > 0 && (
-            <>
-              <span className="text-slate-700">·</span>
-              <span><span className="text-slate-300 font-bold">{stats.entities.toLocaleString()}</span> モデル/技術を追跡</span>
-            </>
-          )}
-        </div>
-
-        {/* ── 今週/今月のまとめ（週次・月次レポートを表に出す。データ既存・LLM追加コストなし） ── */}
-        {(weeklyReport || monthlyReport) && (
-          <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {weeklyReport && (
-              <button onClick={() => openReportObj(weeklyReport)}
-                className="group text-left rounded-2xl border border-indigo-500/15 bg-gradient-to-br from-indigo-500/[0.07] to-sky-500/[0.03] hover:border-indigo-500/30 p-5 transition-colors">
-                <div className="flex items-center gap-1.5 font-mono text-[10px] text-indigo-300/90 mb-1.5">
-                  <FileText size={12} /> 今週のまとめ
-                  <span className="text-slate-600">·</span>
-                  <span className="text-slate-500">{weeklyReport.reportDate}</span>
-                </div>
-                <p className="text-sm text-slate-300 leading-relaxed line-clamp-2">
-                  {reportLead(weeklyReport.content ?? '', 100) || '今週のAIの流れを振り返ります。'}
-                </p>
-                <span className="inline-flex items-center gap-1 mt-2 text-[12px] font-bold text-indigo-300 group-hover:gap-2 transition-all">読む <ArrowRight size={13} /></span>
-              </button>
-            )}
-            {monthlyReport && (
-              <button onClick={() => openReportObj(monthlyReport)}
-                className="group text-left rounded-2xl border border-purple-500/15 bg-gradient-to-br from-purple-500/[0.07] to-indigo-500/[0.03] hover:border-purple-500/30 p-5 transition-colors">
-                <div className="flex items-center gap-1.5 font-mono text-[10px] text-purple-300/90 mb-1.5">
-                  <FileText size={12} /> 今月のまとめ
-                  <span className="text-slate-600">·</span>
-                  <span className="text-slate-500">{monthlyReport.reportDate}</span>
-                </div>
-                <p className="text-sm text-slate-300 leading-relaxed line-clamp-2">
-                  {reportLead(monthlyReport.content ?? '', 100) || '今月のAIの流れを振り返ります。'}
-                </p>
-                <span className="inline-flex items-center gap-1 mt-2 text-[12px] font-bold text-purple-300 group-hover:gap-2 transition-all">読む <ArrowRight size={13} /></span>
-              </button>
-            )}
-          </section>
-        )}
+        {/* 朝刊・週次・月次のカードはここには置かない（2026-09-11）。
+            本紙はトップ `/` にあり、同じものを一覧の上にも置くと「どちらが本体か」が読者に分からなくなる。
+            累計件数などの実績ストリップも外した＝作り手の数字であって、記事を探しに来た人の役に立たない。 */}
 
         {/* ── あなた向け（ログインユーザー限定・行動ベース） ── */}
         {sessionUserId && (
@@ -777,25 +660,8 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           </section>
         )}
 
-        {/* ── 今日の注目（直近48hの重要記事・雑誌の一面レイアウト: 先頭1枚を大カード、残りをグリッド） ── */}
-        {!isLoading && featured.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-4">
-              <Flame size={16} className="text-orange-400" />
-              <h2 className="text-sm font-bold font-outfit">{selectedCategory ? `${selectedCategory} の注目` : '今日の注目'}</h2>
-            </div>
-            <div className="space-y-4">
-              <PubCard item={featured[0]} lead />
-              {featured.length > 1 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {featured.slice(1).map(item => (
-                    <PubCard key={item.id} item={item} featured />
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
+        {/* 「今日の注目」は撤去した（2026-09-11）。重要記事を選んで前に出すのは朝刊の仕事で、
+            同じ選別を一覧でもう一度やると、朝刊とは違う5本が並んで「どちらが本紙の選別か」が濁る。 */}
 
         {/* ── 最新の記事 ── */}
         <section>

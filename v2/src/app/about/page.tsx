@@ -4,8 +4,9 @@ import { getLandingDigest } from '@/app/actions';
 import { parseHighlights, highlightsReadingSeconds } from '@/lib/digest-highlights';
 import { formatReadingTime } from '@/lib/reading-time';
 import { SITE_NAME } from '@/lib/site';
+import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
 import { SelectionDots } from './SelectionDots';
-import s from './about.module.css';
+import s from '@/styles/brand.module.css';
 
 // 紹介ページ。**何のために作ったか**を書く場所であって、朝刊そのものを読ませる場所ではない。
 // 朝刊は トップ と /reports にある。ここに実物を丸ごと置くと同じ内容が二重になり、
@@ -37,16 +38,10 @@ export default async function AboutPage() {
 
   return (
     <div className={s.page}>
-      <nav className={s.nav}>
-        <div className={s.navInner}>
-          <Link className={s.navBrand} href="/">{SITE_NAME}</Link>
-          <div className={s.navLinks}>
-            <a href="#select">選び方</a>
-            <a href="#promise">約束</a>
-          </div>
-          <Link className={s.navCta} href="/">朝刊を読む</Link>
-        </div>
-      </nav>
+      <BrandNav
+        links={[{ href: '#select', label: '選び方' }, { href: '#promise', label: '約束' }]}
+        cta={{ href: '/', label: '朝刊を読む' }}
+      />
 
       {/* ══ ヒーロー ══ */}
       <header className={`${s.band} ${s.bandInk} ${s.hero}`} id="top">
@@ -212,17 +207,7 @@ export default async function AboutPage() {
         </div>
       </section>
 
-      <footer className={s.foot}>
-        <div className={s.footInner}>
-          <span>{SITE_NAME} — AI技術の朝刊</span>
-          <div className={s.footLinks}>
-            <Link href="/privacy">プライバシー</Link>
-            <Link href="/terms">利用規約</Link>
-            <Link href="/changelog">更新履歴</Link>
-          </div>
-          <span>読了時間は 600字/分で算出</span>
-        </div>
-      </footer>
+      <BrandFooter />
     </div>
   );
 }

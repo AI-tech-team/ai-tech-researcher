@@ -1,4 +1,7 @@
-/* 紹介ページ(/about)専用のスタイル。
+/* Cernoval の表側（トップ＝今朝の朝刊 / 過去の朝刊 / 紹介ページ）で共有する版面。
+ *
+ * 1つのファイルに集約しているのは、同じ語彙を2箇所にコピーすると必ず片方だけ古くなるため
+ * （紹介ページだけ黒地・トップだけ旧テーマ、という状態が実際に起きていた）。
  *
  * なぜ Tailwind でなく CSS Module か:
  *   globals.css のテーマは `--color-white: #15171b` のように Tailwind の色トークン自体を
@@ -31,6 +34,10 @@
   /* 和文の重いゴシックは端末のものを使う（参照サイトも SF Pro = 端末フォント） */
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN",
     "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", "Noto Sans JP", sans-serif;
+
+  /* 朝刊の段の幅。日付・見出し・本文・奥付までこの1本の左端に揃える。
+     見出しだけ画面の左端、本文だけ画面の中央、という状態は紙面として読みにくかった（実機で確認）。 */
+  --measure: 36rem;
 
   background: var(--ink);
   color: var(--on-ink);
@@ -85,6 +92,12 @@
 .body strong, .lead strong { color: var(--on-ink); font-weight: 600; }
 .bodyPaper strong { color: var(--on-paper); font-weight: 600; }
 .micro { font-size: 13px; color: var(--on-ink-faint); margin: 20px 0 0; }
+/* 本文中のリンクは色で示す（Tailwindのpreflightで下線が消えているため、色を当てないとリンクに見えない）。 */
+.body a, .lead a { color: var(--accent); text-decoration: none; }
+.bodyPaper a { color: var(--accent-paper); }
+.factD a { color: var(--accent-paper); text-decoration: none; }  /* 箇条の既定は紙の上 */
+.factInk .factD a { color: var(--accent); }
+.body a:hover, .lead a:hover, .factD a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .grad {
   background-image: var(--dawn);
@@ -201,9 +214,113 @@
 .footInner a:hover { color: var(--on-ink); }
 .footLinks { display: flex; gap: 20px; flex-wrap: wrap; }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   朝刊の紙面（トップ `/` と 過去の朝刊 `/reports/[id]` で共用）
+
+   読み物なので本文は白地に置く。黒地は「号の頭」と「号の終わり」だけに使い、
+   紙面そのものは紙にする（正本が明るい側、という決定に従う）。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 号の頭。日付・読了時間・母数は数字なので tabular-nums で桁を揃える。 */
+.issue { padding: 72px 24px 56px; }
+.issueInner { max-width: var(--measure); margin: 0 auto; }
+/* 紙面と同じ段に揃える汎用の器（号の頭・過去の朝刊・奥付で使う）。 */
+.measure { max-width: var(--measure); margin: 0 auto; }
+.issueTitle { font-size: clamp(2.3rem, 6.4vw, 4.6rem); }
+.issueMeta {
+  display: flex; flex-wrap: wrap; gap: 10px 26px; margin: 30px 0 0;
+  font-size: 14px; color: var(--on-ink-dim); font-variant-numeric: tabular-nums;
+}
+.issueMeta b { color: var(--on-ink); font-weight: 600; }
+.issueMeta span { display: inline-flex; align-items: center; gap: 8px; }
+/* 項目の区切り。読点でつなぐより短く読める。 */
+.issueMeta span + span::before {
+  content: ''; width: 3px; height: 3px; border-radius: 50%;
+  background: var(--on-ink-faint); margin-right: 18px;
+}
+
+/* 本文。1行の長さは日本語で読みやすい 34em 前後に抑える（画面幅に伸ばさない）。 */
+.paper { padding: 74px 24px 84px; }
+.paperInner { max-width: var(--measure); margin: 0 auto; font-size: 17px; line-height: 1.95; }
+.paperLead {
+  margin: 0 0 10px; padding-bottom: 34px; border-bottom: 1px solid var(--hairline-paper);
+}
+.paperLead p { font-size: 1.06rem; line-height: 1.95; color: var(--on-paper-dim); margin: 0 0 14px; }
+.paperLead p:last-child { margin-bottom: 0; }
+
+/* ハイライト1本。**順位は付けない**（決定④）ので番号も★も出さない。
+   区切りは罫だけにして、5本が並列であることを見た目でも保つ。 */
+.hl { padding: 40px 0 4px; }
+.hl + .hl { border-top: 1px solid var(--hairline-paper); }
+.hlTitle {
+  font-size: clamp(1.32rem, 3.1vw, 1.66rem); font-weight: 800;
+  letter-spacing: -0.018em; line-height: 1.52; margin: 0 0 22px; color: var(--on-paper);
+}
+.points { margin: 0; display: grid; gap: 18px; }
+.point { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 16px; }
+.pointPlain { display: block; }
+.pointLabel {
+  font-size: 12px; font-weight: 700; letter-spacing: .03em; line-height: 2.1;
+  color: var(--accent-paper); margin: 0;
+}
+.pointText { font-size: 15.5px; line-height: 1.92; color: var(--on-paper-dim); margin: 0; }
+@media (max-width: 560px) {
+  .point { grid-template-columns: 1fr; gap: 4px; }
+  .pointLabel { line-height: 1.6; }
+}
+
+/* ハイライト以外のセクション（トレンド／カテゴリ別／インサイト）。 */
+.sec { padding-top: 52px; margin-top: 44px; border-top: 1px solid var(--hairline-paper); }
+/* 前書きの直後にセクションが来る号（ハイライトを持たない週次・月次）では、
+   前書きの下罫とセクションの上罫が二重になり、空の帯があるように見える。片方を消す。 */
+.paperLead + .sec { border-top: 0; margin-top: 0; padding-top: 40px; }
+.secTitle {
+  font-size: 13px; font-weight: 700; letter-spacing: .06em; margin: 0 0 24px;
+  color: var(--on-paper-faint); display: flex; align-items: center; gap: 10px;
+}
+.secTitle b { color: var(--on-paper); font-weight: 800; font-size: 17px; letter-spacing: -0.01em; }
+.para { font-size: 15.5px; line-height: 1.95; color: var(--on-paper-dim); margin: 0 0 16px; }
+.bullets { margin: 0 0 16px; padding: 0; list-style: none; display: grid; gap: 13px; }
+.bullets li {
+  font-size: 15.5px; line-height: 1.9; color: var(--on-paper-dim);
+  padding-left: 20px; position: relative;
+}
+.bullets li::before {
+  content: ''; position: absolute; left: 2px; top: .78em;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--on-paper-faint);
+}
+.group { margin: 0 0 26px; }
+.groupTitle {
+  font-size: 14px; font-weight: 800; letter-spacing: -0.005em;
+  color: var(--on-paper); margin: 0 0 11px;
+}
+
+/* 注記（AI生成物である旨）。畳んで隠さない、と約束しているので常に見える場所に置く。 */
+.note {
+  margin: 46px 0 0; padding-top: 26px; border-top: 1px solid var(--hairline-paper);
+  font-size: 13px; line-height: 1.85; color: var(--on-paper-faint);
+}
+.note a { color: var(--accent-paper); text-decoration: none; }
+.note a:hover { text-decoration: underline; }
+
+/* 号の終わり。過去の朝刊は「号」なので日付だけを縦に積む（要約は出さない＝二重の朝刊を作らない）。 */
+.backList { margin: 34px 0 0; border-top: 1px solid var(--hairline-ink); }
+.backItem {
+  display: flex; align-items: baseline; gap: 16px; padding: 15px 2px;
+  border-bottom: 1px solid var(--hairline-ink); text-decoration: none;
+  color: var(--on-ink-dim); transition: color .16s ease, padding-left .16s ease;
+}
+.backItem:hover { color: var(--on-ink); padding-left: 8px; }
+.backDate { font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600; color: inherit; }
+.backLabel { font-size: 13px; color: var(--on-ink-faint); }
+.backGo { margin-left: auto; font-size: 13px; color: var(--on-ink-faint); }
+
 @media (max-width: 640px) {
   .band { padding: 80px 22px; }
   .hero { padding-top: 68px; }
+  .issue { padding: 44px 22px 40px; }
+  .paper { padding: 52px 22px 64px; }
+  .paperInner { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .page * { transition: none !important; animation: none !important; }
