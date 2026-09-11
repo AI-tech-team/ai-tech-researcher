@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { BrainCircuit, ArrowLeft, Send } from 'lucide-react';
+import { ArrowLeft, Send } from 'lucide-react';
 import { FEEDBACK_FORM_ACTION, FEEDBACK_ENTRY, FEEDBACK_ENTRY_EMAIL, CONTACT_EMAIL, SITE_NAME } from '@/lib/site';
 
 // 公開UIのフィードバック送信ページ（/feedback）。
@@ -40,9 +40,6 @@ export default function FeedbackPage() {
       <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
         <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
-              <BrainCircuit className="text-white" size={15} />
-            </div>
             <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
           </Link>
           <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
@@ -83,7 +80,7 @@ export default function FeedbackPage() {
             {error && <p className="text-[12px] text-red-400 mt-2">{error}</p>}
             <div className="flex items-center justify-end mt-5">
               <button onClick={submit} disabled={sending || !message.trim()}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity disabled:opacity-50">
+                className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-[var(--text-main)] text-[var(--bg-color)] text-sm font-bold hover:opacity-80 transition-opacity disabled:opacity-50">
                 <Send size={15} className={sending ? 'animate-pulse' : ''} />
                 {sending ? '送信中…' : '送信する'}
               </button>
@@ -95,7 +92,7 @@ export default function FeedbackPage() {
             <p className="text-sm text-slate-300 leading-relaxed">ご意見・ご要望をお寄せください。</p>
             {CONTACT_EMAIL ? (
               <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`${SITE_NAME} フィードバック`)}`}
-                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full bg-[var(--text-main)] text-[var(--bg-color)] text-sm font-bold hover:opacity-80 transition-opacity">
                 <Send size={14} /> メールで送る
               </a>
             ) : (

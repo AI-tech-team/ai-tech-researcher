@@ -216,7 +216,7 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
 
               <div className="flex items-center justify-end pt-2">
                 <button onClick={handleSave} disabled={saving || !data}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity disabled:opacity-50">
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[var(--text-main)] text-[var(--bg-color)] text-sm font-bold hover:opacity-80 transition-opacity disabled:opacity-50">
                   <Save size={14} className={saving ? 'animate-spin' : ''} />
                   {saving ? '保存中…' : '保存'}
                 </button>

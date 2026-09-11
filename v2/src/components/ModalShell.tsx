@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { BrainCircuit, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
 
@@ -31,9 +31,6 @@ export function ModalShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-10 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
           <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
             <Link href="/" className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
-                <BrainCircuit className="text-white" size={15} />
-              </div>
               <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
             </Link>
             <button onClick={close} aria-label="閉じる"

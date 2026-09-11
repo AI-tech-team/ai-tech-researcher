@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BrainCircuit, LogIn, LogOut, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
+import { LogIn, LogOut, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
@@ -413,9 +413,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
         <div className="max-w-5xl mx-auto flex items-center justify-between px-4 sm:px-6 py-3">
           {/* ブランドは朝刊（トップ）へ戻る導線。ここが行き止まりだと、記事を探しに来た人が本紙に戻れない。 */}
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
-              <BrainCircuit className="text-white" size={15} />
-            </div>
             <span className="font-bold text-sm font-outfit group-hover:text-sky-300 transition-colors">Cernoval</span>
           </Link>
           <div className="flex items-center gap-2">
@@ -533,7 +530,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
         {digestPromptOpen && sessionUserId && (
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}
-            className="relative rounded-2xl border border-indigo-500/20 bg-gradient-to-br from-indigo-500/[0.08] to-sky-500/[0.04] p-4 sm:p-5 pr-10"
+            className="relative rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 pr-10"
           >
             <button onClick={dismissDigestPrompt} aria-label="閉じる"
               className="absolute top-2.5 right-2.5 p-1 rounded-md hover:bg-white/10 text-slate-500 hover:text-white transition-colors">
@@ -550,7 +547,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
                 </p>
                 <div className="flex items-center gap-3 mt-3 flex-wrap">
                   <button onClick={subscribeDigest}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 to-sky-500 text-white text-xs font-bold shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-opacity">
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[var(--text-main)] text-[var(--bg-color)] text-xs font-bold hover:opacity-80 transition-opacity">
                     <Mail size={13} /> 受け取る
                   </button>
                   <button onClick={dismissDigestPrompt}
@@ -702,14 +699,14 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
 
         {/* ── 未ログイン向け末尾CTA（控えめ） ── */}
         {!sessionUserId && (
-          <section className="rounded-2xl border border-sky-500/15 bg-gradient-to-br from-sky-500/[0.06] to-indigo-500/[0.04] p-6 sm:p-7 text-center space-y-3">
+          <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-7 text-center space-y-3">
             <p className="text-base sm:text-lg text-white font-bold">もっと自分のための場所にする</p>
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
               ログインすると <span className="text-sky-300">あなた向けのおすすめ</span> / <span className="text-sky-300">後で読む</span> / <span className="text-sky-300">興味学習</span> が使えます。閲覧は無料でずっと続けられます。
             </p>
             <div className="pt-1">
               <button onClick={() => signIn('google')}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[var(--text-main)] text-[var(--bg-color)] text-sm font-bold hover:opacity-80 transition-opacity">
                 <LogIn size={13} /> Googleでログイン
               </button>
             </div>
@@ -749,9 +746,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
           {/* 最下部バー: ロゴ＋コピーライト */}
           <div className="mt-8 pt-4 border-t border-white/5 max-w-2xl mx-auto flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded-md bg-gradient-to-br from-sky-500 to-indigo-600 flex items-center justify-center">
-                <BrainCircuit className="text-white" size={11} />
-              </div>
               <span className="font-mono text-[10px] text-slate-500">Cernoval</span>
             </div>
             <p className="font-mono text-[10px] text-slate-700">{SITE_TAGLINE} · © 2026</p>

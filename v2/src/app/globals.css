@@ -3,14 +3,25 @@
 @import 'tailwindcss';
 
 @theme {
-  --font-sans: var(--font-inter), 'Hiragino Sans', 'Yu Gothic UI', ui-sans-serif, system-ui, sans-serif;
-  /* 見出しは明朝。決定「方向Aの骨格に方向Bの意匠」の骨格側。
-     和文の明朝は端末のものを使う（Noto Serif JP を web font で読むと数MBになり、
-     せっかく詰めた初回表示が台無しになる。メール版で「端末の明朝に落ちる前提で組む」と
-     決めたのと同じ判断）。 */
-  --font-serif: 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'Noto Serif JP', 'Times New Roman', serif;
-  /* 番号・日付・件数は等幅。桁が揃う＝方向Bから持ち込む意匠。欧文だけなので実測で軽い。 */
+  /* 表側（朝刊・紹介ページ）の brand.module.css と同じスタック。ここがズレると
+     「トップはゴシック・記事一覧だけ別の書体」になり、同じサイトに見えない。 */
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN',
+    'Hiragino Sans', 'Yu Gothic UI', 'Yu Gothic', 'Noto Sans JP', ui-sans-serif, system-ui, sans-serif;
+  /* 明朝（--font-serif）は廃止。「紙・明朝・紺」の案ごと却下された意匠で、
+     Cernoval の識別子は太いサンセリフ。見出しの指定は下の h1,h2,h3 ルールに寄せた。 */
+  /* 番号・日付・件数は等幅。桁が揃う＝一覧で目が滑らない。欧文だけなので実測で軽い。 */
   --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* 角丸。却下版は16pxのガラスカードだったが、ブランドは面と罫で仕切る（角はほぼ立てる）。
+     rounded-* は公開UIに散らばっていて手で直せないので、**クラスではなく半径トークンを縮める**。
+     rounded-full だけは Tailwind 側が無限大で持つのでここの影響を受けない（丸いアイコンは丸いまま）。 */
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 5px;
+  --radius-2xl: 7px;
+  --radius-3xl: 9px;
+  --radius-4xl: 11px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -30,101 +41,104 @@
 :root {
   color-scheme: light;
 
-  /* 地とインク。Tailwind の slate ランプを反転させる（950=地 … 50=最も濃い） */
-  --color-slate-950: #f2f0ec;
-  --color-slate-900: #e9e5df;
-  --color-slate-800: #ddd8d0;
-  --color-slate-700: #c3bdb3;
-  --color-slate-600: #8b919b;
-  --color-slate-500: #6c727c;
-  --color-slate-400: #545b66;
-  --color-slate-300: #3a4049;
-  --color-slate-200: #2c313a;
-  --color-slate-100: #22262d;
-  --color-slate-50:  #1b1e24;
+  /* 地とインク。Tailwind の slate ランプを反転させる（950=地 … 50=最も濃い）。
+     値は brand.module.css の --paper / --on-paper 系と同じ純白・純黒系に揃える。
+     （却下された案はここが温かいベージュ #f2f0ec だった） */
+  /* ⚠ このランプは公開UIでは**ほぼ文字色としてしか使われていない**（実測: text-slate-* が250箇所、
+     bg-slate-* は2箇所だけ）。950→700 を「地→最も薄い文字」として読み、薄い側は
+     却下版と同じ読みやすさ（コントラスト比）になる濃さに置く。純白地は紙より明るいので、
+     同じ16進値を持ってくると薄くなりすぎる。 */
+  --color-slate-950: #ffffff;
+  --color-slate-900: #fafafb;
+  --color-slate-800: #f2f2f5;
+  --color-slate-700: #c9c9d1;
+  --color-slate-600: #8c8c95;
+  --color-slate-500: #6e6e77;
+  --color-slate-400: #5f5f66;
+  --color-slate-300: #45454c;
+  --color-slate-200: #2c2c33;
+  --color-slate-100: #1a1a1f;
+  --color-slate-50:  #0d0d0f;
   /* 「白」は最も濃いインクを意味する。見出しの text-white がこれになる。
      同時に bg-white/[0.02] は「2%のインク＝紙よりわずかに沈んだ面」、
-     border-white/10 は「10%のインク＝罫」になり、方向Aの罫で仕切る作りに一致する。 */
-  --color-white: #15171b;
+     border-white/10 は「10%のインク＝罫」になり、面と罫で仕切る作りに一致する。 */
+  --color-white: #0d0d0f;
 
-  /* アクセントは1色（決定）。明では濃紺。青系はすべてここへ寄せる。 */
-  --color-sky-200: #2b4a7d; --color-sky-300: #24406e; --color-sky-400: #1f3a68;
-  --color-sky-500: #1f3a68; --color-sky-600: #18305a;
-  --color-cyan-200: #2b4a7d; --color-cyan-300: #24406e; --color-cyan-400: #1f3a68; --color-cyan-500: #1f3a68;
-  --color-indigo-200: #2b4a7d; --color-indigo-300: #24406e; --color-indigo-400: #1f3a68;
-  --color-indigo-500: #1f3a68; --color-indigo-600: #18305a;
-  --color-violet-300: #24406e; --color-violet-400: #1f3a68;
-  --color-purple-300: #24406e; --color-purple-500: #1f3a68;
+  /* アクセントは1色（決定）。明では藍（brand.module.css の --accent-paper と同値）。
+     青系はすべてここへ寄せる。 */
+  --color-sky-200: #5b52d8; --color-sky-300: #4f45d2; --color-sky-400: #4338ca;
+  --color-sky-500: #4338ca; --color-sky-600: #3730a3;
+  --color-cyan-200: #5b52d8; --color-cyan-300: #4f45d2; --color-cyan-400: #4338ca; --color-cyan-500: #4338ca;
+  --color-indigo-200: #5b52d8; --color-indigo-300: #4f45d2; --color-indigo-400: #4338ca;
+  --color-indigo-500: #4338ca; --color-indigo-600: #3730a3;
+  --color-violet-300: #4f45d2; --color-violet-400: #4338ca;
+  --color-purple-300: #4f45d2; --color-purple-500: #4338ca;
 
   /* 意味を持つ色だけは別に残す（良/注意/悪）。アクセントとは役割が違う。 */
-  --color-emerald-300: #2c6a45; --color-emerald-400: #2c6a45; --color-emerald-500: #2c6a45;
-  --color-emerald-900: #ecf4ee; --color-emerald-950: #f3f8f5;
+  --color-emerald-300: #16704a; --color-emerald-400: #16704a; --color-emerald-500: #16704a;
+  --color-emerald-900: #eef7f2; --color-emerald-950: #f5faf7;
   --color-amber-300: #8a6310; --color-amber-400: #8a6310; --color-amber-500: #93690f;
-  --color-rose-500: #a8281c; --color-red-300: #a8281c; --color-red-400: #a8281c; --color-red-500: #a8281c;
+  --color-rose-500: #b4271a; --color-red-300: #b4271a; --color-red-400: #b4271a; --color-red-500: #b4271a;
 
-  /* カテゴリ色（記事の分類＝装飾ではなく情報なので残すが、紙の上で読める濃さにする） */
+  /* カテゴリ色（記事の分類＝装飾ではなく情報なので残すが、白地の上で読める濃さにする） */
   --cat-llm: #1f5f7a; --cat-agent: #3b4a86; --cat-tool: #1f6045;
   --cat-hw: #8a4a12; --cat-biz: #8d3763; --cat-paper: #5a3f8c; --cat-other: #5b616b;
 
-  --bg-color: #f2f0ec;
-  --card-bg: #fffefb;
-  --accent-blue: #1f3a68;
-  --accent-purple: #3b4a86;
-  --accent-emerald: #2c6a45;
-  --text-main: #15171b;
-  --text-muted: #6c727c;
-  --border-glass: rgba(21, 23, 27, 0.10);
-  --rule-strong: rgba(21, 23, 27, 0.22);
-  --card-bg-hover: #ffffff;
-  --accent-soft: rgba(31, 58, 104, 0.07);
-  --shadow-hover: 0 2px 10px rgba(21, 23, 27, 0.08);
+  --bg-color: #ffffff;
+  --card-bg: #ffffff;
+  --accent-blue: #4338ca;
+  --accent-purple: #4338ca;
+  --accent-emerald: #16704a;
+  --text-main: #0d0d0f;
+  --text-muted: #5f5f66;
+  --border-glass: #e6e6eb;
+  --rule-strong: #c9c9d2;
+  --card-bg-hover: #fafafb;
+  --accent-soft: rgba(67, 56, 202, 0.06);
+  --shadow-hover: none;
   --glow: none;
-  --scroll-thumb: rgba(21, 23, 27, 0.16);
-  --scroll-thumb-hover: rgba(21, 23, 27, 0.28);
+  --scroll-thumb: rgba(13, 13, 15, 0.16);
+  --scroll-thumb-hover: rgba(13, 13, 15, 0.28);
 }
 
 /* 端末が暗い（＝既定のまま何も選んでいない人はここに来る）。明を選んだ人には適用しない。 */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --color-slate-950: #0f1114; --color-slate-900: #171a1f; --color-slate-800: #1e222a;
-    --color-slate-700: #2b313b; --color-slate-600: #848a95; --color-slate-500: #969db0;
-    --color-slate-400: #b4bac4; --color-slate-300: #cbd0d9; --color-slate-200: #dcdfe5;
-    --color-slate-100: #e8e9ec; --color-slate-50: #f2f3f5;
+    --color-slate-950: #000000; --color-slate-900: #0b0b0e; --color-slate-800: #17171c;
+    --color-slate-700: #26262c; --color-slate-600: #7f7f88; --color-slate-500: #94949c;
+    --color-slate-400: #a6a6ae; --color-slate-300: #c6c6cd; --color-slate-200: #dedee3;
+    --color-slate-100: #eeeef1; --color-slate-50: #f5f5f7;
     --color-white: #ffffff;
 
-    --color-sky-200: #bcd0ff; --color-sky-300: #93a7ff; --color-sky-400: #7d94ff;
-    --color-sky-500: #6b84f7; --color-sky-600: #5b73e0;
-    --color-cyan-200: #bcd0ff; --color-cyan-300: #93a7ff; --color-cyan-400: #7d94ff; --color-cyan-500: #6b84f7;
-    --color-indigo-200: #bcd0ff; --color-indigo-300: #93a7ff; --color-indigo-400: #7d94ff;
-    --color-indigo-500: #6b84f7; --color-indigo-600: #5b73e0;
-    --color-violet-300: #93a7ff; --color-violet-400: #7d94ff;
-    --color-purple-300: #93a7ff; --color-purple-500: #6b84f7;
+    --color-sky-200: #bae6fd; --color-sky-300: #7dd3fc; --color-sky-400: #38bdf8;
+    --color-sky-500: #38bdf8; --color-sky-600: #0ea5e9;
+    --color-cyan-200: #bae6fd; --color-cyan-300: #7dd3fc; --color-cyan-400: #38bdf8; --color-cyan-500: #38bdf8;
+    --color-indigo-200: #bae6fd; --color-indigo-300: #7dd3fc; --color-indigo-400: #38bdf8;
+    --color-indigo-500: #38bdf8; --color-indigo-600: #0ea5e9;
+    --color-violet-300: #7dd3fc; --color-violet-400: #38bdf8;
+    --color-purple-300: #7dd3fc; --color-purple-500: #38bdf8;
 
     --color-emerald-300: #7fc5a0; --color-emerald-400: #6cbb92; --color-emerald-500: #4aa87a;
-    --color-emerald-900: #122018; --color-emerald-950: #0d1712;
+    --color-emerald-900: #0c1712; --color-emerald-950: #08110d;
     --color-amber-300: #e0b565; --color-amber-400: #d9a94f; --color-amber-500: #cf9c3c;
     --color-rose-500: #ff8d81; --color-red-300: #ff8d81; --color-red-400: #ff7c6e; --color-red-500: #f2695c;
 
     --cat-llm: #6fc3e8; --cat-agent: #93a7ff; --cat-tool: #62d3a4;
     --cat-hw: #f0a35f; --cat-biz: #ef8fbd; --cat-paper: #b79dfa; --cat-other: #8b919b;
 
-    --bg-color: #0f1114;
-    --card-bg: #171a1f;
-    --accent-blue: #93a7ff;
-    --accent-purple: #93a7ff;
+    --bg-color: #000000;
+    --card-bg: #0b0b0e;
+    --accent-blue: #7dd3fc;
+    --accent-purple: #7dd3fc;
     --accent-emerald: #7fc5a0;
-    --text-main: #e8e9ec;
-    --text-muted: #848a95;
-    --border-glass: rgba(255, 255, 255, 0.08);
-  --rule-strong: rgba(255, 255, 255, 0.18);
-  --card-bg-hover: #1c2028;
-  --accent-soft: rgba(147, 167, 255, 0.10);
-  --shadow-hover: 0 2px 14px rgba(0, 0, 0, 0.45);
-    --rule-strong: rgba(255, 255, 255, 0.18);
-    --card-bg-hover: #1c2028;
-    --accent-soft: rgba(147, 167, 255, 0.10);
-    --shadow-hover: 0 2px 14px rgba(0, 0, 0, 0.45);
+    --text-main: #f5f5f7;
+    --text-muted: #8e8e94;
+    --border-glass: #1a1a1f;
+    --rule-strong: #2e2e36;
+    --card-bg-hover: #121217;
+    --accent-soft: rgba(125, 211, 252, 0.10);
+    --shadow-hover: none;
     --glow: none;
     --scroll-thumb: rgba(255, 255, 255, 0.10);
     --scroll-thumb-hover: rgba(255, 255, 255, 0.18);
@@ -134,36 +148,42 @@
 /* 読者が暗を明示的に選んだ。端末の設定より優先する。 */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --color-slate-950: #0f1114; --color-slate-900: #171a1f; --color-slate-800: #1e222a;
-  --color-slate-700: #2b313b; --color-slate-600: #848a95; --color-slate-500: #969db0;
-  --color-slate-400: #b4bac4; --color-slate-300: #cbd0d9; --color-slate-200: #dcdfe5;
-  --color-slate-100: #e8e9ec; --color-slate-50: #f2f3f5;
+  --color-slate-950: #000000; --color-slate-900: #0b0b0e; --color-slate-800: #17171c;
+  --color-slate-700: #26262c; --color-slate-600: #7f7f88; --color-slate-500: #94949c;
+  --color-slate-400: #a6a6ae; --color-slate-300: #c6c6cd; --color-slate-200: #dedee3;
+  --color-slate-100: #eeeef1; --color-slate-50: #f5f5f7;
   --color-white: #ffffff;
 
-  --color-sky-200: #bcd0ff; --color-sky-300: #93a7ff; --color-sky-400: #7d94ff;
-  --color-sky-500: #6b84f7; --color-sky-600: #5b73e0;
-  --color-cyan-200: #bcd0ff; --color-cyan-300: #93a7ff; --color-cyan-400: #7d94ff; --color-cyan-500: #6b84f7;
-  --color-indigo-200: #bcd0ff; --color-indigo-300: #93a7ff; --color-indigo-400: #7d94ff;
-  --color-indigo-500: #6b84f7; --color-indigo-600: #5b73e0;
-  --color-violet-300: #93a7ff; --color-violet-400: #7d94ff;
-  --color-purple-300: #93a7ff; --color-purple-500: #6b84f7;
+  --color-sky-200: #bae6fd; --color-sky-300: #7dd3fc; --color-sky-400: #38bdf8;
+  --color-sky-500: #38bdf8; --color-sky-600: #0ea5e9;
+  --color-cyan-200: #bae6fd; --color-cyan-300: #7dd3fc; --color-cyan-400: #38bdf8; --color-cyan-500: #38bdf8;
+  --color-indigo-200: #bae6fd; --color-indigo-300: #7dd3fc; --color-indigo-400: #38bdf8;
+  --color-indigo-500: #38bdf8; --color-indigo-600: #0ea5e9;
+  --color-violet-300: #7dd3fc; --color-violet-400: #38bdf8;
+  --color-purple-300: #7dd3fc; --color-purple-500: #38bdf8;
 
   --color-emerald-300: #7fc5a0; --color-emerald-400: #6cbb92; --color-emerald-500: #4aa87a;
-  --color-emerald-900: #122018; --color-emerald-950: #0d1712;
+  --color-emerald-900: #0c1712; --color-emerald-950: #08110d;
   --color-amber-300: #e0b565; --color-amber-400: #d9a94f; --color-amber-500: #cf9c3c;
   --color-rose-500: #ff8d81; --color-red-300: #ff8d81; --color-red-400: #ff7c6e; --color-red-500: #f2695c;
 
   --cat-llm: #6fc3e8; --cat-agent: #93a7ff; --cat-tool: #62d3a4;
   --cat-hw: #f0a35f; --cat-biz: #ef8fbd; --cat-paper: #b79dfa; --cat-other: #8b919b;
 
-  --bg-color: #0f1114;
-  --card-bg: #171a1f;
-  --accent-blue: #93a7ff;
-  --accent-purple: #93a7ff;
+  --bg-color: #000000;
+  --card-bg: #0b0b0e;
+  --accent-blue: #7dd3fc;
+  --accent-purple: #7dd3fc;
   --accent-emerald: #7fc5a0;
-  --text-main: #e8e9ec;
-  --text-muted: #848a95;
-  --border-glass: rgba(255, 255, 255, 0.08);
+  --text-main: #f5f5f7;
+  --text-muted: #8e8e94;
+  --border-glass: #1a1a1f;
+  /* ⚠ ここに --rule-strong / --card-bg-hover / --accent-soft / --shadow-hover が無く、
+     「暗を明示的に選んだ人」だけ明のホバー色（暗い罫・白い面）を引いていた。同じ値を持たせる。 */
+  --rule-strong: #2e2e36;
+  --card-bg-hover: #121217;
+  --accent-soft: rgba(125, 211, 252, 0.10);
+  --shadow-hover: none;
   --glow: none;
   --scroll-thumb: rgba(255, 255, 255, 0.10);
   --scroll-thumb-hover: rgba(255, 255, 255, 0.18);
@@ -174,17 +194,20 @@ body {
   font-family: var(--font-sans);
   background: var(--bg-color);
   color: var(--text-main);
-  /* 方向Aは静謐。3色のグラデーショングローは方向Bの名残なので落とす。 */
+  /* グラデーションのグローは出さない（グラデは巨大数字にだけ、という決定）。 */
   background-image: var(--glow);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 
-/* 見出しは明朝。ここが方向Aの「見やすさ」の正体で、ゴシックに戻すと消える。 */
-h1, h2, h3, .font-outfit, .font-serif-jp {
-  font-family: var(--font-serif);
-  font-weight: 600;
-  letter-spacing: 0.01em;
+/* 見出しは太いサンセリフ。これがブランドの識別子で、明朝に戻すと別のサイトになる。
+   ⚠ Tailwind v4 のユーティリティは @layer の中にあり、レイヤー外のこの規則が必ず勝つ。
+     つまり font-bold / tracking-* を書いても見出しはここの値になる（＝1箇所で揃う）。
+   和文に欧文と同じ量の負のトラッキングを掛けると濁点が潰れるので、詰めは控えめにする。 */
+h1, h2, h3, .font-outfit {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  letter-spacing: -0.014em;
 }
 
 /* モバイルのタップ遅延(ダブルタップズーム判定の待ち)を無くし、灰色のタップハイライトも消す。
@@ -194,126 +217,23 @@ button, a, [role="button"], summary {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* ── Glass card ──────────────────────────────────────────── */
+/* ── Card（いまは Skeleton だけが使う）─────────────────────── */
+/* 名前は glass だが、すりガラスはやめた。ブランドは面と罫で仕切る＝ぼかしも影も出さない。 */
 .glass-card {
   background: var(--card-bg);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
   border: 1px solid var(--border-glass);
-  border-radius: 16px;
+  border-radius: var(--radius-xl);
   padding: 18px;
-  transition: border-color 0.25s, box-shadow 0.25s;
+  transition: border-color 0.25s;
   box-shadow: none;
 }
 .glass-card:hover {
   border-color: var(--rule-strong);
-  box-shadow: var(--shadow-hover);
 }
 
-/* ── Article row (news reader + glass hybrid) ────────────── */
-.article-row {
-  display: flex;
-  background: var(--card-bg);
-  border: 1px solid var(--border-glass);
-  border-radius: 10px;
-  overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-.article-row:hover {
-  border-color: var(--rule-strong);
-  background: var(--card-bg-hover);
-  box-shadow: var(--shadow-hover);
-}
-
-/* ── Gradient text ───────────────────────────────────────── */
-.gradient-text {
-  /* 決定「アクセントは1色」。2色のグラデーション文字は方向Bの名残なので単色にする。 */
-  color: var(--accent-blue);
-}
-
-/* ── Primary button ──────────────────────────────────────── */
-.btn-primary {
-  background: transparent;
-  border: 1px solid var(--border-glass);
-  color: var(--text-muted);
-  padding: 6px 14px;
-  border-radius: 7px;
-  font-weight: 600;
-  font-size: 0.72rem;
-  font-family: var(--font-mono);
-  letter-spacing: 0.06em;
-  cursor: pointer;
-  transition: all 0.2s;
-  white-space: nowrap;
-  text-transform: uppercase;
-}
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent-blue);
-  color: var(--accent-blue);
-}
-
-/* ── Sidebar item ────────────────────────────────────────── */
-.sidebar-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 11px;
-  border-radius: 7px;
-  color: var(--text-muted);
-  text-decoration: none;
-  transition: all 0.15s;
-  cursor: pointer;
-  width: 100%;
-  background: none;
-  border: 1px solid transparent;
-  text-align: left;
-  font-size: 0.75rem;
-  font-family: var(--font-mono);
-  letter-spacing: 0.02em;
-}
-.sidebar-item:hover {
-  background: var(--accent-soft);
-  color: var(--text-main);
-}
-.sidebar-item.active {
-  background: var(--accent-soft);
-  color: var(--accent-blue);
-  border-color: var(--accent-blue);
-}
-
-/* ── Stat chip (terminal style) ──────────────────────────── */
-.stat-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  padding: 3px 8px;
-  border-radius: 4px;
-  border: 1px solid;
-  text-transform: uppercase;
-}
-
-/* ── Live dot ────────────────────────────────────────────── */
-.live-dot {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent-emerald);
-  box-shadow: none;
-  animation: livepulse 2.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-@keyframes livepulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px #10b981; }
-  50% { opacity: 0.5; box-shadow: 0 0 2px #10b981; }
-}
+/* 却下された案の意匠だった .article-row / .gradient-text / .btn-primary（等幅・全大文字）/
+   .sidebar-item / .stat-chip / .live-dot は、公開UIから参照が0件だったので削除した
+   （残すと「次に触る誰か」が却下済みの語彙を再利用してしまう）。 */
 
 /* ── Scrollbar ───────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }

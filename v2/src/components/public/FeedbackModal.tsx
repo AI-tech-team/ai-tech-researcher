@@ -102,7 +102,7 @@ export function FeedbackModal({ open, onClose }: Props) {
                 </div>
                 <div className="flex items-center justify-end mt-5">
                   <button onClick={submit} disabled={sending || !message.trim()}
-                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity disabled:opacity-50">
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-[var(--text-main)] text-[var(--bg-color)] text-sm font-bold hover:opacity-80 transition-opacity disabled:opacity-50">
                     <Send size={15} className={sending ? 'animate-pulse' : ''} />
                     {sending ? '送信中…' : '送信する'}
                   </button>
@@ -116,7 +116,7 @@ export function FeedbackModal({ open, onClose }: Props) {
                 </p>
                 {CONTACT_EMAIL ? (
                   <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent('Cernoval フィードバック')}`}
-                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 text-white text-sm font-bold shadow-lg shadow-sky-500/20 hover:opacity-90 transition-opacity">
+                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full bg-[var(--text-main)] text-[var(--bg-color)] text-sm font-bold hover:opacity-80 transition-opacity">
                     <Send size={14} /> メールで送る
                   </a>
                 ) : (
