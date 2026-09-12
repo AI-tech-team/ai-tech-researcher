@@ -927,7 +927,22 @@ importanceは1〜10でAI技術的重要度を評価。tagsは3〜5個の短い�
 
 // 日次レポート生成＋全購読者へ同一ダイジェスト配信。生成本体は共通の buildDailyReport（サイト掲載と同一内容）。
 // 06:00 JST に PIPELINE_MODE=report で実行される。オーナー専用メールは廃止＝オーナーも emailOptIn で同じものを受け取る。
-async function runDailyReportAndDistribute(): Promise<void> {
+async function runDailyReportAndDistribute(force = false): Promise<void> {
+  // その日の号が既にあれば何もしない（冪等）。
+  // 起動経路が「外部スケジューラの workflow_dispatch」「scheduleのフォールバック」
+  // 「昼の収集ランの自己修復」と3つあり、重なると生成も配信も二重になる
+  // ＝Gemini課金が2回、購読者に同じメールが2通届く。ここで1日1回に閉じる。
+  // force は手動再生成（workflow_dispatch の report を意図的に叩き直す場合）用。
+  if (!force) {
+    const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+    const [existing] = await db.select({ id: schema.reports.id }).from(schema.reports)
+      .where(and(eq(schema.reports.type, 'daily'), eq(schema.reports.reportDate, todayJST))).limit(1);
+    if (existing) {
+      console.log(`[Report] ${todayJST} の号は既に生成済み(id=${existing.id})。二重生成・二重配信を避けてスキップ`);
+      return;
+    }
+  }
+
   // env ロード後に動的import（@/db クライアントが環境変数を参照するため）
   const { buildDailyReport } = await import('./src/lib/daily-report');
   const result = await buildDailyReport();
