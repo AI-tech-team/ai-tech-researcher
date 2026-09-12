@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { cache } from 'react';
-import { SITE_NAME, SITE_URL } from '@/lib/site';
+import { SITE_NAME, SITE_URL, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { getArticlesByTag } from '@/app/actions';
 import { ArticleListView } from '@/components/ArticleListView';
 import { Pagination } from '@/components/Pagination';
@@ -20,11 +20,20 @@ export async function generateMetadata(
   const decoded = decodeURIComponent(name);
   const page = pageNum(await searchParams);
   const articles = await getTag(decoded, (page - 1) * PAGE_SIZE);
-  if (articles.length === 0 || page > 1) return { title: page > 1 ? `#${decoded}（${page}ページ）` : `#${decoded}`, robots: { index: false, follow: true } };
+  const path = `/tag/${encodeURIComponent(decoded)}`;
+  // /category と同じ扱い。canonical は各ページ自身を指す（理由は category/[name]/page.tsx のコメント）。
+  if (articles.length === 0 || page > 1) {
+    return {
+      title: page > 1 ? `#${decoded}（${page}ページ）` : `#${decoded}`,
+      alternates: { canonical: page > 1 ? `${path}?page=${page}` : path, types: RSS_ALTERNATE_TYPES },
+      robots: { index: false, follow: true },
+    };
+  }
   const desc = `「${decoded}」タグのAI・技術ニュース。${SITE_NAME} が自動収集・日本語要約。`;
   return {
     title: `#${decoded} のニュース`,
     description: desc,
+    alternates: { canonical: path, types: RSS_ALTERNATE_TYPES },
     openGraph: { title: `#${decoded} のニュース`, description: desc, type: 'website', url: `/tag/${encodeURIComponent(decoded)}` },
     twitter: { card: 'summary_large_image', title: `#${decoded} のニュース`, description: desc },
   };

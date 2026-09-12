@@ -7,7 +7,7 @@ import { Providers } from "@/components/Providers";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import { BackToTop } from "@/components/BackToTop";
 import { JsonLd } from "@/components/JsonLd";
-import { SITE_URL, SITE_NAME, SITE_DESC, SITE_TAGLINE } from '@/lib/site';
+import { SITE_URL, SITE_NAME, SITE_DESC, SITE_TAGLINE, RSS_ALTERNATE_TYPES } from '@/lib/site';
 
 // サイト全体の構造化データ（WebSite＋Organization）。検索ボックス(SearchAction)は
 // URLベースの検索結果(?q=)が無いため今は付けない。
@@ -44,23 +44,40 @@ const SPLASH_SESSION_GATE_JS =
 // にじんで1つのかたまりに見える。ふにゃふにゃは、楕円ごとに周期の違う
 // scale/translate をかけて位相をずらすことで作る（形そのものは変形させない＝コンポジタで済む）。
 const SPLASH_BLOB_COLORS = { A: '#a5b4fc', B: '#38bdf8', C: '#fde68a' } as const;
+/** かたまりの濃さ（中心 / 46% / 縁）。2026-09-12「もうちょっとはっきりしてほしい」で 0.34/0.16 から上げた。
+ *  縁は 0 のまま＝**輪郭は立てない**（線も点も使わない、という決定は維持）。 */
+const SPLASH_BLOB_OPACITY = [0.62, 0.3] as const;
 /** 最後に残る1つだけは濃くする。重なりが無くなるぶん、同じ濃さだと消えかけに見える。 */
-const SPLASH_LAST_OPACITY = [0.6, 0.3] as const;
+const SPLASH_LAST_OPACITY = [0.92, 0.5] as const;
 
 /** x,y,rx,ry=配置と大きさ / g=夜明けのどの色か（左=藍→右=淡金） /
  *  wob=ゆらぎの周期(s) / ph=位相のずれ(s・負で途中から始める) / out=消え始める時刻(s)。
- *  外側から先に消えて中心が最後まで残る＝かたまりが絞り込まれていくように見せる。 */
+ *  外側から先に消えて中心が最後まで残る＝かたまりが絞り込まれていくように見せる。
+ *
+ *  ⚠ out は **3段** にまとめてある（0.10 → 0.22 → 0.34）。1つずつ 0.03s 刻みでずらすと、
+ *     短い尺では「連続的に薄くなった」だけに見えて**減ったことが読み取れない**（2026-09-12 コマ撮りで確認）。
+ *     9個 → 5個 → 3個 → 1個と段で落とすと、同じ0.44sでも「絞られていく」が読める。
+ *     角4つ → 上下2つ → 左右2つ、の順で外から内へ。段の中の並びは対称にすること。
+ *
+ *  ⚠ out は globals.css の `.splash` のフェード開始(0.46s)より前に終わること
+ *     （最後の 0.34s + 消える時間 0.10s = 0.44s < 0.46s）。2026-09-12 に全体を約0.55倍へ短縮した
+ *     （トップの LCP 612ms に対しスプラッシュが 1,716ms 覆っていたため）。 */
 const SPLASH_BLOBS = [
-  { x: 68, y: 56, rx: 44, ry: 38, g: 'A', wob: 2.3, ph: -0.4, out: 0.16 },
-  { x: 132, y: 54, rx: 42, ry: 36, g: 'C', wob: 1.9, ph: -1.2, out: 0.22 },
-  { x: 74, y: 90, rx: 40, ry: 34, g: 'A', wob: 2.6, ph: -0.9, out: 0.28 },
-  { x: 128, y: 92, rx: 44, ry: 38, g: 'C', wob: 2.1, ph: -1.6, out: 0.34 },
-  { x: 100, y: 44, rx: 40, ry: 32, g: 'B', wob: 1.7, ph: -0.2, out: 0.40 },
-  { x: 100, y: 100, rx: 42, ry: 34, g: 'B', wob: 2.4, ph: -1.9, out: 0.45 },
-  { x: 82, y: 70, rx: 46, ry: 40, g: 'B', wob: 2.0, ph: -0.7, out: 0.50 },
-  { x: 118, y: 70, rx: 46, ry: 40, g: 'B', wob: 2.2, ph: -1.4, out: 0.56 },
+  // ⚠ 置きどころを広げすぎない。x を ±44 まで離したら、濃くしたぶん**別々の円に見えた**
+  //    （screen で1つの光のかたまりに見えるのが前提・一度その状態から直している）。±32 に戻してある。
+  // 第1段: 四隅
+  { x: 68, y: 52, rx: 40, ry: 34, g: 'A', wob: 1.3, ph: -0.4, out: 0.10 },
+  { x: 132, y: 50, rx: 40, ry: 34, g: 'C', wob: 1.1, ph: -0.7, out: 0.10 },
+  { x: 70, y: 90, rx: 40, ry: 34, g: 'A', wob: 1.5, ph: -0.9, out: 0.10 },
+  { x: 130, y: 92, rx: 40, ry: 34, g: 'C', wob: 1.2, ph: -0.2, out: 0.10 },
+  // 第2段: 上下
+  { x: 100, y: 42, rx: 40, ry: 32, g: 'B', wob: 1.0, ph: -0.5, out: 0.22 },
+  { x: 100, y: 102, rx: 40, ry: 32, g: 'B', wob: 1.4, ph: -1.1, out: 0.22 },
+  // 第3段: 左右
+  { x: 80, y: 70, rx: 44, ry: 38, g: 'B', wob: 1.2, ph: -0.8, out: 0.34 },
+  { x: 120, y: 70, rx: 44, ry: 38, g: 'B', wob: 1.3, ph: -0.3, out: 0.34 },
   // 最後の1つ。スプラッシュ自体が消えるまで残る（out を届かない時刻に置く）。
-  { x: 100, y: 70, rx: 50, ry: 42, g: 'Last', wob: 2.8, ph: -1.0, out: 9 },
+  { x: 100, y: 70, rx: 50, ry: 42, g: 'Last', wob: 1.6, ph: -0.6, out: 9 },
 ] as const;
 
 export const metadata: Metadata = {
@@ -82,7 +99,7 @@ export const metadata: Metadata = {
   },
   alternates: {
     // RSSリーダ/ブラウザがレポートフィードを自動検出できるように <link rel="alternate"> を出す
-    types: { 'application/rss+xml': `${SITE_URL}/feed.xml` },
+    types: RSS_ALTERNATE_TYPES,
   },
   manifest: '/manifest.webmanifest',
   appleWebApp: {
@@ -116,16 +133,17 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
             ハイドレーション中(数秒)はアニメが凍って居座った。opacityのみのフェード（コンポジタ駆動）に変更。
             直後のインラインscriptで「同一セッション2回目以降は出さない」(sessionStorage)。 */}
         <div aria-hidden id="cv-splash" className="splash">
-          {/* ⚠ viewBox はゆらぎで膨らむぶん（最大1.18倍）を外に取る。きつく切ると
-              かたまりの縁が箱で切れて「輪郭が無い」という前提が崩れる。 */}
-          <svg width="380" height="266" viewBox="-8 -8 216 156" fill="none">
+          {/* ⚠ viewBox はゆらぎで膨らむぶん（最大1.24倍＋translate 5）を外に取る。きつく切ると
+              かたまりの縁が箱で切れて「輪郭が無い」という前提が崩れる。
+              振れ幅を上げた（2026-09-12「もうちょっとはっきり」）ので余白も広げてある。 */}
+          <svg width="440" height="336" viewBox="-10 -12 220 168" fill="none">
             <defs>
               {/* 中心から外へ透明になる＝縁が立たない。夜明けの3色ぶん用意して、
                   左（藍）→中（水色）→右（淡金）に置く＝かたまり全体が夜明けの色になる。 */}
               {(Object.keys(SPLASH_BLOB_COLORS) as (keyof typeof SPLASH_BLOB_COLORS)[]).map(k => (
                 <radialGradient key={k} id={`cvBlob${k}`}>
-                  <stop offset="0%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity="0.34" />
-                  <stop offset="46%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity="0.16" />
+                  <stop offset="0%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity={SPLASH_BLOB_OPACITY[0]} />
+                  <stop offset="46%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity={SPLASH_BLOB_OPACITY[1]} />
                   <stop offset="100%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity="0" />
                 </radialGradient>
               ))}
@@ -141,7 +159,7 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
                   fill={`url(#cvBlob${b.g})`}
                   style={{
                     // 1つ目=ゆらぎ（無限）、2つ目=消える（1回）。順番は CSS の animation-name と対応。
-                    animationDuration: `${b.wob}s, 0.24s`,
+                    animationDuration: `${b.wob}s, 0.10s`,
                     animationDelay: `${b.ph}s, ${b.out}s`,
                   }} />
               ))}

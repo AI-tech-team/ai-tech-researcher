@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { cache } from 'react';
-import { SITE_NAME, SITE_URL } from '@/lib/site';
+import { SITE_NAME, SITE_URL, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { getArticlesByCategory } from '@/app/actions';
 import { ArticleListView } from '@/components/ArticleListView';
 import { Pagination } from '@/components/Pagination';
@@ -20,12 +20,22 @@ export async function generateMetadata(
   const decoded = decodeURIComponent(name);
   const page = pageNum(await searchParams);
   const articles = await getCat(decoded, (page - 1) * PAGE_SIZE);
-  // 空 or 2ページ目以降は noindex（薄い/重複ページの量産を防ぐ）
-  if (articles.length === 0 || page > 1) return { title: page > 1 ? `${decoded}（${page}ページ）` : decoded, robots: { index: false, follow: true } };
+  const path = `/category/${encodeURIComponent(decoded)}`;
+  // 空 or 2ページ目以降は noindex（薄い/重複ページの量産を防ぐ）。
+  // canonical は各ページ自身を指す（2ページ目を1ページ目に寄せると、そこにしか無い記事が
+  // 「1ページ目の重複」と見なされて辿られなくなる）。noindex,follow との併用は定石どおり。
+  if (articles.length === 0 || page > 1) {
+    return {
+      title: page > 1 ? `${decoded}（${page}ページ）` : decoded,
+      alternates: { canonical: page > 1 ? `${path}?page=${page}` : path, types: RSS_ALTERNATE_TYPES },
+      robots: { index: false, follow: true },
+    };
+  }
   const desc = `「${decoded}」カテゴリのAI・技術ニュース。${SITE_NAME} が自動収集・日本語要約。`;
   return {
     title: `${decoded} のニュース`,
     description: desc,
+    alternates: { canonical: path, types: RSS_ALTERNATE_TYPES },
     openGraph: { title: `${decoded} のニュース`, description: desc, type: 'website', url: `/category/${encodeURIComponent(decoded)}` },
     twitter: { card: 'summary_large_image', title: `${decoded} のニュース`, description: desc },
   };

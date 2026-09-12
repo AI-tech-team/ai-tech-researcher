@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { SITE_NAME, CONTACT_EMAIL } from '@/lib/site';
+import { SITE_NAME, CONTACT_EMAIL, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
   title: 'プライバシーポリシー',
   description: `${SITE_NAME} が取得する情報と、その取り扱いについて。`,
+  alternates: { canonical: '/privacy', types: RSS_ALTERNATE_TYPES },
 };
 
 // セクション見出し

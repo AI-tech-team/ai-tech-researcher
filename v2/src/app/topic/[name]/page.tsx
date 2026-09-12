@@ -89,15 +89,22 @@ export async function generateMetadata({ params }: { params: Promise<{ name: str
   return {
     title: decoded,
     description: desc,
+    // 正規URL。エンティティ名は大小・記号のゆれで同じページに複数の綴りで到達しうるので、
+    // どれで来ても1本に寄せる（metadataBase が付いて絶対URLになる）。
+    alternates: { canonical: `/topic/${encodeURIComponent(decoded)}` },
     openGraph: { title: decoded, description: desc, type: 'article', url: `/topic/${encodeURIComponent(decoded)}` },
     twitter: { card: 'summary_large_image', title: decoded, description: desc },
   };
 }
 
-function Section({ icon, title, color, children }: { icon: React.ReactNode; title: string; color: string; children: React.ReactNode }) {
+// 見出しの色は **Tailwind のクラス** で渡す（＝テーマ変数 --color-* 経由で明暗に追従する）。
+// 以前は style={{ color: '#fcd34d' }} のようにパステルを直接当てていて、明テーマの白地で
+// 1.44〜1.99:1（基準4.5:1）＝ほぼ読めなかった（2026-09-12 実測）。
+// 現在: 明 5.2〜7.6:1 / 暗 8.9〜9.5:1。
+function Section({ icon, title, tone, children }: { icon: React.ReactNode; title: string; tone: string; children: React.ReactNode }) {
   return (
     <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5">
-      <p className="text-[11px] font-bold mb-3 flex items-center gap-1.5" style={{ color }}>{icon}{title}</p>
+      <p className={`text-[11px] font-bold mb-3 flex items-center gap-1.5 ${tone}`}>{icon}{title}</p>
       {children}
     </div>
   );
@@ -161,7 +168,7 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
         ) : (
           <div className="grid grid-cols-1 gap-3 mt-6">
             {visibleBenchmarks(page.benchmarks).length > 0 && (
-              <Section icon={<Trophy size={13} />} title="ベンチマーク" color="#fcd34d">
+              <Section icon={<Trophy size={13} />} title="ベンチマーク" tone="text-amber-400">
                 <div className="flex flex-col gap-1.5">
                   {visibleBenchmarks(page.benchmarks).map((b, i) => (
                     <div key={i} className="flex items-center gap-2 text-[13px]">
@@ -174,7 +181,7 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
               </Section>
             )}
             {relatedNames(page.relations, page.name).length > 0 && (
-              <Section icon={<Network size={13} />} title="関連トピック" color="#a5b4fc">
+              <Section icon={<Network size={13} />} title="関連トピック" tone="text-indigo-400">
                 <p className="text-[11px] text-slate-600 mb-2.5">同じ記事で一緒に扱われたトピックです。</p>
                 <div className="flex flex-wrap gap-1.5">
                   {relatedNames(page.relations, page.name).map((n) => (
@@ -187,7 +194,7 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
               </Section>
             )}
             {visibleClaims(page).length > 0 && (
-              <Section icon={<Sparkles size={13} />} title="判明している事実" color="#6ee7b7">
+              <Section icon={<Sparkles size={13} />} title="判明している事実" tone="text-emerald-400">
                 <div className="flex flex-col gap-1.5">
                   {visibleClaims(page).map((c, i) => (
                     <div key={i} className="text-[13px] text-slate-300"><span className="text-slate-500">{c.predicate}:</span> {c.value}</div>
@@ -196,7 +203,7 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
               </Section>
             )}
             {page.articles.length > 0 && (
-              <Section icon={<BookOpen size={13} />} title="関連レポート・記事" color="#7dd3fc">
+              <Section icon={<BookOpen size={13} />} title="関連レポート・記事" tone="text-sky-400">
                 <div className="flex flex-col gap-1">
                   {page.articles.map((a) => (
                     <Link key={a.id} href={`/articles/${a.id}`} scroll={false}

@@ -37,13 +37,15 @@ export function ShareButtons({ url, title }: { url: string; title: string }) {
         <Share2 size={12} />Share
       </span>
       <a href={hatena} target="_blank" rel="noopener noreferrer" className={base}>
-        <span className="font-bold text-[#00a4de]">B!</span> はてブ
+        {/* サービス色はテーマ変数で持つ。16進の直書きだと明テーマの白地で
+            はてブ 2.85:1 / LINE 2.26:1 になり、ボタンの文字が読めない（globals.css に値と理由）。 */}
+        <span className="font-bold text-[var(--brand-hatena)]">B!</span> はてブ
       </a>
       <a href={x} target="_blank" rel="noopener noreferrer" className={base}>
         <span className="font-bold">𝕏</span> ポスト
       </a>
       <a href={line} target="_blank" rel="noopener noreferrer" className={base}>
-        <span className="font-bold text-[#06C755]">LINE</span>
+        <span className="font-bold text-[var(--brand-line)]">LINE</span>
       </a>
       <button onClick={copy} className={base}>
         {copied ? <><Check size={13} className="text-emerald-400" /> コピー済み</> : <><Link2 size={13} /> リンク</>}

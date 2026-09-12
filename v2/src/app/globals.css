@@ -51,8 +51,14 @@
   --color-slate-950: #ffffff;
   --color-slate-900: #fafafb;
   --color-slate-800: #f2f2f5;
-  --color-slate-700: #c9c9d1;
-  --color-slate-600: #8c8c95;
+  /* ⚠ 旧値 #c9c9d1 は白地で **1.65:1** しかなく、奥付「読むべきものだけを、毎朝 · © 2026」が
+     ほぼ読めなかった（2026-09-12 実測）。text-slate-700 の実使用は文字色2箇所だけ
+     （奥付・changelogの区切り「·」）で、地や罫には使っていないので濃くして困る側が無い。 */
+  --color-slate-700: #70707a;
+  /* 600 も白地で 3.33:1 しかなかった（日付・件数・「Share」等の小さいラベル26箇所）。
+     ⚠ 白地で 4.5:1 を満たす濃さは限られるので、薄い側の 700/600/500 はほぼ同じ濃さに潰れる。
+        3段階に見せたいなら濃さではなく**大きさ・太さ**で差を付けること。 */
+  --color-slate-600: #6b6b75;
   --color-slate-500: #6e6e77;
   --color-slate-400: #5f5f66;
   --color-slate-300: #45454c;
@@ -84,6 +90,11 @@
   --cat-llm: #1f5f7a; --cat-agent: #3b4a86; --cat-tool: #1f6045;
   --cat-hw: #8a4a12; --cat-biz: #8d3763; --cat-paper: #5a3f8c; --cat-other: #5b616b;
 
+  /* 共有ボタンのサービス色。ブランド色の直書きだと白地で LINE 2.26:1 / はてブ 2.85:1 しかなく
+     読めない（2026-09-12 実測）。明側だけ暗く寄せる＝サービスの識別は残しつつ 4.5:1 を満たす。 */
+  --brand-line: #057033;
+  --brand-hatena: #00709f;
+
   --bg-color: #ffffff;
   --card-bg: #ffffff;
   --accent-blue: #4338ca;
@@ -106,7 +117,8 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --color-slate-950: #000000; --color-slate-900: #0b0b0e; --color-slate-800: #17171c;
-    --color-slate-700: #26262c; --color-slate-600: #7f7f88; --color-slate-500: #94949c;
+    /* ⚠ 明側と同じ理由で 700 は地に溶かさない（#26262c は黒地で 1.40:1 だった） */
+    --color-slate-700: #7a7a84; --color-slate-600: #7f7f88; --color-slate-500: #94949c;
     --color-slate-400: #a6a6ae; --color-slate-300: #c6c6cd; --color-slate-200: #dedee3;
     --color-slate-100: #eeeef1; --color-slate-50: #f5f5f7;
     --color-white: #ffffff;
@@ -126,6 +138,10 @@
 
     --cat-llm: #6fc3e8; --cat-agent: #93a7ff; --cat-tool: #62d3a4;
     --cat-hw: #f0a35f; --cat-biz: #ef8fbd; --cat-paper: #b79dfa; --cat-other: #8b919b;
+
+    /* 黒地ではブランド色のままで読める（LINE 9.0:1 / はてブ 7.2:1） */
+    --brand-line: #06c755;
+    --brand-hatena: #00a4de;
 
     --bg-color: #000000;
     --card-bg: #0b0b0e;
@@ -149,7 +165,8 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --color-slate-950: #000000; --color-slate-900: #0b0b0e; --color-slate-800: #17171c;
-  --color-slate-700: #26262c; --color-slate-600: #7f7f88; --color-slate-500: #94949c;
+  /* ⚠ 明側と同じ理由で 700 は地に溶かさない（#26262c は黒地で 1.40:1 だった） */
+  --color-slate-700: #7a7a84; --color-slate-600: #7f7f88; --color-slate-500: #94949c;
   --color-slate-400: #a6a6ae; --color-slate-300: #c6c6cd; --color-slate-200: #dedee3;
   --color-slate-100: #eeeef1; --color-slate-50: #f5f5f7;
   --color-white: #ffffff;
@@ -169,6 +186,10 @@
 
   --cat-llm: #6fc3e8; --cat-agent: #93a7ff; --cat-tool: #62d3a4;
   --cat-hw: #f0a35f; --cat-biz: #ef8fbd; --cat-paper: #b79dfa; --cat-other: #8b919b;
+
+  /* 黒地ではブランド色のままで読める（LINE 9.0:1 / はてブ 7.2:1） */
+  --brand-line: #06c755;
+  --brand-hatena: #00a4de;
 
   --bg-color: #000000;
   --card-bg: #0b0b0e;
@@ -247,7 +268,7 @@ button, a, [role="button"], summary {
    （サイトを開いて最初に見えるのが旧製品のロゴ、という状態だった。2026-09-11 差し替え）。
 
    消える処理はopacityのみのCSSアニメ（コンポジタ駆動）。visibilityやJSタイマーは使わない:
-   ハイドレーションでメインスレッドが塞がっても確実に0.78〜1.13sでフェードアウトする。
+   ハイドレーションでメインスレッドが塞がっても確実に0.40〜0.64sでフェードアウトする。
    pointer-events:none 常時＝操作は一切ブロックしない（純装飾）。 */
 .splash {
   position: fixed; inset: 0; z-index: 9999;
@@ -255,18 +276,23 @@ button, a, [role="button"], summary {
   /* 地は純黒。表側（朝刊・紹介ページ）の地と同じで、スプラッシュから紙面へ継ぎ目なく渡る。 */
   background: #000;
   pointer-events: none;
-  animation: splashAutoOut 0.34s ease 0.86s forwards;
+  animation: splashAutoOut 0.18s ease 0.46s forwards;
 }
-/* かたまりが出る（0〜0.14s）→ 外側から順に減っていく（0.16〜0.80s）→ 0.86sから消え始める。
-   ⚠ 最後に消える楕円（8個目・0.56s+0.24s=0.80s）がフェード開始より後ろだと、
-      「減りきる」前に画面ごと消えて意図が伝わらない。0.80s < 0.86s の不等式を保つこと。
+/* かたまりが出る（0〜0.08s）→ 3段で減っていく（0.10 / 0.22 / 0.34s）→ 0.46sから消え始める。
+   ⚠ 最後に消える段（0.34s+0.10s=0.44s）がフェード開始より後ろだと、
+      「減りきる」前に画面ごと消えて意図が伝わらない。0.44s < 0.46s の不等式を保つこと。
+
+   ⚠ 尺は「紙面が用意できる時刻」に合わせる。本番実測でトップの LCP 中央値は 612ms なのに、
+      スプラッシュは 1,716ms 画面を覆っていた＝出来ている紙面を1.1秒隠していた（2026-09-12）。
+      意匠（輪郭のない楕円が減っていく）はそのままに、全体を約0.55倍に縮めてある。
+      これ以上は縮めない：0.4s を切ると「減っていく」過程が知覚できず、ただの点滅になる。
 
    ⚠ 動かすのは transform と opacity だけにする。形そのものを変形させる（SVGフィルタや
       path のモーフィング）のはメインスレッド処理で、ハイドレーション中(数秒)は必ず固まる。
       ふにゃふにゃは「縁の無い楕円を、周期をずらして scale/translate する」ことで作る。 */
 .splash svg { width: min(560px, 86vw); height: auto; }
 /* isolate しておかないと screen が下の黒い地を越えて効く範囲が環境で変わる。 */
-.splash__blobs { isolation: isolate; animation: splashFadeIn 0.14s ease both; }
+.splash__blobs { isolation: isolate; animation: splashFadeIn 0.08s ease both; }
 .splash__blobs ellipse {
   transform-box: fill-box; transform-origin: center;
   /* 重なりを「明るさの足し算」にする。通常合成だと手前の楕円の縁が奥の中心を
@@ -279,11 +305,15 @@ button, a, [role="button"], summary {
   animation-fill-mode: none, forwards;
 }
 @keyframes splashFadeIn { from { opacity: 0; } to { opacity: 1; } }
+/* ふにゃふにゃ。2026-09-12「もうちょっとはっきりしてほしい」で振れ幅を上げた
+   （scale 0.92〜1.16 → 0.86〜1.24 / translate ±3px → ±5px）。周期(wob)も短くしてある:
+   尺が0.64sしかないので、2秒級の周期だと1/4周期しか再生されず「動いていない」ように見えた。
+   ⚠ 動かすのは transform だけ（＝コンポジタ）。膨らむぶんは svg の viewBox 側で逃がすこと。 */
 @keyframes splashWobble {
   0%   { transform: scale(1, 1) translate(0, 0); }
-  25%  { transform: scale(1.16, 0.88) translate(3px, -2px); }
-  50%  { transform: scale(0.92, 1.14) translate(-2px, 3px); }
-  75%  { transform: scale(1.08, 0.96) translate(-3px, -3px); }
+  25%  { transform: scale(1.24, 0.82) translate(5px, -4px); }
+  50%  { transform: scale(0.86, 1.22) translate(-4px, 5px); }
+  75%  { transform: scale(1.14, 0.92) translate(-5px, -5px); }
   100% { transform: scale(1, 1) translate(0, 0); }
 }
 @keyframes splashThinOut { to { opacity: 0; } }
@@ -292,5 +322,5 @@ button, a, [role="button"], summary {
   /* ゆらぎだけ止める。時間はinline styleが2本ぶんのリストで入っているので、
      name も2本ぶんで書かないと対応がずれる（1本目に2.3sが当たってしまう）。 */
   .splash__blobs ellipse { animation-name: none, splashThinOut; }
-  .splash { animation-delay: 0.4s; }
+  .splash { animation-delay: 0.22s; }
 }

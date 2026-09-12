@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { SITE_NAME, CONTACT_EMAIL } from '@/lib/site';
+import { SITE_NAME, CONTACT_EMAIL, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
   title: '利用規約',
   description: `${SITE_NAME} のご利用にあたっての条件。`,
+  alternates: { canonical: '/terms', types: RSS_ALTERNATE_TYPES },
 };
 
 // セクション見出し

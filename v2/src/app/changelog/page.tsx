@@ -1,13 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { SITE_NAME } from '@/lib/site';
+import { SITE_NAME, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { CHANGELOG, LAUNCH_DATE, RELEASE_STAGE, type ChangeCategory } from '@/lib/changelog';
 import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
   title: '更新履歴',
   description: `${SITE_NAME} のこれまでの歩みと、主なアップデートの記録。`,
+  alternates: { canonical: '/changelog', types: RSS_ALTERNATE_TYPES },
 };
 
 // カテゴリごとのバッジ配色（落ち着いた配色で本文を邪魔しない）

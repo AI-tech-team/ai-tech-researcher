@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { getPublicCoreData } from '../actions';
 import { PublicApp, type PublicInitial } from '@/components/public/PublicApp';
 
@@ -8,6 +9,12 @@ import { PublicApp, type PublicInitial } from '@/components/public/PublicApp';
 export const metadata: Metadata = {
   title: '記事を探す',
   description: '朝刊に載らなかったものも含めて、集めたAI技術の記事を新しい順に見られます。',
+  // ⚠ canonical は「クエリを落とした /articles」に固定する。
+  // このページは searchParams を読まない（下の理由で読めない）ので、`?page=2` も `?page=999` も
+  // **同じHTML**を200で返す＝無限のURLで同一内容を配る重複コンテンツの生成器になっていた
+  // （2026-09-12 監査: robots メタも canonical も無し）。中身が本当に同一なのだから、
+  // noindex ではなく canonical で1本に寄せるのが正しい扱い。続きは下の「もっと読む」で辿る。
+  alternates: { canonical: '/articles', types: RSS_ALTERNATE_TYPES },
 };
 
 // 公開ページはISR（5分）。ここが動的レンダリングに落ちないことが最重要。

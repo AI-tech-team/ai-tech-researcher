@@ -7,6 +7,7 @@ import { safeHttpUrl } from '@/lib/safeUrl';
 import { ShareButtons } from '@/components/ShareButtons';
 import { AiBadge } from '@/components/AiBadge';
 import { noSummaryReason } from '@/lib/no-summary';
+import { formatDateJst } from '@/lib/format-date';
 import { SITE_URL } from '@/lib/site';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
 import { ObservedFacts } from '@/components/public/ObservedFacts';
@@ -61,7 +62,10 @@ export function ArticleDetailContent({
         )}
         <div className={s.artMeta}>
           {article.sourceValue && <span>{article.sourceValue}</span>}
-          {article.publishedAt && <span>{new Date(article.publishedAt).toLocaleDateString('ja-JP')}</span>}
+          {/* 日付は必ず JST 固定で整形する（src/lib/format-date.ts）。
+              timeZone 無しだとサーバー(UTC)が「9/11」・読者(JST)が「9/12」を描き、
+              ハイドレーションが毎回壊れていた（2026-09-12 実測: 8本中6本で React error #418）。 */}
+          {article.publishedAt && <span>{formatDateJst(article.publishedAt)}</span>}
         </div>
       </header>
 

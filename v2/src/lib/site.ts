@@ -24,6 +24,13 @@ export const CRAWL_CONTACT_URL =
 /** プロトコルを除いた表示用ホスト（OG画像のフッター等で使う）。 */
 export const SITE_HOST = SITE_URL.replace(/^https?:\/\//, '');
 
+/** RSSリーダ/ブラウザ向けの自動検出リンク（<link rel="alternate" type="application/rss+xml">）。
+ *  ⚠ Next.js のメタデータは**セグメント間で浅くマージ**される。ページ側で `alternates` を書くと
+ *  （canonical を足すときなど）layout.tsx の `alternates` ごと丸ごと置き換わり、この行が消える。
+ *  実測: canonical を足しただけで /articles・/about 等からRSSリンクが消えた（2026-09-12）。
+ *  `alternates` を書くページは必ず `types: RSS_ALTERNATE_TYPES` を一緒に並べること。 */
+export const RSS_ALTERNATE_TYPES = { 'application/rss+xml': `${SITE_URL}/feed.xml` };
+
 /** フィードバック送信先（Googleフォームの formResponse URL）。
  *  例: https://docs.google.com/forms/d/e/XXXX/formResponse
  *  設定すると、サイト内のフィードバック欄からの送信が直接このフォームに記録される。 */

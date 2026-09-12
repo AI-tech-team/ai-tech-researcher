@@ -4,7 +4,7 @@ import { getLandingDigest } from '@/app/actions';
 import { parseHighlights } from '@/lib/digest-highlights';
 import { digestReadingSeconds } from '@/lib/digest';
 import { formatReadingTime } from '@/lib/reading-time';
-import { SITE_NAME } from '@/lib/site';
+import { SITE_NAME, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
 import { SelectionDots } from './SelectionDots';
 import s from '@/styles/brand.module.css';
@@ -26,6 +26,7 @@ export const revalidate = 600;
 export const metadata: Metadata = {
   title: 'このサービスについて',
   description: `${SITE_NAME} は、1日およそ100〜300本流れてくるAI技術のニュースから、特に知っておいてほしいものだけを選んで日本語でまとめる朝刊です。毎朝6時、3分で読み終わる長さで出します。`,
+  alternates: { canonical: '/about', types: RSS_ALTERNATE_TYPES },
 };
 
 export default async function AboutPage() {

@@ -1,4 +1,6 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
+import { RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { getLandingDigest, getRecentDigests } from './actions';
 import { parseDigest, digestReadingSeconds } from '@/lib/digest';
 import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
@@ -18,6 +20,13 @@ import s from '@/styles/brand.module.css';
 //   関数のコールドスタートを踏む＝本番実測で2.66〜3.83秒）。
 //   ログインの有無で出し分けているのは <MailCta> だけで、あれはクライアント側で判定する。
 export const revalidate = 300;
+
+// タイトル・説明・OGは layout.tsx の既定をそのまま使う。ここで足すのは canonical だけ
+// （2026-09-12 監査: canonical があるのは /topic だけで、トップを含む18ページに無かった）。
+// `types` を並べる理由は RSS_ALTERNATE_TYPES のコメント（alternates は浅くマージされる）。
+export const metadata: Metadata = {
+  alternates: { canonical: '/', types: RSS_ALTERNATE_TYPES },
+};
 
 export default async function Page() {
   // 一過性のDB失敗を「朝刊が無い日」としてISRに5分焼き付けないため、1回だけ引き直す。

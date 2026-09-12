@@ -384,10 +384,13 @@ export type ArticleDetail = CollectedItem & {
   keyPoints?: string[] | null;
   whyMatters?: string | null;
 };
-export async function getArticleById(id: number): Promise<ArticleDetail | null> {
+// anonymous=true はユーザー状態の解決を丸ごと省く（=cookiesを読まない）。
+// /articles/[id] のSSR静的化に必要で、getCollectedDataList と同じ理由・同じ扱い
+// （クライアントから true を渡されても「自分の状態が見えなくなる」だけの権限降格なので安全）。
+export async function getArticleById(id: number, anonymous = false): Promise<ArticleDetail | null> {
   try {
     if (!Number.isFinite(id)) return null;
-    const userId = await currentUserId();
+    const userId = anonymous ? undefined : await currentUserId();
     const rows = await db.select({
       ...COLLECTED_SELECT,
       keyPoints: collectedData.keyPoints,
@@ -409,6 +412,28 @@ export async function getArticleById(id: number): Promise<ArticleDetail | null> 
     return items[0] ?? null;
   } catch (error) {
     await logError('getArticleById', error, { alert: true });
+    return null;
+  }
+}
+
+// 記事1件に対する「自分の」状態だけを引く軽量版。
+// /articles/[id] はISR（CDN配信）のためSSRを匿名化した＝HTMLには常に未設定の状態が焼かれる。
+// ログイン中の読者にだけ、描画後にここで実状態へ補正する（未ログインなら呼ばれない）。
+// これが無いと、お気に入り済みの記事で★が消灯したまま出て、押すと**解除**してしまう。
+export async function getMyArticleFlags(id: number): Promise<{ fav: boolean; rl: boolean; read: boolean } | null> {
+  try {
+    if (!Number.isFinite(id)) return null;
+    const userId = await currentUserId();
+    if (!userId) return null;
+    const [s] = await db.select({
+      isFavorited: userArticleState.isFavorited,
+      isReadLater: userArticleState.isReadLater,
+      isRead: userArticleState.isRead,
+    }).from(userArticleState)
+      .where(and(eq(userArticleState.userId, userId), eq(userArticleState.articleId, id))).limit(1);
+    return { fav: (s?.isFavorited ?? 0) === 1, rl: (s?.isReadLater ?? 0) === 1, read: (s?.isRead ?? 0) === 1 };
+  } catch (error) {
+    await logError('getMyArticleFlags', error);
     return null;
   }
 }

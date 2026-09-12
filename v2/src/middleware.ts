@@ -21,6 +21,11 @@ import { createClient } from '@libsql/client/web';
 const ID_PATH_RE = /^\/(articles|reports)\/([^/]+)$/;
 const TOPIC_PATH_RE = /^\/topic\/([^/]+)$/;
 
+// `/topic/xxx` の xxx がトピック名とは限らない。Next のメタデータルート（OG画像など）は
+// 一覧ページの直下に同じ形で生える。存在確認に掛けると entities に無い名前として 404 になり、
+// SNSカードの画像が丸ごと消える（2026-09-12 実測: /topic/opengraph-image が 404）。
+const METADATA_ROUTES = new Set(['opengraph-image', 'twitter-image', 'icon', 'apple-icon']);
+
 // 存在が確認できたキーのメモリキャッシュ。インスタンスが再利用される限りDBを再度叩かない。
 const KNOWN = { articles: new Set<string>(), reports: new Set<string>(), topic: new Set<string>() };
 const KNOWN_MAX = 2000; // 際限なく太らせない
@@ -124,6 +129,7 @@ export async function middleware(req: NextRequest) {
   // ── ①' トピックの存在確認（/topic/{未知の名前} も 200 を返していた）──
   const tm = TOPIC_PATH_RE.exec(path);
   if (tm) {
+    if (METADATA_ROUTES.has(tm[1])) return NextResponse.next();
     let name: string;
     try { name = decodeURIComponent(tm[1]); } catch { return toNotFound(req); }
     name = name.trim().toLowerCase();

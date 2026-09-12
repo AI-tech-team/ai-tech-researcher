@@ -9,6 +9,13 @@ import { SITE_NAME, SITE_TAGLINE, SITE_HOST } from './site';
 
 export const OG_SIZE = { width: 1200, height: 630 };
 
+/** OG画像用のカテゴリ色。`lib/category-colors.ts` は CSS変数を返すので画像には使えない（literalが要る）。
+ *  記事・カテゴリの2つの opengraph-image から参照する（片方だけ色が古くなるのを防ぐ）。 */
+export const OG_CATEGORY_COLORS: Record<string, string> = {
+  'LLM推論': '#38bdf8', 'エージェント': '#818cf8', 'ツール/フレームワーク': '#34d399',
+  'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#7dd3fc',
+};
+
 // 表示する日本語コピー（フォントサブセットの対象もこれで決まる）
 const JP_HEADLINE = 'AIの最新を、毎朝日本語で。';
 const JP_SUB = '自動で収集・要約し、知識として蓄積していく。';

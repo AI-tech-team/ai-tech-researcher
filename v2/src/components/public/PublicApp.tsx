@@ -18,6 +18,7 @@ import s from '@/styles/brand.module.css';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
 import type { CollectedItem, KnowledgeStats } from '@/types';
 import { noSummaryReason } from '@/lib/no-summary';
+import { formatMonthDayJst } from '@/lib/format-date';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION, SITE_TAGLINE } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
@@ -59,7 +60,9 @@ function timeAgo(dateStr: string | null): string {
   if (h < 1) return 'たった今';
   if (h < 24) return `${h}時間前`;
   if (d < 7) return `${d}日前`;
-  return new Date(dateStr).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' });
+  // 7日以上前は日付で出す。整形は必ず JST 固定（src/lib/format-date.ts）。
+  // timeZone 無しだとサーバー(UTC)と読者(JST)で1日ずれ、その行だけハイドレーションが壊れる。
+  return formatMonthDayJst(dateStr);
 }
 
 // 記事一覧の1件。以前は「今日の一押し(lead)」「見どころ(featured)」で大きさを変えていたが、

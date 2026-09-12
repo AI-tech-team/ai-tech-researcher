@@ -1,4 +1,5 @@
 import type { CollectedItem } from '@/types';
+import { formatDateTimeJst } from '@/lib/format-date';
 
 /**
  * 決定④: 記事に添えるのは「数えただけの事実」だけにする。★や重要度スコアは読者に見せない。
@@ -19,14 +20,10 @@ import type { CollectedItem } from '@/types';
  * 経緯: 同じ表示を3ファイル（記事詳細・一覧・検索）にコピーすると必ず1つ取り残すので、ここに集約する。
  */
 
-/** 公開時刻を JST の「9/10 00:19」に。タイムゾーンを明示するのでSSRとクライアントで一致する。 */
+/** 公開時刻を JST の「9/10 00:19」に。整形は src/lib/format-date.ts に集約してある
+ *  （タイムゾーンを明示するのでSSRとクライアントで一致する＝ハイドレーションが壊れない）。 */
 function jstShort(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const t = new Date(iso);
-  if (!Number.isFinite(t.getTime())) return null;
-  return t.toLocaleString('ja-JP', {
-    timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
+  return formatDateTimeJst(iso) || null;
 }
 
 /** この記事について「数えれば出る」事実だけを短い文字列にする。無ければ空配列。 */

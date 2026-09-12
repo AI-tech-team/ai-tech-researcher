@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { SITE_NAME, SITE_URL } from '@/lib/site';
+import { SITE_NAME, SITE_URL, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { getReportById, getAdjacentReports } from '@/app/actions';
 import { parseDigest, digestReadingSeconds } from '@/lib/digest';
 import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
@@ -24,6 +24,8 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const description = `${SITE_NAME} の${label}（${report.reportDate}）。`;
   return {
     title, description,
+    // 追跡クエリ付きで共有されたURLを1本に寄せる（2026-09-12 監査で canonical が18/19ページ欠落）
+    alternates: { canonical: `/reports/${report.id}`, types: RSS_ALTERNATE_TYPES },
     openGraph: { title, description, type: 'article', url: `/reports/${id}` },
     twitter: { card: 'summary_large_image', title, description },
   };
@@ -49,7 +51,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const seconds = digestReadingSeconds(content);
   const adj = await getAdjacentReports(report.type, report.reportDate);
 
-  // レポートは自前生成のIP → Article として構造化（記事ページは第三者著作なので付けない）。
+  // レポートは自前生成のIP → Article として構造化。
+  // 記事ページ(/articles/[id])にも 2026-09-12 に Article を足した。あちらが構造化しているのは
+  // 元記事ではなく**解説ページ側**（見出し・AI要約・要点は自前の著作）で、第三者著作の元記事は
+  // `isBasedOn` で参照するだけに留めてある。
   const articleJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'Article',
