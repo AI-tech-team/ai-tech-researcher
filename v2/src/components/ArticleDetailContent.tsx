@@ -10,9 +10,13 @@ import { noSummaryReason } from '@/lib/no-summary';
 import { SITE_URL } from '@/lib/site';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
 import { ObservedFacts } from '@/components/public/ObservedFacts';
+import s from '@/styles/brand.module.css';
 
 // 記事本文の表示部。モーダル(ArticleDetailModal)と全画面ページ(/articles/[id])の両方で共用する。
 // 状態(fav/rl/read)とトグル操作は親が供給する（モーダルは楽観patch、ページはServer Action）。
+//
+// 2026-09-12: 箱（角丸カード＋枠線のボタン）をやめ、朝刊・記事一覧と同じ「罫で仕切る組み」に揃えた。
+// 記事だけ別のデザイン言語だと、同じサイトの中で読み口が切り替わってしまう。
 
 interface Props {
   article: ArticleDetail;
@@ -31,123 +35,105 @@ export function ArticleDetailContent({
 }: Props) {
   const color = CATEGORY_COLORS[article.category ?? ''] ?? 'var(--cat-other)';
   const safeUrl = safeHttpUrl(article.url); // javascript:/data:等を弾いてから href に使う
+  const reason = article.summary ? null : noSummaryReason(article);
 
   return (
-    <div className="p-5 sm:p-6 space-y-4">
-      {/* メタ */}
-      <div className="flex items-center gap-2 flex-wrap pr-8">
-        {article.category
-          ? <Link href={`/category/${encodeURIComponent(article.category)}`} scroll={false}
-              className="font-mono text-[10px] font-bold tracking-widest uppercase hover:underline underline-offset-2" style={{ color }}>{article.category}</Link>
-          : <span className="font-mono text-[10px] font-bold tracking-widest uppercase" style={{ color }}>OTHER</span>}
-        {/* 決定④: 重要度★は出さない。数えただけの事実だけを添える（src/components/public/ObservedFacts.tsx） */}
-        <ObservedFacts item={article} className="font-mono text-[10px] text-slate-400" />
-        {(article.storyCount ?? 1) > 1 && (article.storyOutlets?.length ?? 0) > 0 && (
-          <span className="flex items-center gap-0.5 font-mono text-[10px] text-cyan-300 border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-px rounded">
-            <Newspaper size={10} />{article.storyOutlets!.slice(0, 3).join('・')}が報じた
-          </span>
-        )}
-        {read && (
-          <span className="flex items-center gap-0.5 font-mono text-[10px] text-emerald-500 border border-emerald-900/60 bg-emerald-950/50 px-1.5 py-px rounded">
-            <CheckCircle2 size={10} />READ
-          </span>
-        )}
-      </div>
-
-      {/* タイトル */}
-      <div>
-        <h1 className="text-lg sm:text-xl font-bold text-white leading-snug">{article.titleJa || article.title || '無題'}</h1>
-        {article.titleJa && article.title && article.titleJa !== article.title && (
-          <p className="text-xs text-slate-500 mt-1">{article.title}</p>
-        )}
-        <div className="flex items-center gap-2 mt-1.5 font-mono text-[10px] text-slate-600">
-          {article.sourceValue && <span style={{ color: `color-mix(in srgb, ${color} 56%, transparent)` }}>{article.sourceValue}</span>}
-          {article.publishedAt && <><span>·</span><span>{new Date(article.publishedAt).toLocaleDateString('ja-JP')}</span></>}
+    <article className={s.artShell}>
+      <header className={s.artHead}>
+        <div className={s.artTop}>
+          {article.category
+            ? <Link href={`/category/${encodeURIComponent(article.category)}`} scroll={false}
+                className={s.artCat} style={{ color }}>{article.category}</Link>
+            : <span className={s.artCat} style={{ color }}>OTHER</span>}
+          {/* 決定④: 重要度★は出さない。数えただけの事実だけを添える（src/components/public/ObservedFacts.tsx） */}
+          <ObservedFacts item={article} className={s.artFacts} />
+          {(article.storyCount ?? 1) > 1 && (article.storyOutlets?.length ?? 0) > 0 && (
+            <span className={s.artFlag}>
+              <Newspaper size={11} />{article.storyOutlets!.slice(0, 3).join('・')}が報じた
+            </span>
+          )}
+          {read && <span className={s.artFacts}>既読</span>}
         </div>
-      </div>
 
-      {/* アクション */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={onToggleFav}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${fav ? 'border-amber-500/30 bg-amber-500/10 text-amber-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'}`}>
-          <Star size={13} className={fav ? 'fill-amber-400' : ''} /> お気に入り
+        <h1 className={s.artTitle}>{article.titleJa || article.title || '無題'}</h1>
+        {article.titleJa && article.title && article.titleJa !== article.title && (
+          <p className={s.artTitleOrig}>{article.title}</p>
+        )}
+        <div className={s.artMeta}>
+          {article.sourceValue && <span>{article.sourceValue}</span>}
+          {article.publishedAt && <span>{new Date(article.publishedAt).toLocaleDateString('ja-JP')}</span>}
+        </div>
+      </header>
+
+      {/* 操作 */}
+      <div className={s.artActions}>
+        <button onClick={onToggleFav} className={`${s.artBtn} ${fav ? s.artBtnOn : ''}`}>
+          <Star size={14} className={fav ? 'fill-current' : ''} /> お気に入り
         </button>
-        <button onClick={onToggleRl}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${rl ? 'border-sky-500/30 bg-sky-500/10 text-sky-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'}`}>
-          <Bookmark size={13} className={rl ? 'fill-sky-400' : ''} /> 後で読む
+        <button onClick={onToggleRl} className={`${s.artBtn} ${rl ? s.artBtnOn : ''}`}>
+          <Bookmark size={14} className={rl ? 'fill-current' : ''} /> 後で読む
         </button>
-        <button onClick={onToggleRead}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${read ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10'}`}>
-          <CheckCircle2 size={13} /> {read ? '既読' : '既読にする'}
+        <button onClick={onToggleRead} className={`${s.artBtn} ${read ? s.artBtnOn : ''}`}>
+          <CheckCircle2 size={14} /> {read ? '既読' : '既読にする'}
         </button>
+        {onShowInList && (
+          <button onClick={onShowInList} className={s.artBtn}>
+            <ListTree size={14} /> 一覧で表示
+          </button>
+        )}
         {safeUrl && (
           <a href={safeUrl} target="_blank" rel="noopener noreferrer"
             onClick={() => { if (!read) onToggleRead(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 text-xs font-bold transition-colors">
-            <ExternalLink size={13} /> 元記事
+            className={`${s.artBtn} ${s.artLink}`}>
+            <ExternalLink size={14} /> 元記事を読む
           </a>
-        )}
-        {onShowInList && (
-          <button onClick={onShowInList}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 text-xs font-bold transition-colors">
-            <ListTree size={13} /> 一覧で表示
-          </button>
         )}
       </div>
 
       {/* サマリー（AIによる要約）。無い場合は空欄にせず理由を書く（src/lib/no-summary.ts）。
           クリックして開いたのに何も無い状態は、読者には不具合にしか見えない。 */}
       {article.summary ? (
-        <div className="border-l-2 border-sky-500/30 pl-3">
-          <div className="mb-1"><AiBadge label="AI要約" /></div>
-          <p className="text-sm text-slate-300 leading-relaxed">{article.summary}</p>
-        </div>
-      ) : (() => {
-        const r = noSummaryReason(article);
-        if (!r) return null;
-        return (
-          <div className="border-l-2 border-white/10 pl-3">
-            <p className="text-sm text-slate-400 leading-relaxed">{r.text}</p>
-          </div>
-        );
-      })()}
+        <section className={s.artSection}>
+          <div className={s.artBadge}><AiBadge label="AI要約" /></div>
+          <p className={s.artBody}>{article.summary}</p>
+        </section>
+      ) : reason ? (
+        <section className={s.artSection}>
+          <p className={s.artNote}>{reason.text}</p>
+        </section>
+      ) : null}
 
       {/* 要点（AIが書き起こした3〜5行）＋なぜ重要か。
           元記事本文は著作権上そのまま出せない(第三条)ため、本文の転載ではなく要約として提示する。 */}
       {article.keyPoints && article.keyPoints.length > 0 && (
-        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-          <div className="mb-2.5"><AiBadge label="AI要点" /></div>
-          <ul className="space-y-2">
-            {article.keyPoints.map((p, i) => (
-              <li key={i} className="flex gap-2 text-sm text-slate-300 leading-relaxed">
-                <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400/70" />
-                <span>{p}</span>
-              </li>
-            ))}
+        <section className={s.artSection}>
+          <div className={s.artBadge}><AiBadge label="AI要点" /></div>
+          <ul className={s.artPoints}>
+            {article.keyPoints.map((p, i) => <li key={i}>{p}</li>)}
           </ul>
           {article.whyMatters && (
-            <div className="mt-3 pt-3 border-t border-white/5">
-              <p className="font-mono text-[10px] text-slate-500 uppercase tracking-widest mb-1">なぜ重要か</p>
-              <p className="text-sm text-slate-300 leading-relaxed">{article.whyMatters}</p>
+            <div className={s.artWhy}>
+              <p className={s.artLabel}>なぜ重要か</p>
+              <p className={s.artBody}>{article.whyMatters}</p>
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {/* 抽出本文(rawContent)は著作権上、公開UIでは一切表示しない(第三条・オーナーにも出さない)。
           本文は内部の情報解析専用。ユーザー向けは要約＋AI要点＋元記事リンクに限定する。 */}
 
-      {/* タグ */}
       {article.tags && article.tags.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap font-mono text-[10px] text-slate-600 pt-1">
+        <div className={s.artTags}>
           {article.tags.slice(0, 6).map(t => (
-            <Link key={t} href={`/tag/${encodeURIComponent(t)}`} scroll={false} className="hover:text-slate-300 transition-colors">#{t}</Link>
+            <Link key={t} href={`/tag/${encodeURIComponent(t)}`} scroll={false}>#{t}</Link>
           ))}
         </div>
       )}
 
-      {/* 共有 */}
-      <ShareButtons url={`${SITE_URL}/articles/${article.id}`} title={article.titleJa || article.title || '無題'} />
-    </div>
+      <div className={s.artFoot}>
+        <ShareButtons url={`${SITE_URL}/articles/${article.id}`} title={article.titleJa || article.title || '無題'} />
+      </div>
+    </article>
   );
 }

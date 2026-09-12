@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
+import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
+import s from '@/styles/brand.module.css';
 import { getArticleById } from '@/app/actions';
 import { ArticleView } from '@/components/ArticleView';
 
@@ -27,28 +29,19 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
   if (!article) notFound();
 
   return (
+    // 版面は読者のテーマに従う（黒地固定の `s.page` は朝刊のヒーロー用）。
+    // 記事は読み物なので、/articles と同じ地の色に乗せる。
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
-
-      <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8">
-        <article className="rounded-2xl border border-white/10 bg-[var(--card-bg)]">
-          <ArticleView article={article} />
-        </article>
-        <div className="mt-6">
-          <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> 一覧に戻る
+      <BrandNav />
+      <main id="main-content" style={{ paddingTop: 8 }}>
+        <ArticleView article={article} />
+        <div className={`${s.artShell} ${s.artBack}`}>
+          <Link href="/articles" className={s.artBtn} style={{ padding: 0 }}>
+            <ArrowLeft size={13} /> 記事一覧に戻る
           </Link>
         </div>
       </main>
+      <BrandFooter />
     </div>
   );
 }

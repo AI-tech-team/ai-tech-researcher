@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHighlights, extractHighlightSection, highlightsReadingSeconds } from './digest-highlights';
-import { formatReadingTime, readingSeconds } from './reading-time';
+import { parseHighlights, extractHighlightSection } from './digest-highlights';
 
 // 本番 2026-09-10 配信分の抜粋（形はそのまま）。
 const REAL = `AIエンジニア・研究者の皆様へ
@@ -122,12 +121,4 @@ test('ハイライトが無い・空入力なら空配列（落ちない）', ()
   assert.deepEqual(parseHighlights(''), []);
   assert.deepEqual(parseHighlights('## 🚀 急上昇トレンド\n本文'), []);
   assert.equal(extractHighlightSection(''), null);
-});
-
-test('読了時間はハイライトの分だけを数える', () => {
-  const all = highlightsReadingSeconds(REAL);
-  assert.ok(all > 0);
-  // 全文ではなくハイライトだけなので、全文の秒数より必ず短い
-  assert.ok(all < readingSeconds(REAL), 'ハイライトだけの方が全文より短い');
-  assert.match(formatReadingTime(all), /秒$/);
 });

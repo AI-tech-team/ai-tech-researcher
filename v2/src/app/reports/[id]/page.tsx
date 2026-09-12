@@ -12,13 +12,6 @@ import s from '@/styles/brand.module.css';
 
 const TYPE_LABEL: Record<string, string> = { daily: '朝刊', weekly: '週次のまとめ', monthly: '月次のまとめ' };
 
-const NAV = [
-  { href: '/articles', label: '記事を探す' },
-  { href: '/search', label: '検索' },
-  // スマホで入りきらないときに最初に落とす（フッタにも同じリンクがある）。
-  { href: '/about', label: 'このサービスについて', minor: true },
-];
-
 // 号ごとの全画面ページ。直リンク/リロード/共有/検索インデックス向けにSSRする。
 // 版面はトップ（今朝の朝刊）と同じ（`DigestBody`）。過去の号だけ別の見た目になると、
 // リンクを踏んだ読者には「別のサイトに来た」ように見える。
@@ -73,7 +66,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   return (
     <div className={s.page}>
       <JsonLd data={articleJsonLd} />
-      <BrandNav links={NAV} cta={{ href: '/', label: '今朝の朝刊' }} />
+      <BrandNav />
 
       <IssueHeader
         eyebrow={report.type === 'daily' ? 'バックナンバー' : label}

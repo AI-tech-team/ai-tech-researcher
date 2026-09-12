@@ -1,42 +1,28 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useSession, signIn, signOut } from 'next-auth/react';
+import { useSession, signIn } from 'next-auth/react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { LogIn, LogOut, ArrowRight, Hash, Newspaper, Sparkles, Search, Bookmark, X, MessageSquare, Shield, ChevronDown, User, Mail, ScrollText, MoreHorizontal, History, Info } from 'lucide-react';
+import { LogIn, ArrowRight, Newspaper, Bookmark, X, Mail } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useToast } from '@/components/Toast';
 import {
   getCoreData, getCollectedDataList, getKnowledgeStats,
-  getRecommendations, getMyReadLater, getReadingProfile,
+  getMyReadLater,
   toggleFavorite, toggleReadLater,
   getMyProfile, subscribeEmailDigest,
 } from '@/app/actions';
 import { BrandNav } from '@/components/digest/BrandChrome';
 import s from '@/styles/brand.module.css';
-import { SearchPalette } from '@/components/public/SearchPalette';
-import { ProfileModal } from '@/components/public/ProfileModal';
 import { SavedItemsModal } from '@/components/public/SavedItemsModal';
-import { PushToggle } from '@/components/public/PushToggle';
-import { ThemeToggle } from '@/components/public/ThemeToggle';
-import type { CollectedItem, ReadingProfile, KnowledgeStats } from '@/types';
+import type { CollectedItem, KnowledgeStats } from '@/types';
 import { noSummaryReason } from '@/lib/no-summary';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION, SITE_TAGLINE } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
 
 
-// 初心者向け：テーマ（カテゴリ）の大まかな説明。ホームの「注目のテーマ」でホバー/選択時に出す
-const CATEGORY_DESC: Record<string, string> = {
-  'LLM推論': '大規模言語モデル（ChatGPT等）の性能・推論・最適化の話題',
-  'エージェント': '自分で考えて作業を進める自律型AIの話題',
-  'ツール/フレームワーク': '開発に使うライブラリや基盤ソフトの話題',
-  'ハードウェア': 'GPU・専用チップなどAI向けの計算資源',
-  'ビジネス応用': '製品や仕事へのAI導入・活用事例',
-  '研究/論文': '最新の研究成果や論文の話題',
-  'その他': '上記に当てはまらない話題',
-};
 
 const PAGE = 30;
 // 上から順ロード: 第1波で描く「見た目の部分」の記事件数（注目＋レポート＋件数と同時に取得）。
@@ -135,9 +121,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const [collectedItems, setCollectedItems] = useState<CollectedItem[]>(() => pubSnapshot?.items ?? initialData?.data ?? []);
   const [stats, setStats] = useState<KnowledgeStats | null>(() => pubSnapshot?.stats ?? null);
   const [totalArticles, setTotalArticles] = useState<number | null>(() => pubSnapshot?.total ?? initialData?.counts?.total ?? null);
-  const [recommendations, setRecommendations] = useState<CollectedItem[]>([]);
   const [readLater, setReadLater] = useState<CollectedItem[]>([]);
-  const [readingProfile, setReadingProfile] = useState<ReadingProfile | null>(null);
   const [isLoading, setIsLoading] = useState(() => !pubSnapshot && !initialData);
   const [offset, setOffset] = useState(() => pubSnapshot?.offset ?? initialData?.data.length ?? 0);
   // initialData は第1波(先頭ABOVE_FOLD件)なので常に続きがある前提でtrue。第2波/loadMoreで実値に補正する。
@@ -147,39 +131,14 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   // 途中状態をスナップショットに焼き付けない（戻り時に先頭12件で固定化するのを防ぐ）。
   const [belowFoldPending, setBelowFoldPending] = useState(false);
 
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
+  // 検索・プロフィール・各メニューはマストヘッド側（BrandNavActions）が持つ。
+  // ここに残すと全ページ共通のバーと状態が二重になる。
   const [savedOpen, setSavedOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [infoMenuOpen, setInfoMenuOpen] = useState(false);
-  // 「…」メニューの開閉はタップ/クリックだけで完結させる。
-  // 以前はホバーで閉じる小遅延を併用していたが、指には hover が無く、スマホでは
-  // 「開いた直後に合成された mouseleave で閉じる」事故の温床にしかならない。
-  // 外側クリックは覆い被せ用divではなくdocumentリスナで判定（divで覆うとボタンを隠すため）。
-  const infoMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!infoMenuOpen) return;
-    const onDown = (e: PointerEvent) => {
-      if (infoMenuRef.current && !infoMenuRef.current.contains(e.target as Node)) setInfoMenuOpen(false);
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [infoMenuOpen]);
   const [digestPromptOpen, setDigestPromptOpen] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // scroll: false 必須（Linkのscroll={false}と同じ理由）。付けないとオーバーレイを開いた瞬間に
   // Next.js が @modal スロットの位置まで背面をスクロールさせてしまう。
   const openArticle = (id: number) => router.push(`/articles/${id}`, { scroll: false });
-
-  // パーソナライズの再取得（プロフィール保存後など）
-  const reloadPersonalization = async () => {
-    if (!sessionUserId) return;
-    const [recs, rl, prof] = await Promise.all([getRecommendations(), getMyReadLater(), getReadingProfile()]);
-    setRecommendations(recs as CollectedItem[]);
-    setReadLater(rl as CollectedItem[]);
-    setReadingProfile(prof as ReadingProfile | null);
-  };
 
   // ログイン済みで未購読なら「毎朝ダイジェスト」購読プロンプトを一度だけ出す（同意ベース）
   useEffect(() => {
@@ -207,24 +166,9 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
     dismissDigestPrompt();
   };
 
-  // ⌘K / Ctrl+K でグローバル検索を開く
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setSearchOpen(true);
-      }
-    };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, []);
-
   // モーダル表示中は背面のスクロールを止める（スマホで背面がスクロールする問題の対策）。
   // overflow:hidden は iOS Safari で効かないため、position:fixed 方式の共通フックに統一。
-  const anyOverlayOpen =
-    searchOpen ||
-    profileOpen || savedOpen;
-  useScrollLock(anyOverlayOpen);
+  useScrollLock(savedOpen);
 
   useEffect(() => {
     let cancelled = false;
@@ -303,19 +247,14 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
     requestAnimationFrame(tick);
   }, [isLoading, belowFoldPending, collectedItems.length]);
 
-  // ログインユーザー向けパーソナライズ（行動ベース推薦・後で読む・読書DNA）。
-  // 未ログインでは何も出さない。手動の興味設定に依存しない getRecommendations を使う。
+  // ログインユーザーの「後で読む」。未ログインでは何も出さない。
+  // 行動ベース推薦（あなた向け）と読書DNAは2026-09-12に撤去した。
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (!sessionUserId) { setRecommendations([]); setReadLater([]); setReadingProfile(null); return; }
+    if (!sessionUserId) { setReadLater([]); return; }
     let cancelled = false;
-    Promise.all([getRecommendations(), getMyReadLater(), getReadingProfile()])
-      .then(([recs, rl, prof]) => {
-        if (cancelled) return;
-        setRecommendations(recs as CollectedItem[]);
-        setReadLater(rl as CollectedItem[]);
-        setReadingProfile(prof as ReadingProfile | null);
-      })
+    getMyReadLater()
+      .then(rl => { if (!cancelled) setReadLater(rl as CollectedItem[]); })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [sessionUserId]);
@@ -359,7 +298,7 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   const handleToggleReadLater = async (id: number, current: boolean) => {
     if (status === 'loading') return; // セッション解決中はクリックを無視
     if (!sessionUserId) return requireLogin('「後で読む」の保存にはログインが必要です');
-    const item = collectedItems.find(i => i.id === id) ?? recommendations.find(i => i.id === id) ?? readLater.find(i => i.id === id);
+    const item = collectedItems.find(i => i.id === id) ?? readLater.find(i => i.id === id);
     setCollectedItems(prev => prev.map(i => i.id === id ? { ...i, isReadLater: current ? 0 : 1 } : i));
     // 「後で読む」一覧も同期（解除なら除外、追加なら一覧へ）。関数型更新で安全に
     setReadLater(prev => current
@@ -388,119 +327,17 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
     }
   };
   const feedbackAvailable = !!FEEDBACK_FORM_ACTION || !!CONTACT_EMAIL;
-  // カテゴリ絞り込み中はそのカテゴリの記事のみ。一覧は新着順の一本道にした（2026-09-11）。
-  // 以前は上位を「今日の注目」として抜いて二分割していたが、選別は朝刊の仕事に一本化した。
-  const feed = selectedCategory
-    ? collectedItems.filter(i => i.category === selectedCategory)
-    : collectedItems;
-
-  // 注目のテーマ: 直近記事のカテゴリ頻度（タグはHNスコア等のノイズが多いので使わない）
-  const catCounts = new Map<string, number>();
-  for (const it of collectedItems) { const c = it.category; if (c) catCounts.set(c, (catCounts.get(c) ?? 0) + 1); }
-  const themes = [...catCounts.entries()].sort((a, b) => b[1] - a[1]);
+  // 一覧は新着順の一本道（2026-09-11）。選別は朝刊の仕事に一本化した。
+  // カテゴリ絞り込み（注目のテーマ）も2026-09-12に外した＝直近30件の内訳でしかなく、
+  // 「何日以内か」を説明できない数字を読者に見せていた。
+  const feed = collectedItems;
 
   return (
     <div className="min-h-screen overflow-y-auto">
       {/* ── トップバー ──
           表（朝刊）と同じ黒いマストヘッドを共有する。ここが別物だと、同じサイトの
           裏表ではなく「別のサイトに飛ばされた」ように見える（2026-09-12 に統一）。 */}
-      <BrandNav
-        links={[
-          { href: '/', label: '朝刊' },
-          { href: '/topic', label: 'トピック' },
-          { href: '/about', label: 'このサービスについて', minor: true },
-        ]}
-        right={
-          <>
-            {/* 検索: デスクトップは⌘Kヒント付きのピル、モバイルはアイコン */}
-            <button onClick={() => setSearchOpen(true)} title="記事を検索 (⌘K)" aria-label="記事を検索"
-              className={`${s.navBtn} ${s.navPill} ${s.navWide}`}>
-              <Search size={14} /> 検索 <span className={s.navKbd}>⌘K</span>
-            </button>
-            <button onClick={() => setSearchOpen(true)} title="記事を検索" aria-label="記事を検索"
-              className={`${s.navBtn} ${s.navNarrow}`}>
-              <Search size={18} />
-            </button>
-
-            {/* … メニュー: 配色・規約類・通知をまとめる。
-                配色の切替は以前 md 以上でしか出しておらず、**スマホでは切り替えられなかった**。 */}
-            <div ref={infoMenuRef} className={s.navMenuWrap}>
-              <button onClick={() => setInfoMenuOpen(v => !v)} title="メニュー" aria-label="メニュー"
-                aria-expanded={infoMenuOpen} className={s.navBtn}>
-                <MoreHorizontal size={18} />
-              </button>
-              {infoMenuOpen && (
-                <div className={s.navMenu}>
-                  <p className={s.navMenuHead}>配色</p>
-                  <div style={{ padding: '0 14px 8px' }}><ThemeToggle onDark /></div>
-                  <div className={s.navMenuSep} />
-                  <Link href="/about" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
-                    <Info size={14} /> このサービスについて
-                  </Link>
-                  {feedbackAvailable && (
-                    <Link href="/feedback" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
-                      <MessageSquare size={14} /> フィードバック
-                    </Link>
-                  )}
-                  <Link href="/privacy" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
-                    <Shield size={14} /> プライバシー
-                  </Link>
-                  <Link href="/terms" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
-                    <ScrollText size={14} /> 利用規約
-                  </Link>
-                  <Link href="/changelog" scroll={false} onClick={() => setInfoMenuOpen(false)} className={s.navMenuItem}>
-                    <History size={14} /> 更新履歴
-                  </Link>
-                  {/* 通知トグル（未対応環境・VAPID未設定なら自動で非表示） */}
-                  <div className={s.navMenuSep} />
-                  <PushToggle loggedIn={!!session?.user} onDone={() => setInfoMenuOpen(false)} />
-                </div>
-              )}
-            </div>
-
-            {/* アカウント */}
-            {status === 'loading' ? (
-              <div className={s.navAvatar} style={{ background: 'rgba(255,255,255,.1)' }} />
-            ) : session?.user ? (
-              <div className={s.navMenuWrap}>
-                {/* アカウント＝1つのメニューに集約。ログアウトは中に隠す＋確認を出す（誤操作防止） */}
-                <button onClick={() => setMenuOpen(v => !v)} title="アカウント" aria-label="アカウント"
-                  aria-expanded={menuOpen} className={s.navBtn}>
-                  {session.user.image
-                    /* Googleアバター(26px・外部画像)。next/imageに通すとVercel画像最適化課金が乗る割に
-                       効果が無いため<img>のまま。寸法明示＋no-referrerで安定描画。 */
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    ? <img src={session.user.image} alt="" width={26} height={26} loading="lazy" referrerPolicy="no-referrer" className={s.navAvatar} />
-                    : <User size={18} />}
-                  <ChevronDown size={12} style={{ transform: menuOpen ? 'rotate(180deg)' : undefined }} />
-                </button>
-                {menuOpen && (
-                  <>
-                    {/* 外側クリックで閉じる */}
-                    <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                    <div className={s.navMenu}>
-                      {session.user.email && (
-                        <p className={s.navMenuHead} style={{ textTransform: 'none', letterSpacing: 0 }}>{session.user.email}</p>
-                      )}
-                      <button onClick={() => { setMenuOpen(false); setProfileOpen(true); }} className={s.navMenuItem}>
-                        <User size={14} /> プロフィール
-                      </button>
-                      <button onClick={() => { setMenuOpen(false); if (window.confirm('ログアウトしますか？')) signOut(); }}
-                        className={s.navMenuItem}>
-                        <LogOut size={14} /> ログアウト
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <button onClick={() => signIn('google')} className={`${s.navBtn} ${s.navPill}`}>
-                <LogIn size={14} /> ログイン
-              </button>
-            )}
-          </>
-        }
-      />
+      <BrandNav />
 
       <main id="main-content" tabIndex={-1} className={`${s.listShell} outline-none pb-24`}>
 
@@ -534,8 +371,8 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
               </div>
               <div className="min-w-0">
                 <p className="text-sm sm:text-base text-slate-100 leading-relaxed">
-                  <span className="font-bold text-white">毎朝、あなた向けダイジェストをメールで受け取りますか？</span>
-                  <span className="text-slate-400"> 今日のまとめ＋あなたの興味に近い新着が届きます。いつでも停止できます。</span>
+                  <span className="font-bold text-white">毎朝の朝刊をメールで受け取りますか？</span>
+                  <span className="text-slate-400"> 今朝の号がそのまま届きます。いつでも停止できます。</span>
                 </p>
                 <div className="flex items-center gap-3 mt-3 flex-wrap">
                   <button onClick={subscribeDigest}
@@ -556,96 +393,20 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
             本紙はトップ `/` にあり、同じものを一覧の上にも置くと「どちらが本体か」が読者に分からなくなる。
             累計件数などの実績ストリップも外した＝作り手の数字であって、記事を探しに来た人の役に立たない。 */}
 
-        {/* ── あなた向け（ログインユーザー限定・行動ベース） ── */}
-        {sessionUserId && (
-          <section className="space-y-5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Sparkles size={16} className="text-indigo-400" />
-              <h2 className="text-sm font-bold font-outfit">あなた向け</h2>
-              {readingProfile?.persona && (
-                <span className="text-[11px] text-slate-500">— {readingProfile.persona}</span>
-              )}
-            </div>
-
-            {recommendations.length === 0 && readLater.length === 0 && !readingProfile?.persona ? (
-              // 初回ログイン直後など、まだ何も溜まっていないときの案内
-              <div className="rounded-2xl border border-white/5 bg-white/[0.02] p-5 space-y-2">
-                <p className="text-sm text-slate-200">まだあなた専用のおすすめは溜まっていません。</p>
-                <p className="text-[12px] text-slate-500 leading-relaxed">
-                  記事を開いたり「後で読む」「お気に入り」に保存していくと、読み方に合った記事が自動でここに並びます。<br />
-                  興味のテーマや目標をプロフィールに書いておくと、さらに精度が上がります。
-                </p>
-                <div className="pt-1">
-                  <button onClick={() => setProfileOpen(true)}
-                    className="text-[12px] font-bold text-indigo-300 hover:text-indigo-200 transition-colors">
-                    プロフィールを設定 →
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                {recommendations.length > 0 && (
-                  <div>
-                    <p className="text-[11px] text-slate-500 mb-2">あなたの読み方に近いおすすめ</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {recommendations.slice(0, 4).map(item => (
-                        <PubCard key={item.id} item={item} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {readLater.length > 0 && (
-                  // コンパクト表示（溜め込みが場所を取りすぎないよう、件数＋全部見るのみ）
-                  <button onClick={() => setSavedOpen(true)}
-                    className="w-full flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] px-4 py-3 transition-colors">
-                    <span className="flex items-center gap-2 text-[13px] text-slate-300">
-                      <Bookmark size={14} className="text-indigo-300" /> 後で読む
-                      <span className="font-mono text-[11px] text-slate-500">{readLater.length}件</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-[12px] text-indigo-300">全部見る <ArrowRight size={12} /></span>
-                  </button>
-                )}
-              </>
-            )}
-          </section>
-        )}
-
-        {/* ── 注目のテーマ（直近記事のタグ頻度） ── */}
-        {themes.length > 0 && (
+        {/* ── 後で読む（ログイン時のみ） ──
+            ここには以前「あなた向け」＝行動ベース推薦と読書DNAのペルソナを置いていたが、
+            2026-09-12に撤去した。読了イベントはお気に入り/後で読む/既読トグルの3操作でしか
+            書き込まれず、普通に読んでいる人の中身がいつまでも変わらない＝動いていない機能だった。
+            残したのは「見逃しを後から拾える」入口だけ。 */}
+        {sessionUserId && readLater.length > 0 && (
           <section className={s.listSection}>
-            <div className="flex items-center gap-2 mb-3 text-sky-400">
-              <Hash size={16} />
-              <h2 className="text-sm font-bold font-outfit">注目のテーマ</h2>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {themes.map(([cat, cnt]) => {
-                const color = CATEGORY_COLORS[cat] ?? 'var(--cat-other)';
-                const active = selectedCategory === cat;
-                return (
-                  <button key={cat} title={CATEGORY_DESC[cat] ?? ''}
-                    onClick={() => setSelectedCategory(active ? null : cat)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors ${active ? 'ring-2 ring-offset-0' : 'hover:bg-white/[0.04]'}`}
-                    style={{
-                      borderColor: `color-mix(in srgb, ${color} ${active ? 38 : 16}%, transparent)`,
-                      background: `color-mix(in srgb, ${color} ${active ? 13 : 6}%, transparent)`,
-                    }}>
-                    <span className="font-bold" style={{ color }}>{cat}</span>
-                    <span className="font-mono text-[10px] text-slate-500">{cnt}</span>
-                  </button>
-                );
-              })}
-              {selectedCategory && (
-                <button onClick={() => setSelectedCategory(null)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] text-slate-400 hover:text-white transition-colors">
-                  × フィルタ解除
-                </button>
-              )}
-            </div>
-            {/* 選んだテーマの説明（初心者向け・モバイルでも見える） */}
-            {selectedCategory && CATEGORY_DESC[selectedCategory] && (
-              <p className="text-[11px] text-slate-500 mt-2.5 leading-relaxed">💡 {CATEGORY_DESC[selectedCategory]}</p>
-            )}
+            <button onClick={() => setSavedOpen(true)} className={s.savedRow}>
+              <span className={s.savedLabel}>
+                <Bookmark size={14} /> 後で読む
+                <span className={s.savedCount}>{readLater.length}</span>
+              </span>
+              <span className={s.savedMore}>全部見る <ArrowRight size={12} /></span>
+            </button>
           </section>
         )}
 
@@ -692,9 +453,9 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
         {/* ── 未ログイン向け末尾CTA（控えめ） ── */}
         {!sessionUserId && (
           <section className={`${s.listSection} rounded-2xl border border-white/10 bg-white/[0.02] p-6 sm:p-7 text-center space-y-3`}>
-            <p className="text-base sm:text-lg text-white font-bold">もっと自分のための場所にする</p>
+            <p className="text-base sm:text-lg text-white font-bold">気になった1本を、あとで拾う</p>
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-md mx-auto">
-              ログインすると <span className="text-sky-300">あなた向けのおすすめ</span> / <span className="text-sky-300">後で読む</span> / <span className="text-sky-300">興味学習</span> が使えます。閲覧は無料でずっと続けられます。
+              ログインすると <span className="text-sky-300">お気に入り</span> / <span className="text-sky-300">後で読む</span> / <span className="text-sky-300">毎朝のメール</span> が使えます。閲覧は無料でずっと続けられます。
             </p>
             <div className="pt-1">
               <button onClick={() => signIn('google')}
@@ -746,16 +507,6 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
       </main>
 
       {/* ── モーダル ── */}
-      <SearchPalette
-        open={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        onSelect={(id) => { setSearchOpen(false); openArticle(id); }}
-      />
-      <ProfileModal
-        open={profileOpen}
-        onClose={() => setProfileOpen(false)}
-        onSaved={() => { void reloadPersonalization(); }}
-      />
       <SavedItemsModal
         open={savedOpen}
         onClose={() => setSavedOpen(false)}

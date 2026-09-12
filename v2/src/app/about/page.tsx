@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getLandingDigest } from '@/app/actions';
-import { parseHighlights, highlightsReadingSeconds } from '@/lib/digest-highlights';
+import { parseHighlights } from '@/lib/digest-highlights';
+import { digestReadingSeconds } from '@/lib/digest';
 import { formatReadingTime } from '@/lib/reading-time';
 import { SITE_NAME } from '@/lib/site';
 import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
@@ -30,7 +31,10 @@ export const metadata: Metadata = {
 export default async function AboutPage() {
   const digest = await getLandingDigest();
   const highlights = digest ? parseHighlights(digest.content) : [];
-  const seconds = digest ? highlightsReadingSeconds(digest.content) : 0;
+  // ⚠ 号「全体」で測る。以前はハイライトだけを測っていたため、トップの号見出しが4分53秒と
+  //   出しているのにこのページは2分25秒と書いていた（同じ朝の同じ号で2つの数字）。
+  //   読者に約束しているのは「1号を読み終わるまで」なので digestReadingSeconds に統一する。
+  const seconds = digest ? digestReadingSeconds(digest.content) : 0;
   // 今朝の実データが引けないときは、本数に依存する文だけを落とす（推定値で埋めない）。
   const picked = highlights.length;
   const pool = digest?.collectedFrom ?? 0;
@@ -38,10 +42,7 @@ export default async function AboutPage() {
 
   return (
     <div className={s.page}>
-      <BrandNav
-        links={[{ href: '#select', label: '選び方' }, { href: '#promise', label: '約束' }]}
-        cta={{ href: '/', label: '朝刊を読む' }}
-      />
+      <BrandNav />
 
       {/* ══ ヒーロー ══ */}
       <header className={`${s.band} ${s.bandInk} ${s.hero}`} id="top">

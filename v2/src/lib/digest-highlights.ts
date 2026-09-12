@@ -1,4 +1,3 @@
-import { readingSeconds } from '@/lib/reading-time';
 
 /**
  * 日次レポート（Markdown）から「今日のハイライト」だけを構造化して取り出す。
@@ -87,10 +86,4 @@ export function parseHighlights(markdown: string): Highlight[] {
     out.push({ title, points });
   }
   return out;
-}
-
-/** ハイライトだけを読むのに要する秒数（＝商品が約束している「3分」の実測値）。 */
-export function highlightsReadingSeconds(markdown: string): number {
-  const section = extractHighlightSection(markdown);
-  return section ? readingSeconds(section) : 0;
 }

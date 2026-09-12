@@ -2,7 +2,7 @@
 
 import { db, client } from '@/db';
 import { sources, collectedData, reports, adoptionLogs, claims, userTopicWeights, benchmarks, relations, entities, readingEvents, userArticleState, userProfiles, users, chatMemory, pushSubscriptions } from '@/db/schema';
-import { desc, asc, eq, count, gte, lte, sql, like, or, and, inArray } from 'drizzle-orm';
+import { desc, asc, eq, count, gte, lte, sql, or, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
 import { isOwner } from '@/lib/owner';
@@ -12,24 +12,11 @@ import { isOwner } from '@/lib/owner';
 import { checkRateLimit } from '@/lib/ratelimit';
 import { isAllowedPushEndpoint } from '@/lib/push-endpoint';
 import { logError } from '@/lib/logError';
-import { google } from '@ai-sdk/google';
-import { embedMany } from 'ai';
 import { z } from 'zod';
 import { cached } from '@/lib/cache';
 import { vocabCandidates, segmentQuery, toMatchExpr } from '@/lib/search-tokens';
 import { isPublishableEntity } from '@/lib/entity-quality';
-import type { CollectedItem, KnowledgeStats, ReadingProfile, Report } from '@/types';
-
-// 読書DNA: カテゴリ→4軸の寄与（depth:0理論↔100実装 / view:0研究者↔50エンジニア↔100ビジネス / recency:0長期↔100近未来）
-const CAT_AXIS: Record<string, { depth: number; view: number; recency: number }> = {
-  '研究/論文':            { depth: 5,  view: 5,  recency: 25 },
-  'LLM推論':              { depth: 70, view: 45, recency: 60 },
-  'エージェント':          { depth: 75, view: 50, recency: 65 },
-  'ツール/フレームワーク': { depth: 95, view: 45, recency: 60 },
-  'ハードウェア':          { depth: 55, view: 50, recency: 55 },
-  'ビジネス応用':          { depth: 40, view: 95, recency: 75 },
-  'その他':               { depth: 50, view: 50, recency: 50 },
-};
+import type { CollectedItem, KnowledgeStats, Report } from '@/types';
 
 // created_at等はSQLiteのCURRENT_TIMESTAMP（"YYYY-MM-DD HH:MM:SS" 空白区切り）で格納される。
 // 比較しきい値もこの形式に揃える（ISOの"T"/"Z"だと文字列比較で境界1日分ずれるため）。
@@ -106,23 +93,9 @@ async function overlayUserState<T extends { id: number; isFavorited?: number | n
   return items;
 }
 
-// 読書DNA: 記事行動を記録（4軸プロファイルの元データ）。userIdでユーザー別に分離
-async function logReadingEvent(articleId: number, action: string, weight: number, category: string | null, userId?: number) {
-  try {
-    await db.insert(readingEvents).values({ articleId, action, weight, category, userId: userId ?? null });
-  } catch (e) {
-    await logError('log reading event', e, { alert: true });
-  }
-}
-
-// タイトルとカテゴリから固有技術キーワードを抽出（トピック重み更新用）
-function extractKeywords(title: string | null, category: string | null): string[] {
-  const kws: string[] = [];
-  if (category) kws.push(category);
-  // 英語の固有名詞・技術用語（先頭大文字 or 全大文字、3文字以上）
-  const terms = (title ?? '').match(/[A-Z][a-zA-Z0-9-]{2,}|[A-Z]{3,}/g) ?? [];
-  return [...new Set([...kws, ...terms.slice(0, 4)])];
-}
+// 2026-09-12: 行動ログ（reading_events）と興味学習（user_topic_weights）の書き込みをやめた。
+// どちらも「あなた向け」推薦と読書DNAの材料で、その2つを撤去した時点で**書くだけで誰も読まない
+// 個人の行動データ**になる。集めない（第三条・PII最小化）。既存行は退会時の削除に任せる。
 
 // ─── データ取得 ───────────────────────────────────────────────────
 
@@ -517,30 +490,14 @@ export async function toggleFavorite(id: number) {
     // 副次処理（情報源スコア・興味学習・行動ログ）は分析用。ここで失敗しても保存は成功扱いにする。
     // ※全体に例外を伝播させると、保存できているのに「失敗」表示になり誤解を生む（誤エラーの原因だった）
     try {
-      const [item] = await db.select({
-        sourceId: collectedData.sourceId,
-        title: collectedData.title,
-        category: collectedData.category,
-      }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
+      const [item] = await db.select({ sourceId: collectedData.sourceId })
+        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
       if (item?.sourceId) {
         await db.insert(adoptionLogs).values({ sourceId: item.sourceId, isAdopted: newValue });
         const delta = newValue === 1 ? 2.0 : -2.0;
         await db.update(sources)
           .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
           .where(eq(sources.id, item.sourceId));
-      }
-      // お気に入り = 強いシグナル。解除時は逆符号で打ち消す（往復での積み上げ防止）
-      await logReadingEvent(id, newValue === 1 ? 'favorite' : 'unfavorite', newValue === 1 ? 3 : -3, item?.category ?? null, userId);
-      const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
-      const kwDelta = newValue === 1 ? 0.3 : -0.3;
-      const now = new Date().toISOString();
-      for (const kw of kws) {
-        await db.insert(userTopicWeights)
-          .values({ userId, keyword: kw, weight: Math.max(0, kwDelta), updatedAt: now })
-          .onConflictDoUpdate({
-            target: [userTopicWeights.userId, userTopicWeights.keyword],
-            set: { weight: sql`MAX(0.0, ${userTopicWeights.weight} + ${kwDelta})`, updatedAt: now },
-          });
       }
     } catch (sideErr) {
       console.warn('[favorite] 副次処理をスキップ（お気に入り自体は保存済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
@@ -569,14 +526,6 @@ export async function toggleReadLater(id: number) {
         target: [userArticleState.userId, userArticleState.articleId],
         set: { isReadLater: newValue, updatedAt: new Date().toISOString() },
       });
-    // 行動ログは分析用。失敗しても保存は成功扱い。解除時は逆符号で打ち消す
-    try {
-      const [item] = await db.select({ category: collectedData.category })
-        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
-      await logReadingEvent(id, newValue === 1 ? 'readlater' : 'unreadlater', newValue === 1 ? 1 : -1, item?.category ?? null, userId);
-    } catch (sideErr) {
-      console.warn('[readlater] 副次処理をスキップ（保存は成功済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
-    }
     revalidatePath('/');
     return { success: true, value: newValue === 1 };
   } catch (error) {
@@ -602,30 +551,14 @@ export async function markAsRead(id: number) {
       });
     // 副次処理はON/OFFで対称（往復での積み上げ防止）。失敗しても保存は成功扱い
     try {
-      const [item] = await db.select({
-        sourceId: collectedData.sourceId,
-        title: collectedData.title,
-        category: collectedData.category,
-      }).from(collectedData).where(eq(collectedData.id, id)).limit(1);
-
+      const [item] = await db.select({ sourceId: collectedData.sourceId })
+        .from(collectedData).where(eq(collectedData.id, id)).limit(1);
+      // 既読はソースの質の弱いシグナル。ソーススコアにだけ反映する（個人側には残さない）。
       const delta = newValue === 1 ? 0.3 : -0.3;
       if (item?.sourceId) {
         await db.update(sources)
           .set({ score: sql`MAX(0.0, COALESCE(${sources.score}, 0.0) + ${delta})` })
           .where(eq(sources.id, item.sourceId));
-      }
-      await logReadingEvent(id, newValue === 1 ? 'read' : 'unread', newValue === 1 ? 2 : -2, item?.category ?? null, userId);
-      // トピック重み（読了 = 弱いシグナル）
-      const kws = extractKeywords(item?.title ?? null, item?.category ?? null);
-      const kwDelta = newValue === 1 ? 0.1 : -0.1;
-      const now = new Date().toISOString();
-      for (const kw of kws) {
-        await db.insert(userTopicWeights)
-          .values({ userId, keyword: kw, weight: Math.max(0, kwDelta), updatedAt: now })
-          .onConflictDoUpdate({
-            target: [userTopicWeights.userId, userTopicWeights.keyword],
-            set: { weight: sql`MAX(0.0, ${userTopicWeights.weight} + ${kwDelta})`, updatedAt: now },
-          });
       }
     } catch (sideErr) {
       console.warn('[read] 副次処理をスキップ（既読自体は保存済み）:', sideErr instanceof Error ? sideErr.message : sideErr);
@@ -666,8 +599,6 @@ export interface MyProfile {
   image: string | null;
   memberSince: string | null;
   displayName: string;
-  interests: string;
-  goals: string;
   emailOptIn: boolean;
   hasProfile: boolean; // プロフィール行が既にあるか（無ければ購読トグルを既定ONで見せる）
 }
@@ -685,8 +616,6 @@ export async function getMyProfile(): Promise<MyProfile | null> {
       image: u?.image ?? null,
       memberSince: u?.createdAt ?? null,
       displayName: p?.displayName ?? '',
-      interests: p?.interests ?? '',
-      goals: p?.goals ?? '',
       emailOptIn: !!p?.emailOptIn,
       hasProfile: !!p,
     };
@@ -696,7 +625,9 @@ export async function getMyProfile(): Promise<MyProfile | null> {
   }
 }
 
-export async function updateMyProfile(data: { displayName: string; interests: string; goals: string; emailOptIn: boolean }) {
+// 興味/目標はもう受け取らない（「あなた向け」撤去で使い道が無くなった項目・2026-09-12）。
+// 既存行に残っている値は上書きしない＝退会時の削除に任せる。
+export async function updateMyProfile(data: { displayName: string; emailOptIn: boolean }) {
   try {
     const userId = await currentUserId();
     if (!userId) return { success: false };
@@ -704,8 +635,6 @@ export async function updateMyProfile(data: { displayName: string; interests: st
     const now = new Date().toISOString();
     const vals = {
       displayName: (data.displayName ?? '').slice(0, 80),
-      interests: (data.interests ?? '').slice(0, 500),
-      goals: (data.goals ?? '').slice(0, 500),
       emailOptIn: data.emailOptIn ? 1 : 0,
       updatedAt: now,
     };
@@ -837,95 +766,6 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
     };
   } catch (error) {
     await logError('getEntityKnowledgePage', error);
-    return null;
-  }
-}
-
-export async function getReadingProfile(): Promise<ReadingProfile | null> {
-  try {
-    const userId = await currentUserId();
-    if (!userId) return null;
-    const now = Date.now();
-    const thirtyAgo = sqlTs(new Date(now - 30 * 24 * 60 * 60 * 1000));
-    const sixtyAgo = sqlTs(new Date(now - 60 * 24 * 60 * 60 * 1000));
-    const twentyOneAgo = sqlTs(new Date(now - 21 * 24 * 60 * 60 * 1000));
-
-    const events = await db.select({
-      category: readingEvents.category,
-      weight: readingEvents.weight,
-      createdAt: readingEvents.createdAt,
-    }).from(readingEvents).where(eq(readingEvents.userId, userId)).orderBy(desc(readingEvents.createdAt)).limit(1000);
-
-    if (events.length === 0) return null;
-
-    // 重み付き4軸の集計
-    let wSum = 0, depthSum = 0, viewSum = 0, recencySum = 0;
-    const catCount = new Map<string, number>();
-    const last30 = new Map<string, number>();
-    const prior30 = new Map<string, number>();
-    const recentCats = new Set<string>();
-
-    for (const e of events) {
-      const cat = e.category ?? 'その他';
-      const w = e.weight ?? 1;
-      const ax = CAT_AXIS[cat] ?? CAT_AXIS['その他'];
-      wSum += w;
-      depthSum += ax.depth * w;
-      viewSum += ax.view * w;
-      recencySum += ax.recency * w;
-      catCount.set(cat, (catCount.get(cat) ?? 0) + 1);
-      const ts = e.createdAt ?? '';
-      if (ts >= thirtyAgo) { last30.set(cat, (last30.get(cat) ?? 0) + 1); }
-      else if (ts >= sixtyAgo) { prior30.set(cat, (prior30.get(cat) ?? 0) + 1); }
-      if (ts >= twentyOneAgo) recentCats.add(cat);
-    }
-
-    const depth = wSum ? Math.round(depthSum / wSum) : 50;
-    const view = wSum ? Math.round(viewSum / wSum) : 50;
-    const recency = wSum ? Math.round(recencySum / wSum) : 50;
-
-    // 広さ: カテゴリ分布のエントロピーを正規化（0=特化, 100=広範）
-    const counts = [...catCount.values()];
-    const total = counts.reduce((a, b) => a + b, 0);
-    let entropy = 0;
-    for (const c of counts) { const p = c / total; entropy -= p * Math.log2(p); }
-    const maxEntropy = Math.log2(Math.max(2, Object.keys(CAT_AXIS).length));
-    const breadth = Math.round((entropy / maxEntropy) * 100);
-
-    const radar = [
-      { axis: '深さ',  leftLabel: '理論派',   rightLabel: '実装派',     value: depth },
-      { axis: '視点',  leftLabel: '研究者',   rightLabel: 'ビジネス',   value: view },
-      { axis: '広さ',  leftLabel: '専門特化', rightLabel: '広範収集',   value: breadth },
-      { axis: '時制',  leftLabel: '長期志向', rightLabel: '近未来志向', value: recency },
-    ];
-
-    const categoryDistribution = [...catCount.entries()]
-      .map(([category, count]) => ({ category, count }))
-      .sort((a, b) => b.count - a.count);
-
-    // 関心シフト（直近30日 vs その前30日）
-    const shiftCats = new Set([...last30.keys(), ...prior30.keys()]);
-    const recentShift = [...shiftCats]
-      .map(category => {
-        const delta = (last30.get(category) ?? 0) - (prior30.get(category) ?? 0);
-        return { category, delta, direction: (delta >= 0 ? 'up' : 'down') as 'up' | 'down' };
-      })
-      .filter(s => s.delta !== 0)
-      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-      .slice(0, 4);
-
-    // 最近読んでいない分野（過去に読んだが直近21日engagementなし）
-    const neglectedCategories = [...catCount.keys()].filter(c => !recentCats.has(c) && c !== 'その他');
-
-    // ペルソナ（一言）
-    const depthWord = depth >= 65 ? '実装重視' : depth <= 35 ? '理論重視' : 'バランス型';
-    const viewWord = view >= 70 ? 'ビジネス視点' : view <= 35 ? '研究者視点' : 'エンジニア視点';
-    const breadthWord = breadth >= 60 ? '広く収集' : breadth <= 35 ? '専門特化' : '';
-    const persona = [depthWord, viewWord, breadthWord].filter(Boolean).join('・');
-
-    return { totalEvents: events.length, radar, categoryDistribution, recentShift, neglectedCategories, persona };
-  } catch (error) {
-    await logError('compute reading profile', error);
     return null;
   }
 }
@@ -1178,113 +1018,6 @@ export async function getMyReadLater(): Promise<CollectedItem[]> {
     return items;
   } catch (error) {
     await logError('getMyReadLater', error);
-    return [];
-  }
-}
-
-// 興味/目標テキストの埋め込みベクトル（プロフィール変更時しか変わらないのでキャッシュ＝コスト最小）
-async function profileInterestVector(userId: number): Promise<number[] | null> {
-  try {
-    const [p] = await db.select({ interests: userProfiles.interests, goals: userProfiles.goals })
-      .from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
-    const text = `${p?.interests ?? ''}. ${p?.goals ?? ''}`.trim();
-    if (text.replace(/\./g, '').trim().length < 3) return null;
-    return await cached(`pvec:${userId}:${text}`, 30 * 60_000, async () => {
-      const { embeddings } = await embedMany({
-        model: google.embedding('gemini-embedding-001'),
-        values: [text.slice(0, 800)],
-        providerOptions: { google: { outputDimensionality: 768, taskType: 'RETRIEVAL_QUERY' } },
-      });
-      return embeddings[0] as number[];
-    });
-  } catch (e) {
-    console.warn('profileInterestVector failed:', e);
-    return null;
-  }
-}
-
-// 読書DNA連動の推薦: エンゲージ記事の重心に近い「未読・未お気に入り」記事
-export async function getRecommendations(): Promise<CollectedItem[]> {
-  try {
-    const userId = await currentUserId();
-    if (!userId) return [];
-    const ev = await db.select({ articleId: readingEvents.articleId })
-      .from(readingEvents).where(eq(readingEvents.userId, userId)).orderBy(desc(readingEvents.createdAt)).limit(40);
-    const engagedIds = [...new Set(ev.map(e => e.articleId).filter((v): v is number => v != null))];
-    const interestVec = await profileInterestVector(userId);
-
-    // 行動ベースの重心（エンゲージ2件以上で算出）
-    let behaviorCentroid: number[] | null = null;
-    if (engagedIds.length >= 2) {
-      const embRes = await client.execute({
-        sql: `SELECT vector_extract(embedding) AS emb FROM collected_data
-              WHERE embedding IS NOT NULL AND id IN (${engagedIds.map(() => '?').join(',')})`,
-        args: engagedIds,
-      });
-      const vecs = embRes.rows.map(r => { try { return JSON.parse(r.emb as string) as number[]; } catch { return null; } })
-        .filter((v): v is number[] => Array.isArray(v) && v.length > 0);
-      if (vecs.length > 0) {
-        const dim = vecs[0].length;
-        const c = new Array(dim).fill(0);
-        for (const v of vecs) for (let i = 0; i < dim; i++) c[i] += v[i];
-        for (let i = 0; i < dim; i++) c[i] /= vecs.length;
-        behaviorCentroid = c;
-      }
-    }
-
-    // 行動重心＋興味/目標ベクトルをブレンド（読書DNA × プロフィールのハイブリッド推薦）
-    const norm = (v: number[]) => { const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1; return v.map(x => x / n); };
-    let centroid: number[] | null;
-    if (behaviorCentroid && interestVec && behaviorCentroid.length === interestVec.length) {
-      const b = norm(behaviorCentroid), q = norm(interestVec);
-      centroid = b.map((x, i) => 0.6 * x + 0.4 * q[i]);
-    } else {
-      centroid = behaviorCentroid ?? interestVec ?? null;
-    }
-    if (!centroid) return [];
-
-    // 鮮度フィルタ: 直近30日の記事のみを候補に。
-    // （重心が過去履歴で固定のため、新しさを考慮しないと履歴に似た“昔の記事”ばかり出て更新されなくなる問題への対策）
-    // top_kは800と広めに取る（重心が古い話題を指す場合でも、直近30日の候補が痩せて毎回ほぼ同じ8件に
-    //   固定されるのを防ぐ＝鮮度フィルタ後のプールを十分確保する）。created_atも取得し再ランクに使う。
-    const recentCutoff = sqlTs(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
-    const nn = await client.execute({
-      sql: `SELECT cd.id AS id, cd.created_at AS created_at
-            FROM vector_top_k('collected_embedding_idx', vector32(?), 800) AS v
-            JOIN collected_data cd ON cd.rowid = v.id
-            LEFT JOIN user_article_state uas ON uas.article_id = cd.id AND uas.user_id = ?
-            WHERE COALESCE(uas.is_read, 0) = 0 AND COALESCE(uas.is_favorited, 0) = 0
-              AND cd.created_at >= ?`,
-      args: [JSON.stringify(centroid), userId, recentCutoff],
-    });
-    const engagedSet = new Set(engagedIds);
-    // 候補（意味的近さ順）。エンゲージ済みは除外
-    const cands = nn.rows
-      .map((r, i) => ({ id: Number(r.id), semRank: i, createdAt: String(r.created_at ?? '') }))
-      .filter(c => !engagedSet.has(c.id));
-    if (cands.length === 0) return [];
-    // 新しさ順位（created_at降順＝新しいほど0に近い）
-    const byRecency = [...cands].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const recRank = new Map(byRecency.map((c, i) => [c.id, i]));
-    // 意味的近さ7 : 新しさ3 でブレンド再ランク（小さいほど上位）。
-    // 意味の主役は保ちつつ、新着の関連記事を押し上げて“あなた向け”が日々回転するようにする。
-    const recIds = [...cands]
-      .sort((a, b) => (0.7 * a.semRank + 0.3 * (recRank.get(a.id) ?? 999))
-                    - (0.7 * b.semRank + 0.3 * (recRank.get(b.id) ?? 999)))
-      .slice(0, 8)
-      .map(c => c.id);
-    if (recIds.length === 0) return [];
-
-    const rows = await db.select(COLLECTED_SELECT)
-      .from(collectedData)
-      .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-      .where(inArray(collectedData.id, recIds));
-    const order = new Map(recIds.map((id, i) => [id, i]));
-    const items = parseCollectedRows(rows).sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));
-    await overlayUserState(items, userId);
-    return items;
-  } catch (error) {
-    await logError('fetch recommendations', error);
     return [];
   }
 }

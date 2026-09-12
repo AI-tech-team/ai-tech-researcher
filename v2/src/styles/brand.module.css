@@ -135,7 +135,12 @@
 }
 /* ナビの右側（検索・ログイン等）を差し込む枠。記事一覧もこのバーを共有する。 */
 .navRight { display: flex; align-items: center; gap: 6px; }
-.navBrand { font-weight: 700; font-size: 17px; letter-spacing: -0.02em; color: #fff; text-decoration: none; }
+/* ワードマーク＝「今朝の朝刊へ戻る」の導線。高さ23pxしか無くスマホで押しにくかったので
+   リンクの当たり判定を上下に広げる（44px目安・2026-09-12 実機計測）。 */
+.navBrand {
+  display: inline-flex; align-items: center; min-height: 44px;
+  font-weight: 700; font-size: 17px; letter-spacing: -0.02em; color: #fff; text-decoration: none;
+}
 .navLinks { display: flex; gap: 30px; }
 /* 上下の padding は指で押せる高さを作るため（文字だけだと 19px しかなかった）。 */
 .navLinks a {
@@ -229,14 +234,16 @@
 .close .row { justify-content: center; margin-top: 36px; }
 .close .lead { max-width: 40ch; margin: 26px auto 0; }
 
-.foot { background: var(--ink); border-top: 1px solid var(--hairline-ink); padding: 34px 24px 56px; }
+/* 奥付は常に黒。`.page` の外（記事ページ・カテゴリ一覧）でも使うので、
+   色は .page のカスタムプロパティではなく literal で持つ（未定義になると背景が透ける）。 */
+.foot { background: #000; border-top: 1px solid #1a1a1f; padding: 34px 24px 56px; }
 .footInner {
   max-width: 1000px; margin: 0 auto; display: flex; flex-wrap: wrap;
   gap: 12px 26px; align-items: center; justify-content: space-between;
-  font-size: 13px; color: var(--on-ink-faint);
+  font-size: 13px; color: #4a4a50;
 }
-.footInner a { color: var(--on-ink-dim); text-decoration: none; }
-.footInner a:hover { color: var(--on-ink); }
+.footInner a { color: #8e8e94; text-decoration: none; }
+.footInner a:hover { color: #f5f5f7; }
 .footLinks { display: flex; gap: 20px; flex-wrap: wrap; }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -482,4 +489,121 @@
 @media (max-width: 640px) {
   .navWide { display: none; }
   .navNarrow { display: inline-flex; }
+}
+
+/* 「後で読む」への入口（一覧ページ）。箱ではなく罫で仕切る＝川の組みに合わせる。 */
+.savedRow {
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 13px 0;
+  border-top: 1px solid var(--border-glass);
+  border-bottom: 1px solid var(--border-glass);
+  background: none; cursor: pointer; text-align: left;
+}
+.savedRow:hover .savedMore { color: var(--text-main); }
+.savedLabel {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; color: var(--text-main);
+}
+.savedCount {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px; font-weight: 700; color: var(--text-muted);
+}
+.savedMore {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--text-muted); transition: color .15s;
+}
+
+/* ── 記事ページ（/articles/[id]・オーバーレイ共用）──
+   箱に入れずに罫で仕切る。朝刊・記事一覧と同じ「小さいラベル → 大きい見出し → 本文」の組み。 */
+.artShell { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+.artHead { padding: 44px 0 0; }
+.artTop {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 11px; letter-spacing: .06em;
+}
+.artCat { font-weight: 700; text-transform: uppercase; text-decoration: none; }
+.artCat:hover { text-decoration: underline; text-underline-offset: 3px; }
+.artFacts { color: var(--text-muted); }
+.artFlag { display: inline-flex; align-items: center; gap: 4px; color: var(--accent-blue); }
+.artTitle {
+  margin: 16px 0 0; font-size: clamp(1.5rem, 4.2vw, 2.1rem); font-weight: 800;
+  line-height: 1.38; letter-spacing: -0.014em; color: var(--text-main);
+  text-wrap: balance;
+}
+.artTitleOrig { margin: 10px 0 0; font-size: .85rem; line-height: 1.7; color: var(--text-muted); }
+.artMeta {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 14px;
+  font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+/* 操作列。罫で本文と切る＝ボタンの箱を並べない。 */
+.artActions {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 22px; padding: 12px 0;
+  border-top: 1px solid var(--border-glass); border-bottom: 1px solid var(--border-glass);
+}
+.artBtn {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 40px; padding: 0 12px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--text-muted);
+  font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: none;
+  transition: color .16s ease, background-color .16s ease;
+}
+.artBtn:hover { color: var(--text-main); background: var(--card-bg-hover, rgba(128,128,140,.1)); }
+.artBtnOn { color: var(--accent-blue); }
+.artLink { margin-left: auto; }
+/* 節。見出しは小さいラベル、中身は本文サイズ。 */
+.artSection { margin-top: 34px; }
+.artLabel {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-muted); margin: 0 0 12px;
+}
+.artBadge { margin: 0 0 12px; }
+.artBody { margin: 0; font-size: 1rem; line-height: 1.95; color: var(--text-main); }
+.artNote { margin: 0; font-size: .95rem; line-height: 1.85; color: var(--text-muted); }
+.artPoints { list-style: none; margin: 0; padding: 0; }
+.artPoints li {
+  padding: 13px 0; border-top: 1px solid var(--border-glass);
+  font-size: .97rem; line-height: 1.85; color: var(--text-main);
+}
+.artPoints li:first-child { border-top: 0; padding-top: 0; }
+.artWhy {
+  margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-glass);
+}
+.artTags {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--border-glass);
+  font-size: 11.5px;
+}
+.artTags a { color: var(--text-muted); text-decoration: none; }
+.artTags a:hover { color: var(--text-main); }
+.artFoot { margin-top: 30px; padding-bottom: 24px; }
+.artBack { padding-bottom: 64px; }
+
+@media (max-width: 600px) {
+  .artShell { padding: 0 16px; }
+  .artHead { padding-top: 28px; }
+  .artSection { margin-top: 28px; }
+  .artLink { margin-left: 0; }
+}
+
+/* オーバーレイ（一覧からのソフト遷移）の上端バー。ページ内ナビではなく「閉じる」だけを置く。 */
+.sheetBar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 20px; background: #000; border-bottom: 1px solid #1a1a1f;
+}
+.sheetBrand {
+  font-size: 15px; font-weight: 800; letter-spacing: -0.01em;
+  color: #f5f5f7; text-decoration: none;
+}
+
+/* ── バーの折り返し防止（2026-09-12 iPhone 13 実機計測）──
+   390px幅で「記事を探/す」「トピッ/ク」「ログ/イン」と2行に折れ、バーの高さが250pxになっていた。
+   文字は折らず、狭いときはログインをアイコンだけにして幅を空ける。 */
+.navBrand, .navLinks a, .navBtn { white-space: nowrap; }
+@media (max-width: 600px) {
+  .navLabel { display: none; }
+  .navPill { padding: 0 10px; }
 }

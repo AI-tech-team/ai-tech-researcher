@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Send } from 'lucide-react';
 import { FEEDBACK_FORM_ACTION, FEEDBACK_ENTRY, FEEDBACK_ENTRY_EMAIL, CONTACT_EMAIL, SITE_NAME } from '@/lib/site';
+import { BrandNav } from '@/components/digest/BrandChrome';
 
 // 公開UIのフィードバック送信ページ（/feedback）。
 // 送信欄は独自UIだが、内容はGoogleフォーム(formResponse)へ直接POSTされ、オーナーは回答一覧で確認できる。匿名。
@@ -37,16 +38,7 @@ export default function FeedbackPage() {
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav />
 
       <main className="max-w-2xl mx-auto px-5 py-10 sm:py-14">
         <h1 className="text-2xl font-bold text-white font-outfit">フィードバック</h1>

@@ -1,13 +1,16 @@
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
-import { SITE_NAME } from '@/lib/site';
 import type { CollectedItem } from '@/types';
 import { noSummaryShort } from '@/lib/no-summary';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
 import { ObservedFacts } from '@/components/public/ObservedFacts';
+import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
+import s from '@/styles/brand.module.css';
 
 // カテゴリ/タグの記事一覧ページ本体（サーバ描画）。/category/[name] と /tag/[name] で共用。
 // 各記事は /articles/[id] への本物リンク。公開SEOページなのでユーザー状態は扱わない。
+//
+// 2026-09-12: 記事一覧（/articles）と同じ「罫で仕切る川」に揃えた。同じ内容の一覧が
+// 入口によって箱組みとリスト組みに分かれていたので、読者には別のサイトに見えていた。
 
 export function ArticleListView({ kicker, title, articles, topSlot, emptyText, paginationSlot, bottomSlot }: {
   kicker: string; title: string; articles: CollectedItem[];
@@ -18,47 +21,43 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText, p
 }) {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav />
 
-      <main className="max-w-2xl mx-auto px-5 py-10 sm:py-14">
-        <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-sky-400/80">{kicker}</p>
-        <h1 className="text-2xl sm:text-3xl font-bold text-white font-outfit leading-tight mt-2">
-          {title}
-          <span className="text-slate-500 text-base font-normal font-sans ml-2">{articles.length}件</span>
-        </h1>
+      <main id="main-content" className={`${s.listShell} pb-24`}>
+        <section className={s.listHead}>
+          <p className={s.listEyebrow}>{kicker}</p>
+          <h1 className={s.listTitle}>{title}</h1>
+          <p className={s.listLead}>{articles.length}件</p>
+        </section>
 
-        {topSlot && <div className="mt-5">{topSlot}</div>}
+        {topSlot && <div className={s.listSection}>{topSlot}</div>}
 
         {articles.length === 0 ? (
-          <p className="text-sm text-slate-400 leading-relaxed mt-6">{emptyText ?? '該当する記事がまだありません。'}</p>
+          <p className={s.listLead}>{emptyText ?? '該当する記事がまだありません。'}</p>
         ) : (
-          <div className="mt-6 flex flex-col gap-2">
+          <div className={`${s.river} ${s.listSection}`}>
             {articles.map((a) => (
-              <div key={a.id} className="rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] p-4 transition-colors group relative">
-                <div className="flex items-center gap-2 mb-1 font-mono text-[10px]">
+              <div key={a.id} className={s.riverItem} style={{ position: 'relative' }}>
+                <div className={s.riverTop}>
                   {a.category && (
-                    <Link href={`/category/${encodeURIComponent(a.category)}`} scroll={false} className="relative z-10 hover:underline underline-offset-2" style={{ color: CATEGORY_COLORS[a.category] ?? 'var(--cat-other)' }}>{a.category}</Link>
+                    <Link href={`/category/${encodeURIComponent(a.category)}`} scroll={false}
+                      className={s.riverCat} style={{ color: CATEGORY_COLORS[a.category] ?? 'var(--cat-other)', position: 'relative', zIndex: 1 }}>
+                      {a.category}
+                    </Link>
                   )}
                   {/* 決定④: ★ではなく数えただけの事実（ObservedFacts.tsx の先頭コメントに理由） */}
-                  <ObservedFacts item={a} className="text-slate-500" />
-                  {a.sourceValue && <span className="text-slate-600 truncate">· {a.sourceValue}</span>}
+                  <ObservedFacts item={a} className={s.riverTime} />
                 </div>
-                {/* カード全体を記事へのリンクに（カテゴリリンクは上のz-10で優先） */}
+                {/* 行全体を記事へのリンクに（カテゴリリンクは上の z-index で優先） */}
                 <Link href={`/articles/${a.id}`} scroll={false} className="absolute inset-0" aria-label={a.titleJa || a.title || '記事'} />
-                <p className="text-sm font-bold text-slate-100 leading-snug group-hover:text-white transition-colors">{a.titleJa || a.title || '無題'}</p>
+                <h2 className={s.riverTitle}>{a.titleJa || a.title || '無題'}</h2>
                 {a.summary
-              ? <p className="text-[12px] text-slate-400 leading-relaxed mt-1 line-clamp-2">{a.summary}</p>
-              /* 要約が無いときは空欄にせず理由を1行で（src/lib/no-summary.ts）。警告色は使わない */
-              : <p className="text-[12px] text-slate-500 leading-relaxed mt-1 line-clamp-1">{noSummaryShort(a)}</p>}
+                  ? <p className={s.riverSummary}>{a.summary}</p>
+                  /* 要約が無いときは空欄にせず理由を1行で（src/lib/no-summary.ts）。警告色は使わない */
+                  : <p className={s.riverNote}>{noSummaryShort(a)}</p>}
+                {a.sourceValue && (
+                  <div className={s.riverFoot}><span className={s.riverSource}>{a.sourceValue}</span></div>
+                )}
               </div>
             ))}
           </div>
@@ -67,13 +66,9 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText, p
         {paginationSlot}
 
         {bottomSlot}
-
-        <div className="mt-8">
-          <Link href="/" className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップに戻る
-          </Link>
-        </div>
       </main>
+
+      <BrandFooter />
     </div>
   );
 }

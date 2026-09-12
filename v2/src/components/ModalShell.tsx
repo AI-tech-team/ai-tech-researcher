@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { X } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
+import s2 from '@/styles/brand.module.css';
 
 // 一覧からのソフト遷移(intercept)で記事/レポートを全画面オーバーレイ表示する汎用シェル。
 // 裏のトップ(一覧)は保持されるので、閉じる(戻る)で再読み込みなし＝スクロール位置も維持。
@@ -28,21 +29,16 @@ export function ModalShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="fixed inset-x-0 top-0 h-[100dvh] z-[70] overflow-y-auto overscroll-contain bg-[var(--bg-color)]" onClick={close}>
       <div className="min-h-full" onClick={e => e.stopPropagation()}>
-        <header className="sticky top-0 z-10 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-          <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-            <Link href="/" className="flex items-center gap-2.5">
-              <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-            </Link>
-            <button onClick={close} aria-label="閉じる"
-              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-              <X size={16} /> 閉じる
-            </button>
-          </div>
+        {/* オーバーレイの上端はサイトのナビではなく「閉じる」。ここに全ページ共通のバーを
+            置くと、重なっている下の一覧のバーと二重になる（2026-09-12）。 */}
+        <header className={s2.sheetBar}>
+          <Link href="/" className={s2.sheetBrand}>{SITE_NAME}</Link>
+          <button onClick={close} aria-label="閉じる" className={s2.navBtn}>
+            <X size={16} /> 閉じる
+          </button>
         </header>
-        <main className="max-w-2xl mx-auto px-3 sm:px-5 py-6 sm:py-8 pb-[max(2rem,env(safe-area-inset-bottom))]">
-          <article className="rounded-2xl border border-white/10 bg-[var(--card-bg)]">
-            {children}
-          </article>
+        <main className="pb-[max(2rem,env(safe-area-inset-bottom))]">
+          {children}
         </main>
       </div>
     </div>

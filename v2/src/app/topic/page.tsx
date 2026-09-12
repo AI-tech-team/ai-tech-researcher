@@ -4,6 +4,7 @@ import { ArrowLeft, BookOpen } from 'lucide-react';
 import { SITE_NAME, SITE_URL } from '@/lib/site';
 import { getTopicIndex } from '@/app/actions';
 import { JsonLd } from '@/components/JsonLd';
+import { BrandNav } from '@/components/digest/BrandChrome';
 
 // トピック一覧。ここが無いと /topic/[name] へはサイト内から到達できず、sitemap と
 // 記事内リンクだけが入口になっていた（[[public-ui-overhaul]] の「在アプリ導線が無い」）。
@@ -80,16 +81,7 @@ export default async function TopicIndexPage() {
     <div className="min-h-screen">
       <JsonLd data={breadcrumb} />
       <JsonLd data={itemList} />
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav />
 
       <main className="max-w-2xl mx-auto px-5 py-10 sm:py-14">
         <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-cyan-400/80 flex items-center gap-1.5">

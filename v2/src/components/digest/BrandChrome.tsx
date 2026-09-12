@@ -1,32 +1,39 @@
 import Link from 'next/link';
 import { SITE_NAME } from '@/lib/site';
 import s from '@/styles/brand.module.css';
+import { BrandNavActions } from '@/components/digest/BrandNavActions';
 
 /**
- * 表側（トップ／過去の朝刊／紹介ページ）で共通のナビとフッタ。
- * 3ページに同じマークアップをコピーすると必ず片方だけ古くなるのでここに1つだけ置く。
+ * 全ページ共通のナビとフッタ。
+ *
+ * 2026-09-12: リンクも右側の操作も**引数で変えられないようにした**。以前は
+ * ページごとに links / cta を渡していたため、朝刊・記事一覧・紹介ページ・規約類で
+ * 上の段の中身が毎回組み替わり、「ページごとに変わってうざい」と指摘された。
+ * バーは1つ。どのページから見ても同じ位置に同じものがある状態を維持する。
  */
 
 /** `minor: true` は、画面が狭いときに最初に落とすリンク（フッタにも置いてあるもの）。 */
-export type NavLink = { href: string; label: string; minor?: boolean };
+type NavLink = { href: string; label: string; minor?: boolean };
 
-export function BrandNav({ links, cta, right }: { links: NavLink[]; cta?: NavLink; right?: React.ReactNode }) {
+const NAV: NavLink[] = [
+  { href: '/articles', label: '記事を探す' },
+  { href: '/topic', label: 'トピック' },
+  // スマホで入りきらないときに最初に落とす（フッタにも同じリンクがある）。
+  { href: '/about', label: 'このサービスについて', minor: true },
+];
+
+export function BrandNav() {
   return (
     <nav className={s.nav}>
       <div className={s.navInner}>
+        {/* ワードマークが「今朝の朝刊へ戻る」を兼ねる。だから朝刊はリンク一覧に置かない。 */}
         <Link className={s.navBrand} href="/">{SITE_NAME}</Link>
         <div className={s.navLinks}>
-          {links.map(l => (
-            l.href.startsWith('#')
-              ? <a key={l.href} href={l.href} className={l.minor ? s.navMinor : undefined}>{l.label}</a>
-              : <Link key={l.href} href={l.href} className={l.minor ? s.navMinor : undefined}>{l.label}</Link>
+          {NAV.map(l => (
+            <Link key={l.href} href={l.href} className={l.minor ? s.navMinor : undefined}>{l.label}</Link>
           ))}
         </div>
-        {/* 右端は「CTA」か「操作(検索・ログイン等)」のどちらか。両方無いページでも
-            space-between のためのダミーを置いて、ワードマークが中央に寄らないようにする。 */}
-        {right ? <div className={s.navRight}>{right}</div>
-          : cta ? <Link className={s.navCta} href={cta.href}>{cta.label}</Link>
-          : <span />}
+        <div className={s.navRight}><BrandNavActions /></div>
       </div>
     </nav>
   );

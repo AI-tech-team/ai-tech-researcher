@@ -7,26 +7,12 @@ import { signOut } from 'next-auth/react';
 import { getMyProfile, updateMyProfile, deleteMyAccount } from '@/app/actions';
 import { useToast } from '@/components/Toast';
 
-// 興味のプリセット（初心者向け：タップで追加でき、押すと大まかな説明が出る）
-const INTEREST_PRESETS: { label: string; desc: string }[] = [
-  { label: 'LLM推論', desc: '大規模言語モデル（ChatGPT等）の性能・推論・最適化の話題' },
-  { label: 'エージェント', desc: '自分で考えて作業を進める自律型AIの話題' },
-  { label: 'RAG', desc: '検索を組み合わせてAIの回答精度を上げる仕組み' },
-  { label: '画像/動画生成', desc: '画像や動画をつくる生成AIの話題' },
-  { label: 'ツール/フレームワーク', desc: '開発に使うライブラリや基盤ソフトの話題' },
-  { label: 'ハードウェア', desc: 'GPU・専用チップなどAI向けの計算資源' },
-  { label: 'ビジネス応用', desc: '製品や仕事へのAI導入・活用事例' },
-  { label: '研究/論文', desc: '最新の研究成果や論文の話題' },
-];
-
 type ProfileData = {
   email: string | null;
   name: string | null;
   image: string | null;
   memberSince: string | null;
   displayName: string;
-  interests: string;
-  goals: string;
   emailOptIn: boolean;
   hasProfile: boolean;
 };
@@ -38,28 +24,25 @@ interface Props {
 }
 
 // 公開UIのログインユーザー向けプロフィール編集モーダル。
-// 興味/目標を保存することで「あなた向け」推薦の精度が上がる。
+//
+// 2026-09-12: 「興味のあるテーマ」「目標・関心」の入力欄を外した。この2つは
+// 「あなた向け」推薦のためだけに集めていた項目で、その推薦を撤去した時点で
+// **書かせておいて何にも使わない個人情報**になる。集めない（第三条・PII最小化）。
 export function ProfileModal({ open, onClose, onSaved }: Props) {
   const { toast } = useToast();
   const [data, setData] = useState<ProfileData | null>(null);
-  const [interests, setInterests] = useState('');
-  const [goals, setGoals] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [hint, setHint] = useState('');
 
   // 開いたら最新のプロフィールを取得（setStateは全て.then内＝非同期、lintクリーン）
   useEffect(() => {
     if (!open) return;
-    setHint('');
     let cancelled = false;
     getMyProfile().then(p => {
       if (cancelled || !p) return;
       // プロフィール未作成（＝初めて開く人）は購読トグルを既定ONで見せる。
       // 既存ユーザーが明示的にOFFにした設定は尊重する。
       setData({ ...p, emailOptIn: p.hasProfile ? p.emailOptIn : true });
-      setInterests(p.interests ?? '');
-      setGoals(p.goals ?? '');
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [open]);
@@ -78,8 +61,6 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
       const r = await updateMyProfile({
         // displayNameは公開UIで非表示なので既存値をそのまま保持（消さない）
         displayName: data.displayName ?? '',
-        interests: interests.trim().slice(0, 400),
-        goals: goals.trim().slice(0, 400),
         emailOptIn: data.emailOptIn,
       });
       if (r.success) {
@@ -122,17 +103,6 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
     }
   };
 
-  // プリセットのタグをタップ → 追加/解除をトグル＋説明を表示
-  const interestList = interests.split(/[,、]/).map(s => s.trim()).filter(Boolean);
-  const toggleInterest = (label: string, desc: string) => {
-    setHint(desc);
-    setInterests(
-      interestList.includes(label)
-        ? interestList.filter(x => x !== label).join(', ')
-        : [...interestList, label].join(', '),
-    );
-  };
-
   return (
     <AnimatePresence>
       {open && (
@@ -167,43 +137,12 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
                 </div>
               </div>
 
-              {/* 興味 */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">興味のあるテーマ</label>
-                {/* 初心者向け：タップで追加。押すと大まかな説明が出る */}
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {INTEREST_PRESETS.map(p => {
-                    const active = interestList.includes(p.label);
-                    return (
-                      <button key={p.label} type="button" title={p.desc}
-                        onClick={() => toggleInterest(p.label, p.desc)}
-                        className={`px-2.5 py-1 rounded-full border text-[11px] transition-colors ${active ? 'border-sky-500/40 bg-sky-500/15 text-sky-300' : 'border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.07]'}`}>
-                        {active ? '✓ ' : ''}{p.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {hint && <p className="text-[11px] text-sky-300/80 mb-2 leading-relaxed">💡 {hint}</p>}
-                <textarea value={interests} onChange={e => setInterests(e.target.value)} maxLength={400} rows={2}
-                  placeholder="LLM推論, エージェント, RAG, etc."
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors resize-none" />
-                <p className="text-[10px] text-slate-600 mt-1">タグをタップで追加／もう一度タップで解除。自由入力もOK。「あなた向け」の精度が上がります。</p>
-              </div>
-
-              {/* 目標 */}
-              <div>
-                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">目標・関心（任意）</label>
-                <textarea value={goals} onChange={e => setGoals(e.target.value)} maxLength={400} rows={3}
-                  placeholder="自分のRAGアプリを改善したい / 業界トレンドを追いたい …"
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-sky-500/50 transition-colors resize-none" />
-              </div>
-
-              {/* メール配信設定（毎朝のあなた向けダイジェスト） */}
-              <div className="flex items-center justify-between gap-3 border-t border-white/5 pt-4">
+              {/* メール配信設定（毎朝のダイジェスト） */}
+              <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[13px] font-bold text-slate-200">毎朝のメールダイジェスト</p>
                   <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                    あなたの興味に近い新着を毎朝メールでお届けします。いつでも停止できます。
+                    今朝の朝刊を毎朝メールでお届けします。いつでも停止できます。
                   </p>
                 </div>
                 <button type="button" role="switch" aria-checked={data?.emailOptIn ?? false}
@@ -226,7 +165,7 @@ export function ProfileModal({ open, onClose, onSaved }: Props) {
               <div className="border-t border-white/5 pt-4">
                 <p className="text-[11px] font-bold text-rose-400/80 uppercase tracking-wider mb-1">アカウントの削除</p>
                 <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
-                  退会すると、アカウント情報・お気に入り・後で読む・既読・興味/目標・チャット履歴などの個人データをサーバーから削除します。共有の記事データは残ります。この操作は取り消せません。
+                  退会すると、アカウント情報・お気に入り・後で読む・既読・チャット履歴などの個人データをサーバーから削除します。共有の記事データは残ります。この操作は取り消せません。
                 </p>
                 <button onClick={handleDelete} disabled={deleting}
                   className="text-xs font-bold text-rose-300 border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg px-3 py-1.5 transition-colors disabled:opacity-50">

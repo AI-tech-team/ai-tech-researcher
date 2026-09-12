@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { SITE_NAME } from '@/lib/site';
 import { CHANGELOG, LAUNCH_DATE, RELEASE_STAGE, type ChangeCategory } from '@/lib/changelog';
+import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
   title: '更新履歴',
@@ -39,16 +40,7 @@ const VERSION_STYLE: Record<Tier, string> = {
 export default function ChangelogPage() {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav />
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
         <div className="flex items-center gap-2.5 flex-wrap">

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { SITE_NAME, CONTACT_EMAIL } from '@/lib/site';
+import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
   title: '利用規約',
@@ -16,16 +17,7 @@ function H({ children }: { children: React.ReactNode }) {
 export default function TermsPage() {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav />
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
         <h1 className="text-2xl font-bold text-white font-outfit">利用規約</h1>
@@ -40,7 +32,7 @@ export default function TermsPage() {
         <H>1. サービス内容</H>
         <p className="text-sm text-slate-400 leading-relaxed">
           本サービスは、公開されているAI・技術関連の情報を自動で収集し、要約・分析してお届けする個人運営の無料サービスです。
-          閲覧は無料で、ログインなしでご利用いただけます。一部の機能（保存・あなた向け表示・メール配信など）はGoogleログインが必要です。
+          閲覧は無料で、ログインなしでご利用いただけます。一部の機能（お気に入り・後で読む・メール配信など）はGoogleログインが必要です。
         </p>
 
         <H>2. アカウント</H>

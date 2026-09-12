@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { SITE_NAME, CONTACT_EMAIL } from '@/lib/site';
+import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
   title: 'プライバシーポリシー',
@@ -16,16 +17,7 @@ function H({ children }: { children: React.ReactNode }) {
 export default function PrivacyPage() {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav />
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
         <h1 className="text-2xl font-bold text-white font-outfit">プライバシーポリシー</h1>
@@ -39,7 +31,7 @@ export default function PrivacyPage() {
         <H>取得する情報</H>
         <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-1.5">
           <li><span className="text-slate-200">アカウント情報</span> — Googleログインを利用した場合に、メールアドレス・表示名・プロフィール画像を取得します。</li>
-          <li><span className="text-slate-200">アプリ内の操作</span> — お気に入り／後で読む／既読の状態、プロフィールに入力した興味・目標。あなた向けの表示と状態の保存に使います。</li>
+          <li><span className="text-slate-200">アプリ内の操作</span> — お気に入り／後で読む／既読の状態。保存した記事をあなたの端末間で引き継ぐために使います。</li>
         </ul>
 
         {/* 「IPアドレスを取得しません」と断言していたが、Vercel Web Analytics は訪問者の重複判定のため
@@ -56,7 +48,7 @@ export default function PrivacyPage() {
 
         <H>利用目的</H>
         <p className="text-sm text-slate-400 leading-relaxed">
-          取得した情報は、あなた向けのおすすめ表示・保存した記事の管理・サービス改善のためにのみ利用します。
+          取得した情報は、保存した記事の管理・メール配信・サービス改善のためにのみ利用します。
           閲覧のみであればログインは不要で、上記アカウント情報は取得しません。
         </p>
 
@@ -118,7 +110,7 @@ export default function PrivacyPage() {
         </p>
         <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-1.5 mt-1.5">
           <li><span className="text-slate-200">処理の法的根拠</span> — アカウント機能の提供は契約の履行（GDPR 6条1項(b)）、
-            おすすめ表示の改善とサービスの安全確保は正当な利益（同(f)）、メール配信は同意（同(a)）に基づきます。
+            サービスの安全確保と改善は正当な利益（同(f)）、メール配信は同意（同(a)）に基づきます。
             同意はいつでも撤回でき、撤回前の処理の適法性には影響しません。</li>
           <li><span className="text-slate-200">あなたの権利</span> — アクセス（15条）、訂正（16条）、消去（17条）、
             処理の制限（18条）、データポータビリティ（20条）、異議（21条）、同意の撤回（7条3項）を行使できます。
@@ -126,8 +118,8 @@ export default function PrivacyPage() {
           <li><span className="text-slate-200">国外移転</span> — ホスティング・データベース・認証に米国等のクラウド事業者を利用しており、
             移転は各事業者の標準契約条項（SCC）または十分性認定に基づいて行われます。</li>
           <li><span className="text-slate-200">苦情の申立て</span> — お住まいの国の監督機関（英国は ICO）に苦情を申し立てる権利があります。</li>
-          <li><span className="text-slate-200">自動化された意思決定</span> — 法的効果を生じさせる自動化された意思決定やプロファイリングは行いません。
-            記事のおすすめ表示は行いますが、これはあなたの権利や地位に影響しません。</li>
+          <li><span className="text-slate-200">自動化された意思決定</span> — 自動化された意思決定やプロファイリングは行いません。
+            記事の選別はすべての読者に同一で、個人の閲覧履歴に応じて出し分けることはありません。</li>
         </ul>
 
         <H>お問い合わせ</H>

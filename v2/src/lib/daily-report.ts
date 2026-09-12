@@ -8,6 +8,8 @@ import { collectedData, reports, claims, benchmarks, adoptionLogs } from '@/db/s
 import { desc, gte, and, lt, eq, count, sql } from 'drizzle-orm';
 import { withRetry } from '@/lib/llm';
 import { CHARS_PER_MINUTE, readableLength } from '@/lib/reading-time';
+import { extractHighlightSection } from '@/lib/digest-highlights';
+import { logError } from '@/lib/logError';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
 // 比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日がズレる）。
@@ -28,26 +30,31 @@ const TOP_N = 40;
 const PER_DOMAIN_CAP = 5;
 
 /**
- * セクション別の字数上限。読者が「3分／5分／7分」で読み終えられるよう積み上げてある。
- *   ハイライトまで        1,800字 = 3分  ← 商品の約束
- *   ＋トレンド＋カテゴリ  3,000字 = 5分
- *   ＋インサイト          4,200字 = 7分（＝全文）
+ * セクション別の字数上限。合計 1,800字 = 3分 ＝ **号1本を読み終えるまでの約束そのもの**。
+ *
+ * ⚠ 2026-09-12 に引き直した。それまでは「ハイライトまで3分／全文7分」という積み上げで、
+ *   ハイライト単体は3分に収まっていても**号全体は4分53秒**あった。読者に約束しているのは
+ *   「1号を読み終わるまで3分」なので、全文の合計を1,800字に下げる。
+ *   （/about の実測表示もハイライトだけを測っていたため 2分25秒 と出て、トップの 4分53秒 と
+ *   食い違っていた。表示側は digestReadingSeconds＝号全体に統一済み。）
  *
  * ⚠ この数字は **プロンプトには渡さない**（渡しても効かない。REPORT_SYSTEM_PROMPT のコメント参照）。
  *   長さは構造指定で抑え、ここは生成後の監視にだけ使う。
  *   きっかけ: 2026-09-10 に7日分を実測したところ「全体1500〜2000文字」と指示済みなのに
- *   実際は 4,269〜5,655字（約2.5倍）、ハイライトだけでも 2分38秒〜4分08秒で、
- *   3分の約束を7日中3日で破っていた。
+ *   実際は 4,269〜5,655字（約2.5倍）だった。
  */
 export const SECTION_BUDGET = [
-  { mark: '🔥', name: '今日のハイライト', max: 1800 },
-  { mark: '🚀', name: '急上昇トレンド', max: 400 },
-  { mark: '📊', name: 'カテゴリ別トピック', max: 800 },
-  { mark: '💡', name: 'エンジニアへの実践的インサイト', max: 1200 },
+  { mark: '🔥', name: '今日のハイライト', max: 1100 },
+  { mark: '🚀', name: '急上昇トレンド', max: 150 },
+  { mark: '📊', name: 'カテゴリ別トピック', max: 250 },
+  { mark: '💡', name: 'エンジニアへの実践的インサイト', max: 300 },
 ] as const;
 
-/** 全文の上限（＝7分）。各セクション上限の合計。 */
+/** 全文の上限（＝3分）。各セクション上限の合計。 */
 const TOTAL_BUDGET = SECTION_BUDGET.reduce((n, s) => n + s.max, 0);
+
+/** ハイライトの必要本数。商品の約束（毎朝5本）そのものなので、生成後に必ず数える。 */
+export const REQUIRED_HIGHLIGHTS = 5;
 
 // 読了時間の測り方は表示側（/about）と共通にする（src/lib/reading-time.ts）。
 // ここで別実装を持つと「生成側では3分以内、表示側では3分超」というズレが起きる。
@@ -64,6 +71,19 @@ export function checkBudget(text: string): { name: string; len: number; max: num
     if (len > s.max) over.push({ name: s.name, len, max: s.max });
   }
   return over;
+}
+
+/**
+ * ハイライトの本数を数える。`### 1.` 〜 `### 5.` の見出しの数がそのまま本数。
+ *
+ * ⚠ プロンプトに「5点」と書いてあっても4本で返ってくる日がある（本人からの指摘・2026-09-12）。
+ *   LLMは数を数えられない（[[pattern-llm-cannot-count]]）ので、約束した本数は
+ *   **生成後に自分で数える**。ここは判定であって推測ではない。
+ */
+export function countHighlights(text: string): number {
+  const section = extractHighlightSection(text ?? '');
+  if (!section) return 0;
+  return (section.match(/^###\s+/gm) ?? []).length;
 }
 
 /** 超過の一覧を1行のログにする。 */
@@ -89,28 +109,29 @@ export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナ�
 
 【必須構成】
 ## 🔥 今日のハイライト
-記事を5点。各項目は必ず次の形で書く（### の見出しは省略しない）。
+記事を**ちょうど5点**。4点でも6点でもなく5点。各項目は必ず次の形で書く（### の見出しは省略しない）。
 
 ### 1. （記事の見出しを1行で）
-*   **何が起きたか**: 1〜2文
-*   **なぜ重要か**: 1〜2文
-*   **実務への影響**: 1〜2文
+*   **何が起きたか**: 1文
+*   **なぜ重要か**: 1文
+*   **実務への影響**: 1文
 
-### 2.（以下同じ形で5点まで）
+### 2.（以下同じ形で、### 5. まで必ず書く）
 
 ## 🚀 急上昇トレンド
-2〜3文で書く。
+2文で書く。
 
 ## 📊 カテゴリ別トピック
-カテゴリは最大4つ。各カテゴリは ### 見出しで区切る。1カテゴリにつき最大2項目、1項目1〜2文。
+カテゴリは最大3つ。各カテゴリは ### 見出しで区切る。1カテゴリにつき1項目、1項目1文。
 
 ## 💡 エンジニアへの実践的インサイト
-4項目以内。1項目1〜2文。
+3項目以内。1項目1文。
 
 【ルール】
 - **1文を長くしない。** 読点でつないで1文を伸ばすのは禁止。1文はおよそ50〜70字で終える
 - **行数・項目数の指定を超えない。** 書きたいことが多いときは、項目を増やさず優先度の低いものを落とす
 - ハイライトの各項目には必ず ### の見出し（その記事のタイトル）を付ける。見出しの無い箇条書きだけの項目は不可
+- **ハイライトの ### 見出しは 1. から 5. まで、5つとも必ず出す。**材料が足りないと感じても、関連の薄い記事を5本目に回さず、収集データの中から最も読む価値のあるものを選んで5本にする
 - 収集データは前回レポート以降の新着のみ。**前回レポートで既に扱った話題は、新しい進展がある場合だけ「続報」として扱い、単なる繰り返し・焼き直しは禁止**
 - 主観でなく客観的な事実ベースで記述
 - 絵文字・箇条書きを活用`;
@@ -273,7 +294,34 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
 
   const userPrompt = `今日の日付: ${today}${trendText}${evidenceText}${prevSection}\n\n【新着の収集データ（重要度順・${recentData.length}件）】\n${contextStr}`;
 
-  const { text } = await withRetry(() => generateText({ model, system, prompt: userPrompt }));
+  let text = (await withRetry(() => generateText({ model, system, prompt: userPrompt }))).text;
+
+  // ── ハイライトが5本あるか（商品の約束）──
+  // 足りなければ**1回だけ**引き直す。字数と違って「本数」はLLMも数えられる形の指示なので、
+  // 不足を具体的に伝える再生成には意味がある（字数の再指示は逆効果だった。下のコメント参照）。
+  // 2回目も足りなければ、短い号を出す方を選ぶ（欠落より冗長、ではなく**沈黙より露出**）。
+  // そのうえで必ず通知する＝気づかないまま4本の日が続くのを防ぐ。
+  let highlights = countHighlights(text);
+  if (text?.trim() && highlights < REQUIRED_HIGHLIGHTS) {
+    console.warn(`[Report] ハイライトが${highlights}本しかない → 1回だけ再生成する`);
+    const retryPrompt = userPrompt
+      + `\n\n【やり直しの指示】前回の出力は「## 🔥 今日のハイライト」の ### 見出しが${highlights}個しかありませんでした。`
+      + `### 1. から ### ${REQUIRED_HIGHLIGHTS}. まで、${REQUIRED_HIGHLIGHTS}個すべて出力してください。他の構成は同じで構いません。`;
+    try {
+      const retry = (await withRetry(() => generateText({ model, system, prompt: retryPrompt }))).text;
+      const n = countHighlights(retry);
+      if (retry?.trim() && n > highlights) { text = retry; highlights = n; }
+    } catch (e) {
+      console.warn('[Report] 再生成に失敗（元の出力をそのまま使う）:', e);
+    }
+  }
+  if (text?.trim() && highlights < REQUIRED_HIGHLIGHTS) {
+    await logError(
+      'daily-report highlights',
+      new Error(`今朝の朝刊のハイライトが ${highlights}/${REQUIRED_HIGHLIGHTS} 本です（再生成しても揃いませんでした）`),
+      { alert: true },
+    );
+  }
 
   // 長さは REPORT_SYSTEM_PROMPT の構造指定で抑える。ここでは**測るだけ**で書き直させない。
   //

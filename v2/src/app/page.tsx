@@ -19,13 +19,6 @@ import s from '@/styles/brand.module.css';
 //   ログインの有無で出し分けているのは <MailCta> だけで、あれはクライアント側で判定する。
 export const revalidate = 300;
 
-const NAV = [
-  { href: '/articles', label: '記事を探す' },
-  { href: '/search', label: '検索' },
-  // スマホで入りきらないときに最初に落とす（フッタにも同じリンクがある）。
-  { href: '/about', label: 'このサービスについて', minor: true },
-];
-
 export default async function Page() {
   // 一過性のDB失敗を「朝刊が無い日」としてISRに5分焼き付けないため、1回だけ引き直す。
   // getLandingDigest は失敗もデータ無しも null を返すので、ここで区別せずに再試行する。
@@ -38,7 +31,7 @@ export default async function Page() {
   if (!digest) {
     return (
       <div className={s.page}>
-        <BrandNav links={NAV} />
+        <BrandNav />
         <main id="main-content" className={`${s.bandInk} ${s.band}`}>
           <div className={s.measure}>
             <p className={`${s.eyebrow} ${s.eyebrowInk}`}>朝刊</p>
@@ -63,7 +56,7 @@ export default async function Page() {
 
   return (
     <div className={s.page}>
-      <BrandNav links={NAV} />
+      <BrandNav />
 
       <IssueHeader
         eyebrow="朝刊"

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickTopWithDomainCap, readableLength, checkBudget, SECTION_BUDGET } from './daily-report';
+import { pickTopWithDomainCap, readableLength, checkBudget, SECTION_BUDGET, countHighlights, REQUIRED_HIGHLIGHTS } from './daily-report';
 
 const u = (host: string, n: number) => ({ url: `https://${host}/a${n}` });
 
@@ -105,18 +105,48 @@ test('セクションが欠けていても落ちない', () => {
   assert.deepEqual(checkBudget('前書きだけで見出しが無い本文'), []);
 });
 
-test('ハイライトの上限は3分ぶん（読了速度 600字/分）', () => {
+// 約束は「1号を読み終わるまで3分」。2026-09-12にセクション積み上げを引き直した
+// （旧: ハイライトまで3分／全文7分 ＝ 号全体は4分53秒あった）。
+test('全セクションの合計が3分ぶん＝号1本の約束', () => {
+  const total = SECTION_BUDGET.reduce((n, s) => n + s.max, 0);
+  assert.equal(total, 3 * 600, 'ここがずれると「3分で読み終わる」の約束が変わる');
+});
+
+test('ハイライトが号の大半を占める（残りは添え物）', () => {
   const hi = SECTION_BUDGET.find(s => s.name === '今日のハイライト');
   assert.ok(hi);
-  assert.equal(hi.max, 3 * 600, 'ここがずれると「3分」の約束が変わる');
+  const rest = SECTION_BUDGET.filter(s => s.name !== '今日のハイライト').reduce((n, s) => n + s.max, 0);
+  assert.ok(hi.max > rest, `ハイライト${hi.max}字 ≦ その他${rest}字 では主役が入れ替わっている`);
 });
 
-test('ハイライト＋トレンド＋カテゴリ別で5分ぶん', () => {
-  const upTo = SECTION_BUDGET.slice(0, 3).reduce((n, s) => n + s.max, 0);
-  assert.equal(upTo, 5 * 600);
+
+// ── ハイライトの本数ゲート（2026-09-12）──
+// 「毎朝5本」は商品の約束。プロンプトに5点と書いても4本で返る日があるので、生成後に数える。
+const issue = (n: number) => {
+  const items = [...Array(n)].map((_, i) =>
+    `### ${i + 1}. 記事の見出し${i + 1}
+*   **何が起きたか**: 起きたこと。
+*   **なぜ重要か**: 理由。
+*   **実務への影響**: 影響。`,
+  ).join('\n\n');
+  return `## 🔥 今日のハイライト
+${items}
+
+## 🚀 急上昇トレンド
+本文。
+`;
+};
+
+test('ハイライトの本数を ### の数で数える', () => {
+  assert.equal(countHighlights(issue(5)), 5);
+  assert.equal(countHighlights(issue(4)), 4);
 });
 
-test('全セクションの合計は7分ぶん', () => {
-  const total = SECTION_BUDGET.reduce((n, s) => n + s.max, 0);
-  assert.equal(total, 7 * 600, '全文＝7分ぶん');
+test('ハイライト節が無ければ0本（他節の ### を数えない）', () => {
+  assert.equal(countHighlights(''), 0);
+  assert.equal(countHighlights('## 📊 カテゴリ別トピック\n### LLM推論\n本文。'), 0);
+});
+
+test('必要本数は5（変えるときは約束そのものを変えることになる）', () => {
+  assert.equal(REQUIRED_HIGHLIGHTS, 5);
 });

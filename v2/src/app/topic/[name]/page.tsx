@@ -9,6 +9,7 @@ import { isPublishableEntity, ENTITY_TYPE_LABELS, classifyEntityType } from '@/l
 import { isValidBenchmarkName, isValidBenchmarkUnit, canonicalBenchmarkName, isValidClaim } from '@/lib/knowledge-quality';
 import { JsonLd } from '@/components/JsonLd';
 import { ObservedFacts } from '@/components/public/ObservedFacts';
+import { BrandNav } from '@/components/digest/BrandChrome';
 
 // ⚠️ 関係タイプ（買収/競合/性能で上回る…）は表示しない。
 // 2026-09-09 の本番実測で /topic/OpenAI が「買収 → Anthropic / Apple / Google / Hugging Face /
@@ -132,16 +133,7 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
   return (
     <div className="min-h-screen">
       <JsonLd data={breadcrumb} />
-      <header className="sticky top-0 z-30 backdrop-blur-md bg-[var(--bg-color)]/85 border-b border-white/5">
-        <div className="max-w-2xl mx-auto flex items-center justify-between px-5 py-3">
-          <Link href="/" className="flex items-center gap-2.5">
-            <span className="font-bold text-sm font-outfit">{SITE_NAME}</span>
-          </Link>
-          <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft size={13} /> トップ
-          </Link>
-        </div>
-      </header>
+      <BrandNav />
 
       <main className="max-w-2xl mx-auto px-5 py-10 sm:py-14">
         <p className="font-mono text-[11px] tracking-[0.2em] uppercase text-cyan-400/80 flex items-center gap-1.5"><BookOpen size={12} />Topic</p>
