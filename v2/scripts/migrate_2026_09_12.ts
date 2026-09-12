@@ -68,14 +68,20 @@ async function main() {
         score = COALESCE((SELECT MAX(s2.score) FROM sources s2 WHERE s2.value = sources.value), score),
         last_hit_at = COALESCE((SELECT MAX(s2.last_hit_at) FROM sources s2 WHERE s2.value = sources.value), last_hit_at)
       WHERE id IN (SELECT MIN(id) FROM sources GROUP BY value)`);
-    // collected_data.source_id が消える行を指していると参照が切れるので、残す行へ付け替える。
-    const re = await client.execute(`
-      UPDATE collected_data SET source_id = (
-        SELECT MIN(s2.id) FROM sources s2
-        WHERE s2.value = (SELECT s3.value FROM sources s3 WHERE s3.id = collected_data.source_id))
-      WHERE source_id IS NOT NULL
-        AND source_id NOT IN (SELECT MIN(id) FROM sources GROUP BY value)`);
-    console.log(`     記事 ${re.rowsAffected} 件の source_id を残す行へ付け替え`);
+    // sources.id を参照している表は collected_data と adoption_logs の2つ（PRAGMA foreign_key_list で確認）。
+    // 消える行を指したままだと DELETE が FOREIGN KEY constraint failed で落ちるので、両方付け替える。
+    for (const tbl of ['collected_data', 'adoption_logs']) {
+      const re = await client.execute(`
+        UPDATE ${tbl} SET source_id = (
+          SELECT MIN(s2.id) FROM sources s2
+          WHERE s2.value = (SELECT s3.value FROM sources s3 WHERE s3.id = ${tbl}.source_id))
+        WHERE source_id IS NOT NULL
+          AND source_id NOT IN (SELECT MIN(id) FROM sources GROUP BY value)
+          -- 既に存在しない source_id を指している行（孤児）は触らない。
+          -- 無条件に更新すると付け替え先が見つからず source_id が NULL に書き換わる＝黙ったデータ欠損。
+          AND EXISTS (SELECT 1 FROM sources s4 WHERE s4.id = ${tbl}.source_id)`);
+      console.log(`     ${tbl} ${re.rowsAffected} 行の source_id を残す行へ付け替え`);
+    }
     const del = await client.execute(`
       DELETE FROM sources WHERE id NOT IN (SELECT MIN(id) FROM sources GROUP BY value)`);
     console.log(`     重複 ${del.rowsAffected} 行を削除`);
