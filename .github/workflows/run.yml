@@ -2,18 +2,31 @@ name: Research Pipeline
 
 on:
   schedule:
-    # GitHub Actions の schedule は大幅に遅延する（2026-07-08 実測+1h49m）ため、フル実行は
-    # 深夜に前倒しし、レポート生成＋メール配信は同ジョブ内で 21:00 UTC (06:00 JST) まで待機してから実行する。
-    - cron: '7 18 * * *'      # 毎日 03:07 JST 起動 (full: 収集〜知識抽出 → 06:00 JST にレポート生成＋配信)
-    # 2026-09-12: 収集を1日3回→6回に。3回だと 18:00→翌03:07 の9時間が空き、
-    # 公開から収集までの遅れが中央値5.7時間・6時間以内は52.5%しかなかった（実測14日3,078本）。
+    # ⚠ GitHub Actions の `schedule` は大幅に遅れる。時刻が重要なものをここに置いてはいけない。
+    #   2026-09-12 実測（直近20日・pipeline_logs から逆算）: 遅延の中央値 +167分、最大 +482分。
+    #   8月下旬は +37〜47分だったので悪化し続けている。旧 '7 18'（03:07 JST）は 06:00 まで
+    #   173分しか余裕が無く、遅延だけで食い潰されて実際の起動が 05:54・終了が 06:31 JST に
+    #   なっていた＝メールが6:30着になっていた原因。
+    #
+    #   → フル実行とレポート配信（＝時刻の約束があるもの）は `schedule` から外し、
+    #     外部スケジューラが GitHub API で `workflow_dispatch` を叩いて起動する。
+    #     dispatch イベントは schedule の待ち行列に入らないので遅れない。
+    #       03:07 JST → report_type=daily （収集〜知識抽出）
+    #       06:00 JST → report_type=report（レポート生成＋配信）
+    #     設定手順は docs/external-scheduler.md。
+    #
+    #   ここに残す `schedule` は「締切の無いもの」だけ＝遅れても害が無い。
+    #   外部スケジューラが止まっても収集だけは続き、12:17 の回がレポートを自己修復する。
+    # 収集は1日6回。3回だと 18:00→翌03:07 の9時間が空き、公開から収集までの遅れが
+    # 中央値5.7時間・6時間以内は52.5%しかなかった（実測14日3,078本）。
     # リポジトリは公開なので Actions の実行時間は無料。
-    - cron: '0 0 * * *'       # 毎日 09:00 JST (collect-only)
-    - cron: '0 3 * * *'       # 毎日 12:00 JST (collect-only＋レポート自己修復)
-    - cron: '0 6 * * *'       # 毎日 15:00 JST (collect-only)
-    - cron: '0 9 * * *'       # 毎日 18:00 JST (collect-only)
-    - cron: '0 12 * * *'      # 毎日 21:00 JST (collect-only)
-    - cron: '0 20 * * 0'      # 毎週日曜 05:00 JST (週次バックアップ)
+    - cron: '17 21 * * *'     # 毎日 06:17 JST (collect-only)
+    - cron: '17 0 * * *'      # 毎日 09:17 JST (collect-only)
+    - cron: '17 3 * * *'      # 毎日 12:17 JST (collect-only＋レポート自己修復)
+    - cron: '17 6 * * *'      # 毎日 15:17 JST (collect-only)
+    - cron: '17 9 * * *'      # 毎日 18:17 JST (collect-only)
+    - cron: '17 12 * * *'     # 毎日 21:17 JST (collect-only)
+    - cron: '43 20 * * 0'     # 毎週日曜 05:43 JST (週次バックアップ)
     # ※ 週次/月次レポートは daily pipeline(full) が日曜/月初に判定して生成する（サイト掲載のみ・メールなし）。
   workflow_dispatch:
     inputs:
@@ -57,7 +70,7 @@ jobs:
       # 日次フルパイプライン: 収集・ベクトル化・知識抽出・(日曜/月初は週次/月次レポート生成)。
       # デイリーレポートの生成＋メールはここでは行わず、下の Report ステップが 06:00 JST に実行する。
       - name: Run Daily Pipeline (full)
-        if: github.event.schedule == '7 18 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily')
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily'
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -71,24 +84,9 @@ jobs:
           REPORT_TO: ${{ secrets.REPORT_TO }}   # 失敗通知メールの宛先
         run: cd v2 && npx tsx daily_pipeline.ts
 
-      # 06:00 JST (21:00 UTC) ちょうどまで待機。起動遅延があっても 03:07 JST 起動＋約3時間の余裕で吸収する。
-      # 万一 06:00 を過ぎて起動した場合は待たずに即レポートを生成する（遅れてでも届ける）。
-      # always(): フル実行が失敗した日でも 06:00 のレポート配信は止めない（自己修復と二重の保険）
-      - name: Wait until 06:00 JST
-        if: always() && github.event.schedule == '7 18 * * *'
-        run: |
-          target=$(date -u -d 'today 21:00' +%s)
-          now=$(date -u +%s)
-          if [ "$now" -lt "$target" ]; then
-            echo "Waiting $((target - now))s until 21:00 UTC (06:00 JST)"
-            sleep $((target - now))
-          else
-            echo "Already past 21:00 UTC, generating report immediately"
-          fi
-
-      # デイリーレポート生成＋購読者全員へ同一ダイジェスト配信（06:00 JST ピッタリ）
+      # レポート生成＋購読者全員へ同一ダイジェスト配信。外部スケジューラが 06:00 JST に叩く。
       - name: Generate & Send Daily Report (06:00 JST)
-        if: always() && (github.event.schedule == '7 18 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'report'))
+        if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'report'
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -108,7 +106,7 @@ jobs:
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Run Collection (09/12/15/18/21 JST)
-        if: github.event.schedule == '0 0 * * *' || github.event.schedule == '0 3 * * *' || github.event.schedule == '0 6 * * *' || github.event.schedule == '0 9 * * *' || github.event.schedule == '0 12 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'collect')
+        if: github.event.schedule == '17 21 * * *' || github.event.schedule == '17 0 * * *' || github.event.schedule == '17 3 * * *' || github.event.schedule == '17 6 * * *' || github.event.schedule == '17 9 * * *' || github.event.schedule == '17 12 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'collect')
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -164,14 +162,14 @@ jobs:
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Weekly DB Backup
-        if: github.event.schedule == '0 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup')
+        if: github.event.schedule == '43 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup')
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: cd v2 && npx tsx scripts/backup.ts
 
       - name: Commit DB Backup
-        if: github.event.schedule == '0 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup')
+        if: github.event.schedule == '43 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup')
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
