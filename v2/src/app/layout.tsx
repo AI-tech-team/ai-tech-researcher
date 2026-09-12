@@ -34,19 +34,34 @@ const THEME_INIT_JS =
 const SPLASH_SESSION_GATE_JS =
   "try{if(sessionStorage.getItem('cv_splash')){document.getElementById('cv-splash').style.display='none'}else{sessionStorage.setItem('cv_splash','1')}}catch(e){}";
 
-// 起動スプラッシュ「流れから、一筋を抜く」。
+// 起動スプラッシュ「絞られていく」。
 //
-// 図形は**点を使わず**、1本の曲線だけで作る（2026-09-12 方針変更）。
-// 同じ経路を太さ違いで4本重ね、太く淡い3本＝毎日流れてくる記事の量、
-// 細く明るい1本＝そこから抜き出した今朝の筋。厚みの差がそのまま「次元」になる。
-// 旧版は7×4の点のうち5点を灯す「選別」だったが、点は粒に見えて流れにならなかった。
-const SPLASH_FLOW = 'M2,60 C28,60 34,30 60,30 C86,30 92,62 118,62 C144,62 150,32 178,32';
-/** 太さと濃さの層。左から奥→手前。手前の1本だけが夜明けの色で明るい。 */
-const SPLASH_LAYERS: { w: number; o: number }[] = [
-  { w: 30, o: 0.10 },
-  { w: 18, o: 0.18 },
-  { w: 9, o: 0.34 },
-];
+// 輪郭のない、ふにゃふにゃした楕円のかたまりが最初にあって、読み込みが進むにつれて**数が減る**。
+// 毎朝 200本以上が流れてきて、そこから残るのは数本、という朝刊の仕事そのもの。
+//
+// 図形に**線も点も使わない**（2026-09-12 本人指示）。1つ1つは中心から外へ透明になる
+// 放射グラデーションの楕円で、縁が無い＝境界がどこにも立たない。重なった部分が
+// にじんで1つのかたまりに見える。ふにゃふにゃは、楕円ごとに周期の違う
+// scale/translate をかけて位相をずらすことで作る（形そのものは変形させない＝コンポジタで済む）。
+const SPLASH_BLOB_COLORS = { A: '#a5b4fc', B: '#38bdf8', C: '#fde68a' } as const;
+/** 最後に残る1つだけは濃くする。重なりが無くなるぶん、同じ濃さだと消えかけに見える。 */
+const SPLASH_LAST_OPACITY = [0.6, 0.3] as const;
+
+/** x,y,rx,ry=配置と大きさ / g=夜明けのどの色か（左=藍→右=淡金） /
+ *  wob=ゆらぎの周期(s) / ph=位相のずれ(s・負で途中から始める) / out=消え始める時刻(s)。
+ *  外側から先に消えて中心が最後まで残る＝かたまりが絞り込まれていくように見せる。 */
+const SPLASH_BLOBS = [
+  { x: 68, y: 56, rx: 44, ry: 38, g: 'A', wob: 2.3, ph: -0.4, out: 0.16 },
+  { x: 132, y: 54, rx: 42, ry: 36, g: 'C', wob: 1.9, ph: -1.2, out: 0.22 },
+  { x: 74, y: 90, rx: 40, ry: 34, g: 'A', wob: 2.6, ph: -0.9, out: 0.28 },
+  { x: 128, y: 92, rx: 44, ry: 38, g: 'C', wob: 2.1, ph: -1.6, out: 0.34 },
+  { x: 100, y: 44, rx: 40, ry: 32, g: 'B', wob: 1.7, ph: -0.2, out: 0.40 },
+  { x: 100, y: 100, rx: 42, ry: 34, g: 'B', wob: 2.4, ph: -1.9, out: 0.45 },
+  { x: 82, y: 70, rx: 46, ry: 40, g: 'B', wob: 2.0, ph: -0.7, out: 0.50 },
+  { x: 118, y: 70, rx: 46, ry: 40, g: 'B', wob: 2.2, ph: -1.4, out: 0.56 },
+  // 最後の1つ。スプラッシュ自体が消えるまで残る（out を届かない時刻に置く）。
+  { x: 100, y: 70, rx: 50, ry: 42, g: 'Last', wob: 2.8, ph: -1.0, out: 9 },
+] as const;
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -95,39 +110,42 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-sky-600 focus:text-white focus:text-sm focus:font-bold">
           メインコンテンツへスキップ
         </a>
-        {/* 起動スプラッシュ「流れから、一筋を抜く」: 1本の曲線を太さ違いで重ねる（点は使わない）。
+        {/* 起動スプラッシュ「絞られていく」: 輪郭のない楕円のかたまりが、読むにつれて減る。
             サーバー描画＋CSSのみで完結（Reactハイドレーションに依存しない）。
             旧実装はJSタイマー＋visibility付きCSSで消していたが、どちらもメインスレッド依存のため
             ハイドレーション中(数秒)はアニメが凍って居座った。opacityのみのフェード（コンポジタ駆動）に変更。
             直後のインラインscriptで「同一セッション2回目以降は出さない」(sessionStorage)。 */}
         <div aria-hidden id="cv-splash" className="splash">
-          {/* ⚠ viewBox は太い線のはみ出しぶん（最大30の半分＝15）を外に取る。
-                0 0 180 92 のままだと、いちばん太い層の左右がSVGの箱で**垂直に切れて**
-                流れが壁にぶつかったように見えた（スマホ実機で発覚）。 */}
-          <svg width="324" height="176" viewBox="-18 -10 216 112" fill="none">
+          {/* ⚠ viewBox はゆらぎで膨らむぶん（最大1.18倍）を外に取る。きつく切ると
+              かたまりの縁が箱で切れて「輪郭が無い」という前提が崩れる。 */}
+          <svg width="380" height="266" viewBox="-8 -8 216 156" fill="none">
             <defs>
-              {/* 夜明け（藍→水色→淡金）。userSpaceOnUse なので、1本の筋の中で空の色が移り変わる。 */}
-              <linearGradient id="cvDawn" gradientUnits="userSpaceOnUse" x1="0" y1="92" x2="180" y2="0">
-                <stop offset="0%" stopColor="#a5b4fc" />
-                <stop offset="38%" stopColor="#38bdf8" />
-                <stop offset="88%" stopColor="#fde68a" />
-              </linearGradient>
-              <radialGradient id="cvGlow">
-                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.42" />
-                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+              {/* 中心から外へ透明になる＝縁が立たない。夜明けの3色ぶん用意して、
+                  左（藍）→中（水色）→右（淡金）に置く＝かたまり全体が夜明けの色になる。 */}
+              {(Object.keys(SPLASH_BLOB_COLORS) as (keyof typeof SPLASH_BLOB_COLORS)[]).map(k => (
+                <radialGradient key={k} id={`cvBlob${k}`}>
+                  <stop offset="0%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity="0.34" />
+                  <stop offset="46%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity="0.16" />
+                  <stop offset="100%" stopColor={SPLASH_BLOB_COLORS[k]} stopOpacity="0" />
+                </radialGradient>
+              ))}
+              <radialGradient id="cvBlobLast">
+                <stop offset="0%" stopColor={SPLASH_BLOB_COLORS.B} stopOpacity={SPLASH_LAST_OPACITY[0]} />
+                <stop offset="46%" stopColor={SPLASH_BLOB_COLORS.B} stopOpacity={SPLASH_LAST_OPACITY[1]} />
+                <stop offset="100%" stopColor={SPLASH_BLOB_COLORS.B} stopOpacity="0" />
               </radialGradient>
             </defs>
-            <ellipse className="splash__glow" cx="90" cy="46" rx="98" ry="46" fill="url(#cvGlow)" />
-            {/* 流れ（奥の3本）。太く淡いほど奥。 */}
-            <g className="splash__flow">
-              {SPLASH_LAYERS.map(l => (
-                <path key={l.w} d={SPLASH_FLOW} stroke="url(#cvDawn)" strokeOpacity={l.o}
-                  strokeWidth={l.w} strokeLinecap="round" />
+            <g className="splash__blobs">
+              {SPLASH_BLOBS.map(b => (
+                <ellipse key={`${b.x}-${b.y}`} cx={b.x} cy={b.y} rx={b.rx} ry={b.ry}
+                  fill={`url(#cvBlob${b.g})`}
+                  style={{
+                    // 1つ目=ゆらぎ（無限）、2つ目=消える（1回）。順番は CSS の animation-name と対応。
+                    animationDuration: `${b.wob}s, 0.24s`,
+                    animationDelay: `${b.ph}s, ${b.out}s`,
+                  }} />
               ))}
             </g>
-            {/* 抜き出した一筋（手前）。最後に、わずかに遅れて通る。 */}
-            <path className="splash__pick" d={SPLASH_FLOW} stroke="url(#cvDawn)"
-              strokeWidth="3.4" strokeLinecap="round" />
           </svg>
         </div>
         {/* 同一セッション2回目以降はスプラッシュを出さない（描画前に同期実行する必要があるためインライン）。
