@@ -113,7 +113,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#03060f',
+  // manifest.ts の theme_color と同値にすること（片方だけ変えると、
+  // ブラウザのUIとPWAのスタンドアロン表示で色が食い違う）。
+  themeColor: '#000000',
 };
 
 export default function RootLayout({ children, modal }: { children: React.ReactNode; modal: React.ReactNode }) {

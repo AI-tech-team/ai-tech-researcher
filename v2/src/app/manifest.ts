@@ -11,8 +11,11 @@ export default function manifest(): MetadataRoute.Manifest {
     description: SITE_DESC,
     start_url: '/',
     display: 'standalone',
-    background_color: '#03060f',
-    theme_color: '#03060f',
+    // ⚠ 純黒にする。アイコン（C）の地も、.page の地も、起動スプラッシュも #000 なので、
+    // ここだけ #03060f だと「ホーム画面から起動 → スプラッシュ → 紙面」の間で
+    // 背景だけが僅かに青黒く浮く。viewport.themeColor（layout.tsx）と必ず同値に保つこと。
+    background_color: '#000000',
+    theme_color: '#000000',
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
