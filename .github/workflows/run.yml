@@ -58,6 +58,14 @@ on:
 permissions:
   contents: write
 
+# 同じ種別の実行が重ならないようにする。フル実行は45分以上かかるうえ、起動経路が
+# 外部スケジューラ・scheduleの保険・手動と複数あるため、重なると収集もキーワード
+# Grounding課金も二重になる（2026-09-12、動作確認中に実際に2本同時に走らせた）。
+# cancel-in-progress: false ＝ 走っている方を優先し、後発は待たせる（途中で殺さない）。
+concurrency:
+  group: pipeline-${{ github.event.inputs.report_type || github.event.schedule || 'manual' }}
+  cancel-in-progress: false
+
 jobs:
   research:
     runs-on: ubuntu-latest

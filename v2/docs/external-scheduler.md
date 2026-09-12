@@ -41,6 +41,28 @@ cron '7 18 * * *'（03:07 JST 起動のはず）の実際の起動時刻
 
 ---
 
+## 設定済みの内容（2026-09-12 実施）
+
+```
+GCP プロジェクト : project-6f8c0b7f-7452-4e63-a48（予算キルスイッチと同じ）
+アカウント       : tomiguchi.family@gmail.com
+ロケーション     : asia-northeast1
+ジョブ           : cernoval-daily  (7 3 * * * Asia/Tokyo → report_type=daily)
+                   cernoval-report (0 6 * * * Asia/Tokyo → report_type=report)
+GitHub PAT       : Fine-grained / AI-tech-team/ai-tech-researcher のみ / Actions: Read and write
+                   ローカルの v2/.env.scheduler に GITHUB_DISPATCH_PAT= で保管（.gitignore済）
+```
+
+**実測: `workflow_dispatch` の起動遅延は 0 秒**（作成時刻＝開始時刻）。`schedule` の中央値+167分に対して即時。
+
+確認コマンド:
+```bash
+gcloud scheduler jobs list --location=asia-northeast1
+gcloud scheduler jobs describe cernoval-daily --location=asia-northeast1
+```
+
+---
+
 ## 1. GitHub の Personal Access Token を作る
 
 `https://github.com/settings/personal-access-tokens/new`（**Fine-grained** を使う。classic ではない）
