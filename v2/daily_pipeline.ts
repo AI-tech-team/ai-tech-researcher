@@ -108,11 +108,37 @@ const DOMAIN_SKIP = new Set([
   'vertexaisearch.cloud.google.com',
 ]);
 
+// HNから拾う候補の**粗い**前選別。最終判断はLLMの aiRelevance（HnEvalSchema）が行う。
+//
+// ⚠ 以前は 'ai' を単純な部分一致で見ていた。`titleLower.includes('ai')` は
+//   T-ai-lwind / ag-ai-n / aw-ai-t / str-ai-ght / -ai-rbus / mal-ai-ria / h-ai-ku に全部当たる。
+//   実測（本番・60日342本）で **30.1% が 'ai' の部分一致だけで通っていた**:
+//     「Shopify acquires Tailwind」★10 /「Qantas Airbus A380 engine failure」★8 /
+//     「American Airlines' Legendary Mechanic Passes Away」★8 /「Two German airport workers
+//     die of malaria」★8 /「Dwarf Fortress is getting the mother of all magic updates」★9
+//   HN経路は重要度をHNの点数から機械的に付ける（LLMに聞かない）ので、これらが★8〜10で本紙に載っていた。
+//   → 'ai' 等の短い語は単語境界で見る。
+//
+// ⚠ 語彙は**緩め**に取る。失敗の非対称性がはっきりしているため:
+//   キーワードで落とすと二度と拾えない（サイレントな消失）が、LLMで落とすのはログに残る。
+//   実際、単語境界に直しただけの版では「I trained a 125M model to autocomplete piano」
+//   「VMs won't contain cyber-capable agents」など**本物のAI記事4本**が落ちた。
+//   train/agent/model/dataset/gpu を足して取りこぼし0本にしてある（同じ342本で再計測）。
+const HN_AI_WORD_RE = /\b(ai|ml|agi|rag|llm|slm|vlm|moe)\b|\bai[-/]/;
 const HN_AI_KEYWORDS = [
-  'ai', 'llm', 'gpt', 'claude', 'gemini', 'openai', 'anthropic', 'chatgpt',
-  'machine learning', 'neural', 'deep learning', 'transformer', 'diffusion',
-  'agi', 'alignment', 'mistral', 'llama', 'copilot', 'hugging face',
+  'llm', 'gpt', 'claude', 'gemini', 'openai', 'anthropic', 'chatgpt', 'deepmind',
+  'machine learning', 'neural', 'deep learning', 'transformer', 'diffusion', 'alignment',
+  'mistral', 'llama', 'copilot', 'hugging face', 'qwen', 'deepseek', 'grok', 'phi-', 'olmo', 'kimi',
+  'inference', 'pretrain', 'fine-tun', 'finetun', 'embedding', 'tokenizer', 'quantiz',
+  'agentic', 'multimodal', 'benchmark', 'hallucinat', 'prompt', 'reasoning model',
+  'nvidia', 'cuda', 'tensor', 'pytorch', 'vllm', 'ollama', 'langchain', 'rlhf', 'chain-of-thought',
+  'train', 'agent', 'dataset', 'gpu', 'open weight', 'open-weight', 'model',
 ];
+
+/** HNのタイトルがAI関連の候補か（粗い前選別。最終判断はLLM側）。 */
+function looksAiRelated(titleLower: string): boolean {
+  return HN_AI_WORD_RE.test(titleLower) || HN_AI_KEYWORDS.some(kw => titleLower.includes(kw));
+}
 
 // ── 構造化出力スキーマ ────────────────────────────────────────────────
 const CATS = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'] as const;
@@ -180,8 +206,25 @@ function clampSummary(s: string | null | undefined): string {
 
 // summaryは超過しやすく max(300) だとスキーマ不一致で評価ごと失敗→フィード丸ごと0件になる。
 // 余裕を持たせ(600)、挿入時に clampSummary で文末まで（6行相当）に収める。
+// ⚠ aiRelevance と importance は **必ず別の数字にする**。
+//
+// 以前は importance 1本だけで、プロンプトに「AI技術と無関係な記事は importance: 0 に」と
+// 書いていた。それでも本番に「新潟駅徒歩圏で完結する1泊2日観光モデルルート」★9、
+// 「ゲーム機はPCより高い？」★10 が載っていた（2026-09-12 実測）。
+// 1つのスカラーに「AIの話か」と「記事として重要か」を同時に負わせると、
+// **よく書けた記事は無関係でも高得点になる**。指示を足しても直らない型なので、構造で分ける。
+// （字数を「◯◯字以内」で指示しても効かず、文と項目の数＝構造で縛って直したのと同じ。
+//   → [[pattern-llm-cannot-count]]）
+// 判定は同じ1回の呼び出しの出力に整数が1つ増えるだけ＝API呼び出し回数もコストも増えない。
+// 閾値6は**実測ではなく下のルーブリックからの逆算**（この数字だけは実データで振っていない。
+// 振るにはLLMを全件に流す＝API消費が要るため）。7=「AIを主題に含む周辺（資金調達・規制）」は通し、
+// 3=「少し触れる程度」は落とす、その間が6。ビジネス応用カテゴリを巻き込まない位置に置いてある。
+// 運用後、除外ログ（`[RSS] AI関連度…` / `[HN] AI関連度…`）に本物のAI記事が出ていないかを見て調整する。
+const AI_RELEVANCE_MIN = 6;
+
 const ArticleEvalSchema = z.object({
   items: z.array(z.object({
+    aiRelevance: z.number().int().min(0).max(10),
     importance: z.number().int().min(0).max(10),
     category: z.enum(CATS),
     summary: z.string().max(600),
@@ -190,10 +233,19 @@ const ArticleEvalSchema = z.object({
 
 const HnEvalSchema = z.object({
   items: z.array(z.object({
+    aiRelevance: z.number().int().min(0).max(10),
     summary: z.string().max(600),
     category: z.enum(CATS),
   })),
 });
+
+/** aiRelevance の意味をプロンプトで固定する（各収集経路で同じ文言を使う）。 */
+const AI_RELEVANCE_RULE = `aiRelevance は「その記事がAI・機械学習の技術そのものを扱っているか」だけを 0-10 で答えてください。記事の出来・話題性・重要さは一切考慮しません。
+- 10: AIモデル/研究/基盤技術そのものが主題
+- 7: AIを主題に含むが、業界動向・資金調達・規制などの周辺
+- 3: AIに少し触れる程度
+- 0: AIと無関係（旅行・グルメ・スポーツ・一般ガジェット・一般ニュースなど）
+よく書けた記事でも、AIの話でなければ 0 です。`;
 
 const KeywordsSchema = z.object({
   keywords: z.array(z.string().min(2).max(60)),
@@ -333,7 +385,7 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   const { object } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下の記事をAI技術の観点で評価してください。AI技術と無関係な記事はimportance: 0にしてください。各記事のimportance(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を生成してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下の記事を評価してください。\n\n${AI_RELEVANCE_RULE}\n\nそのうえで importance(0-10) は「AI技術の記事として、読者にとってどれだけ重要か」を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = object.items;
   if (evaluations.length !== fresh.length) {
@@ -347,6 +399,12 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
     const item = fresh[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 4) continue;
+    // AI無関係は重要度に関わらず落とす。importance だけで見ていた頃は
+    // 「新潟駅徒歩圏で完結する1泊2日観光モデルルート」が★9で本紙の候補に入っていた。
+    if (ev.aiRelevance < AI_RELEVANCE_MIN) {
+      console.log(`  [RSS] AI関連度${ev.aiRelevance}のため除外: ${item.title.slice(0, 46)}`);
+      continue;
+    }
     if (isNearDuplicate(item.title, titleCache)) continue;
     const pubDate = item.pubDate ? new Date(item.pubDate) : null;
     const r = await db.insert(schema.collectedData).values({
@@ -384,7 +442,7 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
       if ((item.score ?? 0) < 100) continue;
       if (item.time && item.time * 1000 < sevenDaysAgoMs) continue;
       const titleLower = (item.title as string).toLowerCase();
-      if (HN_AI_KEYWORDS.some(kw => titleLower.includes(kw))) {
+      if (looksAiRelated(titleLower)) {
         // Ask HN 等の自己投稿は本文が item.text に入る。要約の材料として使う。
         const selfText = typeof item.text === 'string'
           ? decodeHtmlEntities(item.text.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
@@ -412,7 +470,7 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
   }));
 
   const withBody = fresh.map((item, i) => ({ item, body: bodies[i] })).filter((x) => x.body);
-  const evaluations = new Map<string, { summary: string; category: string }>();
+  const evaluations = new Map<string, { aiRelevance: number; summary: string; category: string }>();
   if (withBody.length > 0) {
     const batchText = withBody
       .map(({ item, body }, i) => `[${i}] [HN Score:${item.score}] ${item.title}\n本文: ${body}`)
@@ -420,7 +478,10 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
     const { object: hnObject } = await withRetry(() => generateObject({
       model: google('gemini-2.5-flash-lite'),
       schema: HnEvalSchema,
-      prompt: `以下のHacker NewsのAI/ML関連記事について、専門的な日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）とcategoryを生成してください。
+      prompt: `以下のHacker Newsの記事について、aiRelevance・専門的な日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）・categoryを生成してください。
+
+${AI_RELEVANCE_RULE}
+（HNのタイトルは 'ai' を含む英単語 — Tailwind / again / await / airport / malaria など — でも候補に入ってくるため、ここで必ず判定してください。HNのスコアが高いことはAI関連度の根拠になりません。）
 
 厳守事項:
 - **本文に書かれていることだけを書く。** 本文に無い経緯・評価・反応・数値を足さない。
@@ -443,7 +504,18 @@ ${batchText}`,
     if (isNearDuplicate(item.title, titleCache)) continue;
     const ev = evaluations.get(item.url);
     if (!ev) noBody++;
-    const importanceScore = item.score >= 500 ? 10 : item.score >= 200 ? 9 : item.score >= 100 ? 8 : 7;
+    // ⚠ AI関連度の判定は「本文が取れてLLMに通した記事」でしか得られない。
+    //   本文が取れなかった記事(ev なし)は、タイトルの前選別(looksAiRelated)しか根拠が無いので
+    //   落とさずに通す。ただし★は抑える（下）。落とすとサイレントな消失になる。
+    if (ev && ev.aiRelevance < AI_RELEVANCE_MIN) {
+      console.log(`  [HN] AI関連度${ev.aiRelevance}のため除外: ${item.title.slice(0, 46)}`);
+      continue;
+    }
+    // HNの点数は「HNで人気か」であって「AI技術として重要か」ではない。
+    // 実測では 'ai' の部分一致で紛れ込んだ「Shopify acquires Tailwind」がHN点数だけで★10になっていた。
+    // 本文が取れずAI関連度を確かめられなかったものは、点数が高くても★8止まりにする。
+    const base = item.score >= 500 ? 10 : item.score >= 200 ? 9 : item.score >= 100 ? 8 : 7;
+    const importanceScore = ev ? base : Math.min(base, 8);
     const r = await db.insert(schema.collectedData).values({
       sourceId: source.id,
       title: item.title,

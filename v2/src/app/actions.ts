@@ -759,8 +759,14 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
         .from(relations).where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`)).limit(20),
       db.select({ predicate: claims.predicate, value: claims.value })
         .from(claims).where(and(claimMatch, eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(8),
-      db.select({ aid: claims.articleId }).from(claims).where(claimMatch).limit(40),
-      db.select({ aid: benchmarks.articleId }).from(benchmarks).where(benchMatch).limit(40),
+      // ⚠ この2本の LIMIT 40 には **ORDER BY を必ず付ける**。付けないとSQLiteは rowid 順＝
+      // 挿入の古い順に40行返すので、「関連記事」の候補プールがそのトピックで**最も古い40件**になる。
+      // 本番実測(2026-09-13, /topic/OpenAI): claims 107行のうち古い40行 → 記事29件、中央値98日前。
+      // ここが「取り上げてるニュースが3か月前」の主因で、下の表示順だけ直しても94日→63日にしかならない
+      // （プールごと新しい側に寄せると6日になる）。→ [[pattern-throughput-starvation]] と同じ形で、
+      // 上限を書いたら「何が上限からこぼれるか」を必ず見る。
+      db.select({ aid: claims.articleId }).from(claims).where(claimMatch).orderBy(desc(claims.id)).limit(40),
+      db.select({ aid: benchmarks.articleId }).from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.id)).limit(40),
     ]);
 
     const ids = [...new Set([...claimArts, ...benchArts].map(r => r.aid).filter((x): x is number => x != null))];
@@ -770,7 +776,20 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
         id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa,
         category: collectedData.category,
         storyCount: collectedData.storyCount, publishedAt: collectedData.publishedAt,
-      }).from(collectedData).where(inArray(collectedData.id, ids)).orderBy(desc(collectedData.importanceScore)).limit(12);
+      }).from(collectedData).where(inArray(collectedData.id, ids))
+        // ⚠ 並び順に**新しさ**を入れること。importance だけで並べていた頃、このページの関連記事は
+        // 本番実測で /topic/OpenAI が中央値94日前・最古115日前だった（2026-09-13）。
+        // 収集データ自体は93.4%が当日で健全なのに、表示だけが3か月前を向いていた
+        // （本人からの指摘「取り上げてるニュースが3か月前、みたいなのがまあまああった」の正体）。
+        // 日付で粗く新しい順に並べ、同じ日の中は重要度で解く（「その日いちばん重要な記事」の並びは保つ）。
+        // published_at は本番23,328件すべて ISO UTC（"2026-09-12T15:08:27.000Z"）、created_at は
+        // "YYYY-MM-DD HH:MM:SS" のUTC。どちらも先頭10文字が YYYY-MM-DD なので substr で揃えて比較できる。
+        // 列はNULL許容なので COALESCE は残す（実測ではNULL 0件だが、スキーマ上入りうる）。
+        .orderBy(
+          desc(sql`substr(COALESCE(${collectedData.publishedAt}, ${collectedData.createdAt}), 1, 10)`),
+          desc(collectedData.importanceScore),
+        )
+        .limit(12);
       articles = arts.map(a => ({
         id: a.id, title: a.titleJa || a.title || '無題', category: a.category,
         storyCount: a.storyCount, publishedAt: a.publishedAt,
