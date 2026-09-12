@@ -34,11 +34,19 @@ const THEME_INIT_JS =
 const SPLASH_SESSION_GATE_JS =
   "try{if(sessionStorage.getItem('cv_splash')){document.getElementById('cv-splash').style.display='none'}else{sessionStorage.setItem('cv_splash','1')}}catch(e){}";
 
-// 起動スプラッシュの点の配置。7列×4行のうち5点だけが夜明けの色で灯る＝毎朝の選別そのもの。
-// 5という数はハイライトの本数（＝商品の約束）に合わせてある。
-const SPLASH_COLS = [12, 32, 52, 72, 92, 112, 132];
-const SPLASH_ROWS = [14, 34, 54, 74];
-const SPLASH_PICKS: [number, number][] = [[52, 14], [12, 34], [92, 34], [132, 54], [32, 74]];
+// 起動スプラッシュ「流れから、一筋を抜く」。
+//
+// 図形は**点を使わず**、1本の曲線だけで作る（2026-09-12 方針変更）。
+// 同じ経路を太さ違いで4本重ね、太く淡い3本＝毎日流れてくる記事の量、
+// 細く明るい1本＝そこから抜き出した今朝の筋。厚みの差がそのまま「次元」になる。
+// 旧版は7×4の点のうち5点を灯す「選別」だったが、点は粒に見えて流れにならなかった。
+const SPLASH_FLOW = 'M2,60 C28,60 34,30 60,30 C86,30 92,62 118,62 C144,62 150,32 178,32';
+/** 太さと濃さの層。左から奥→手前。手前の1本だけが夜明けの色で明るい。 */
+const SPLASH_LAYERS: { w: number; o: number }[] = [
+  { w: 30, o: 0.10 },
+  { w: 18, o: 0.18 },
+  { w: 9, o: 0.34 },
+];
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -87,34 +95,39 @@ export default function RootLayout({ children, modal }: { children: React.ReactN
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-sky-600 focus:text-white focus:text-sm focus:font-bold">
           メインコンテンツへスキップ
         </a>
-        {/* 起動スプラッシュ「選別」: たくさんの点のうち5点だけが夜明けの色で灯る。
+        {/* 起動スプラッシュ「流れから、一筋を抜く」: 1本の曲線を太さ違いで重ねる（点は使わない）。
             サーバー描画＋CSSのみで完結（Reactハイドレーションに依存しない）。
             旧実装はJSタイマー＋visibility付きCSSで消していたが、どちらもメインスレッド依存のため
             ハイドレーション中(数秒)はアニメが凍って居座った。opacityのみのフェード（コンポジタ駆動）に変更。
             直後のインラインscriptで「同一セッション2回目以降は出さない」(sessionStorage)。 */}
         <div aria-hidden id="cv-splash" className="splash">
-          <svg width="216" height="132" viewBox="0 0 144 88">
+          {/* ⚠ viewBox は太い線のはみ出しぶん（最大30の半分＝15）を外に取る。
+                0 0 180 92 のままだと、いちばん太い層の左右がSVGの箱で**垂直に切れて**
+                流れが壁にぶつかったように見えた（スマホ実機で発覚）。 */}
+          <svg width="324" height="176" viewBox="-18 -10 216 112" fill="none">
             <defs>
-              {/* 夜明け（藍→水色→淡金）。userSpaceOnUse なので5点が空の別々の場所の色になる。 */}
-              <linearGradient id="cvDawn" gradientUnits="userSpaceOnUse" x1="0" y1="88" x2="144" y2="0">
+              {/* 夜明け（藍→水色→淡金）。userSpaceOnUse なので、1本の筋の中で空の色が移り変わる。 */}
+              <linearGradient id="cvDawn" gradientUnits="userSpaceOnUse" x1="0" y1="92" x2="180" y2="0">
                 <stop offset="0%" stopColor="#a5b4fc" />
                 <stop offset="38%" stopColor="#38bdf8" />
                 <stop offset="88%" stopColor="#fde68a" />
               </linearGradient>
               <radialGradient id="cvGlow">
-                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.5" />
+                <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.42" />
                 <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
               </radialGradient>
             </defs>
-            <ellipse className="splash__glow" cx="72" cy="46" rx="84" ry="50" fill="url(#cvGlow)" />
-            <g className="splash__grid" fill="#2b2b34">
-              {SPLASH_ROWS.flatMap(y => SPLASH_COLS.map(x => (
-                <circle key={`${x}-${y}`} cx={x} cy={y} r="3.4" />
-              )))}
+            <ellipse className="splash__glow" cx="90" cy="46" rx="98" ry="46" fill="url(#cvGlow)" />
+            {/* 流れ（奥の3本）。太く淡いほど奥。 */}
+            <g className="splash__flow">
+              {SPLASH_LAYERS.map(l => (
+                <path key={l.w} d={SPLASH_FLOW} stroke="url(#cvDawn)" strokeOpacity={l.o}
+                  strokeWidth={l.w} strokeLinecap="round" />
+              ))}
             </g>
-            <g className="splash__picks" fill="url(#cvDawn)">
-              {SPLASH_PICKS.map(([x, y]) => <circle key={`p${x}-${y}`} cx={x} cy={y} r="4.6" />)}
-            </g>
+            {/* 抜き出した一筋（手前）。最後に、わずかに遅れて通る。 */}
+            <path className="splash__pick" d={SPLASH_FLOW} stroke="url(#cvDawn)"
+              strokeWidth="3.4" strokeLinecap="round" />
           </svg>
         </div>
         {/* 同一セッション2回目以降はスプラッシュを出さない（描画前に同期実行する必要があるためインライン）。

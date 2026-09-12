@@ -255,29 +255,33 @@ button, a, [role="button"], summary {
   /* 地は純黒。表側（朝刊・紹介ページ）の地と同じで、スプラッシュから紙面へ継ぎ目なく渡る。 */
   background: #000;
   pointer-events: none;
-  animation: splashAutoOut 0.34s ease 0.78s forwards;
+  animation: splashAutoOut 0.34s ease 0.82s forwards;
 }
-/* 点が一斉に現れ（0.16s）→ 選ばれた5点が順に灯る（0.16〜0.64s）→ 0.78sから消え始める。
-   ⚠ 最後の点が灯り終わる時刻がフェード開始より後ろだと、5点目が一度も見えない（実機で発覚）。
-      いま: 0.40s(遅延) + 0.24s(長さ) = 0.64s < 0.78s。タイミングを変えるときはこの不等式を保つ。 */
-.splash svg { width: min(380px, 62vw); height: auto; }
-.splash__grid { animation: splashFadeIn 0.16s ease both; }
-.splash__picks circle {
-  transform-box: fill-box; transform-origin: center;
-  animation: splashPick 0.24s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+/* 流れが左から通り（0〜0.44s）→ 一筋が少し遅れて追い抜く（0.14〜0.62s）→ 0.82sから消え始める。
+   ⚠ 一筋が通り終わる時刻がフェード開始より後ろだと、主役が一度も見えない（旧版の実機で発覚）。
+      いま: 0.14s(遅延) + 0.48s(長さ) = 0.62s < 0.82s。タイミングを変えるときはこの不等式を保つ。
+
+   ⚠ 動かすのは transform と opacity だけにする。stroke-dashoffset での「線を描く」表現は
+      メインスレッド処理で、ハイドレーション中(数秒)は必ず固まる。ここは横方向のスケールで
+      「左から流れ込む」を作る＝コンポジタだけで完結する。 */
+.splash svg { width: min(500px, 84vw); height: auto; }
+.splash__flow path, .splash__pick {
+  transform-box: fill-box; transform-origin: left center;
+  animation: splashFlow 0.44s cubic-bezier(0.22, 0.72, 0.24, 1) both;
 }
-/* 5点は同時でなく、わずかにずらして灯す（＝選んでいる過程に見せる）。 */
-.splash__picks circle:nth-of-type(1) { animation-delay: 0.16s; }
-.splash__picks circle:nth-of-type(2) { animation-delay: 0.22s; }
-.splash__picks circle:nth-of-type(3) { animation-delay: 0.28s; }
-.splash__picks circle:nth-of-type(4) { animation-delay: 0.34s; }
-.splash__picks circle:nth-of-type(5) { animation-delay: 0.40s; }
-.splash__glow { animation: splashGlow 0.7s ease-out both; }
-@keyframes splashFadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes splashPick { from { opacity: 0; transform: scale(0.2); } to { opacity: 1; transform: scale(1); } }
-@keyframes splashGlow { 0% { opacity: 0; } 70% { opacity: 0.85; } 100% { opacity: 0.62; } }
+/* 奥ほど遅れて届く＝流れに厚み（＝次元）が出る。 */
+.splash__flow path:nth-of-type(1) { animation-delay: 0.06s; }
+.splash__flow path:nth-of-type(2) { animation-delay: 0.03s; }
+.splash__pick { animation-duration: 0.48s; animation-delay: 0.14s; }
+.splash__glow { animation: splashGlow 0.8s ease-out both; }
+@keyframes splashFlow {
+  from { opacity: 0; transform: scaleX(0.04); }
+  35%  { opacity: 1; }
+  to   { opacity: 1; transform: scaleX(1); }
+}
+@keyframes splashGlow { 0% { opacity: 0; } 70% { opacity: 0.9; } 100% { opacity: 0.62; } }
 @keyframes splashAutoOut { to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .splash__grid, .splash__picks circle, .splash__glow { animation: none; }
+  .splash__flow path, .splash__pick, .splash__glow { animation: none; }
   .splash { animation-delay: 0.4s; }
 }
