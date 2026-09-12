@@ -103,14 +103,28 @@ function Section({ icon, title, color, children }: { icon: React.ReactNode; titl
   );
 }
 
-// ISR。cookiesを読まない取得のみで構成されているため静的化でき、CDNから配れる＝
-// Vercel関数のコールドスタート（本番実測でトップは2.66〜3.83秒）を踏まない。知識は日次パイプラインで更新されるので短め。
-// 空配列＝ビルド時は事前生成しない。動的セグメントは generateStaticParams が無いと
-// ISRの対象にならず毎回オンデマンド実行になるため、空でも宣言してキャッシュに乗せる
-// （未知のidは dynamicParams のデフォルト true で初回生成→以後キャッシュ）。
-export async function generateStaticParams() { return []; }
-
-export const revalidate = 600;
+// ⚠ このページで ISR（generateStaticParams + revalidate）を使ってはいけない。
+//
+// 2026-09-12、sitemap の topic 204件のうち **6件が HTTP 500** だった（一覧の8位「GPT‑5.6 Sol」を含む）。
+// Vercel のランタイムログに出ていた例外はこれ:
+//     TypeError: Invalid character in header content ["x-next-cache-tags"]  (ERR_INVALID_CHAR)
+//
+// Next はキャッシュ可能なルートに `x-next-cache-tags` ヘッダを付ける。暗黙タグには
+// **デコード済みの pathname がそのまま入る**（node_modules/next/dist/server/lib/implicit-tags.js の
+// getImplicitTags）。HTTPヘッダは Latin-1 までしか運べないので、日本語や U+2011（GPT‑5.6 Sol の
+// ハイフン）が入った瞬間に Node が投げる。無効化する設定は Next 側に無い。
+//
+// 実測で裏が取れている: sitemap の topic 204件のうち「名前に非ASCII(>255)を含むもの」は**ちょうど6件**で、
+// 500を返す6件と**完全に一致**した。ASCII名の198件だけが生き残っていた。
+//
+// エンティティ名がそのままURLになる設計なので、非ASCIIは今後も入り続ける。よって ISR を外す。
+// 代償はCDNキャッシュを失うこと。許容できると判断した根拠（本番実測）:
+//   - このページの6クエリ合計は 24〜123ms（claims 3,097行・entities 1,649行と小さい）
+//   - 同じく動的な /category/* は索引追加後 0.18〜1.0秒で応答している
+// 「198ページが少し遅い」より「6ページが500で読者にもGoogleにも英語のエラーを返す」方が重い。
+//
+// 同じ理由で **/category/[name] にも ISR を足してはいけない**（カテゴリ名は全て日本語なので7件全滅する）。
+// 数値idの /articles/[id] と /reports/[id] は ASCII なので ISR で問題ない。
 
 export default async function TopicPage({ params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;

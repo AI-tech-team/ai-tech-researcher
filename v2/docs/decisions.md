@@ -624,3 +624,51 @@ cron '7 18 * * *'（03:07 JST のはず）の実際の起動: 遅延 中央値 +
 
 **残るリスク**: 外部スケジューラが止まると週次/月次レポートが生成されない
 （日次は12:17の回の自己修復が拾う）。PATの期限切れでも静かに止まるので、期限1年＋カレンダー登録。
+
+## 2026-09-12 外形監査の是正① /category の17〜21秒と /topic の500
+
+### /category/* が初回17〜21秒（7URL全部・4回再現）
+
+`getArticlesByCategory` は category で絞り importance_score DESC, created_at DESC で並べるが、
+`collected_data` に category の索引が無かった。本番の実行計画は `SCAN cd` ＋ `USE TEMP B-TREE FOR ORDER BY`
+＝23,300行の全走査＋一時ソートで、**DB単体で13,853ms**（LLM推論=6,697件）。
+`cached(..., 300_000)` はプロセス内メモリなのでインスタンスが変わると効かない。
+
+→ `(category, importance_score DESC, created_at DESC)` の複合索引を追加（`scripts/migrate_2026_09_12b.ts`）。
+`SEARCH cd USING INDEX` になり TEMP B-TREE も消えた。**13,853ms → 15ms**。
+本番サイトの実測も **17〜21秒 → 0.18〜1.0秒**。
+
+**監査の提案どおりに ISR を足さなくて正解だった**（下記）。`/category` は `searchParams` を読むので
+そもそも静的化できないが、それ以前に日本語カテゴリ7件が全滅していた。
+
+### /topic/* が6件 HTTP 500
+
+Vercel のランタイムログに出ていた例外:
+
+```
+TypeError: Invalid character in header content ["x-next-cache-tags"]   (ERR_INVALID_CHAR)
+```
+
+Next はキャッシュ可能なルートに `x-next-cache-tags` を付け、暗黙タグに**デコード済みの pathname が
+そのまま入る**（`next/dist/server/lib/implicit-tags.js` の `getImplicitTags`）。HTTPヘッダは Latin-1 までなので、
+日本語や U+2011（`GPT‑5.6 Sol` のハイフン）が入ると Node が投げる。無効化する設定は Next 側に無い。
+
+**実測で確定**: sitemap の topic 204件のうち「名前に非ASCII(>255)を含むもの」は**ちょうど6件**で、
+500を返す6件と**完全一致**した。ASCII名の198件だけが生き残っていた。
+ローカルの `next start` では6件とも200になる（Vercel のキャッシュタグ経路を通らないため）＝
+**本番ログを見るまで原因に辿り着けなかった**。データを疑って entities/claims/benchmarks を比較したのは空振りで、
+`水冷CPUクーラー`（空・500）と `Gemini`（空・200）が同じ形だった時点で「データではない」と切り替えるべきだった。
+
+→ `/topic/[name]` から ISR（`generateStaticParams` + `revalidate`）を外した。
+エンティティ名がそのままURLになる設計なので非ASCIIは今後も入り続ける。
+代償のCDNキャッシュ喪失を許容した根拠: このページの6クエリ合計は24〜123ms、
+同じく動的な /category は索引追加後0.18〜1.0秒。「198ページが少し遅い」より
+「6ページが読者とGoogleに英語の500を返す」方が重い。本番実測で6件とも200（0.32〜1.97秒）、ASCII名も回帰なし。
+
+**この制約は恒久的なルールとして残す**:
+- `/topic/[name]`（エンティティ名＝非ASCIIあり）と `/category/[name]`（全て日本語）に **ISR を足してはいけない**
+- 数値idの `/articles/[id]` `/reports/[id]` は ASCII なので ISR で問題ない
+
+### ついでに直した索引
+`claims`（3,097行）は**索引が1本も無かった**。知識抽出が10→60本/日に増えるので、
+`(entity_id, status)` `(subject, status)` `(article_id)` を追加した。
