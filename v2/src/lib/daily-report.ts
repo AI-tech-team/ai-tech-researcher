@@ -10,6 +10,7 @@ import { withRetry } from '@/lib/llm';
 import { CHARS_PER_MINUTE, readableLength } from '@/lib/reading-time';
 import { extractHighlightSection } from '@/lib/digest-highlights';
 import { logError } from '@/lib/logError';
+import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from '@/lib/primary-sources';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
 // 比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日がズレる）。
@@ -21,6 +22,15 @@ function parseSqlTs(s: string | null | undefined): number | null {
   const ms = new Date(s.replace(' ', 'T') + 'Z').getTime();
   return Number.isFinite(ms) ? ms : null;
 }
+
+/** 朝刊に載せる下限: ★9以上、ただし一次情報源（研究所・モデル提供元）は★8から。 */
+const MIN_IMPORTANCE_SQL = sql`(
+  ${collectedData.importanceScore} >= ${MIN_IMPORTANCE}
+  OR (${collectedData.importanceScore} >= ${MIN_IMPORTANCE_PRIMARY} AND (${sql.join(
+    PRIMARY_SOURCE_HOSTS.map(h => sql`LOWER(${collectedData.url}) LIKE ${'%' + h + '%'}`),
+    sql` OR `,
+  )}))
+)`;
 
 /** 候補として引く件数。ここからドメイン上限を掛けて TOP_N まで絞る。 */
 const CANDIDATE_LIMIT = 120;
@@ -210,8 +220,20 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     //   3. published_at     クロール時刻ではなく実際の公開時刻
     //   4. id               最後の決定論的な綱引き（実行ごとに順序が変わらないように）
     // ドメイン上限は下の pickTop40 で掛ける（1社が枠を占拠しないように）。
+    //
+    // 2026-09-12: 候補を「★9以上（一次情報源は★8から）」に限定した。
+    //
+    // ゲート前の上位40枠は94%が★9以上だったので当初「現状追認」と判断したが、実測すると違った。
+    // 当時★9の枠を埋めていたうちの30%はノイズ源（startupfortune 等）で、それを同時に止めたため、
+    // ★9以上の実数は1日22〜59本（14日測定・中央値およそ35本）になる。つまり TOP_N=40 は
+    // 埋まらない日の方が多く、残り枠に★8/★7が滑り込んでいた分がそのまま消える＝これは実質的な変更。
+    //
+    // それでも構わないのは、この40件は「LLMに渡す材料」であって載せる本数ではないから。
+    // 約束しているハイライトは5本で、最も薄い日でも22本あり4倍以上の余裕がある。
+    // 材料を増やすより、★7を混ぜない方が紙面は良くなる（本人の指示・2026-09-12）。
+    // 一次情報源の救済（★8から拾う・実測2.1本/日）の理由は src/lib/primary-sources.ts を参照。
     db.select().from(collectedData)
-      .where(gte(collectedData.createdAt, since))
+      .where(and(gte(collectedData.createdAt, since), MIN_IMPORTANCE_SQL))
       .orderBy(
         desc(collectedData.importanceScore),
         desc(sql`COALESCE(${collectedData.storyCount}, 1)`),

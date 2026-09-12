@@ -5,8 +5,14 @@ on:
     # GitHub Actions の schedule は大幅に遅延する（2026-07-08 実測+1h49m）ため、フル実行は
     # 深夜に前倒しし、レポート生成＋メール配信は同ジョブ内で 21:00 UTC (06:00 JST) まで待機してから実行する。
     - cron: '7 18 * * *'      # 毎日 03:07 JST 起動 (full: 収集〜知識抽出 → 06:00 JST にレポート生成＋配信)
+    # 2026-09-12: 収集を1日3回→6回に。3回だと 18:00→翌03:07 の9時間が空き、
+    # 公開から収集までの遅れが中央値5.7時間・6時間以内は52.5%しかなかった（実測14日3,078本）。
+    # リポジトリは公開なので Actions の実行時間は無料。
+    - cron: '0 0 * * *'       # 毎日 09:00 JST (collect-only)
     - cron: '0 3 * * *'       # 毎日 12:00 JST (collect-only＋レポート自己修復)
+    - cron: '0 6 * * *'       # 毎日 15:00 JST (collect-only)
     - cron: '0 9 * * *'       # 毎日 18:00 JST (collect-only)
+    - cron: '0 12 * * *'      # 毎日 21:00 JST (collect-only)
     - cron: '0 20 * * 0'      # 毎週日曜 05:00 JST (週次バックアップ)
     # ※ 週次/月次レポートは daily pipeline(full) が日曜/月初に判定して生成する（サイト掲載のみ・メールなし）。
   workflow_dispatch:
@@ -101,8 +107,8 @@ jobs:
           PIPELINE_MODE: report
         run: cd v2 && npx tsx daily_pipeline.ts
 
-      - name: Run Collection (midday/evening)
-        if: github.event.schedule == '0 3 * * *' || github.event.schedule == '0 9 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'collect')
+      - name: Run Collection (09/12/15/18/21 JST)
+        if: github.event.schedule == '0 0 * * *' || github.event.schedule == '0 3 * * *' || github.event.schedule == '0 6 * * *' || github.event.schedule == '0 9 * * *' || github.event.schedule == '0 12 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'collect')
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}

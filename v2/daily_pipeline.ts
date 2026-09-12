@@ -15,6 +15,7 @@ import { politeFetch } from './src/lib/robots';
 import { decodeHtmlEntities } from './src/lib/html-entities';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
+import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
 import { SITE_NAME, SITE_URL, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
 
 /**
@@ -1173,7 +1174,7 @@ function mdToLightHtml(md: string): string {
   return `<p style="margin:5px 0;line-height:1.7;color:#334155">${html}</p>`;
 }
 
-// v6: メール購読ユーザーへ「今日のあなた向け」パーソナライズbriefを配信（LLM不使用・低コスト）
+// メール購読ユーザーへ日次の朝刊を配信する（全員同一・LLM不使用）。
 async function sendPersonalizedBriefs(reportText: string | null = null) {
   const user = process.env.GMAIL_USER;
   const pass = process.env.GMAIL_APP_PASSWORD;
@@ -1192,7 +1193,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
 
   const recipients = await db.select({
     uid: schema.users.id, email: schema.users.email, name: schema.users.name,
-    displayName: schema.userProfiles.displayName, interests: schema.userProfiles.interests,
+    displayName: schema.userProfiles.displayName,
   })
     .from(schema.userProfiles)
     .innerJoin(schema.users, eq(schema.userProfiles.userId, schema.users.id))
@@ -1200,7 +1201,6 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
   if (recipients.length === 0) { console.log('[Brief] 購読者なし'); return; }
 
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
-  const twoDaysAgo = sqlTs(new Date(Date.now() - 2 * 24 * 60 * 60 * 1000));
   const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
 
@@ -1218,59 +1218,25 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
   }
   let sent = 0;
 
+  // 2026-09-12: 受信者ごとの記事の出し分けを廃止し、全員に同じ朝刊を送る。
+  // 経緯: プライバシーポリシーに「プロファイリングは行いません／記事の選別はすべての読者に同一」と
+  // 明記したのに、ここだけ readingEvents の行動ログと userProfiles.interests で並べ替えていて、
+  // 本番に事実でない記述が出ている状態だった（サイト側の「あなた向け」は既に撤去済み）。
+  // 商品の約束は「毎朝1本の朝刊」であって個人向け推薦ではない。
+  // 受信者ごとに変わるのは、法令上ひとりずつ署名が要る配信停止URLと宛名だけ。
+  if (!reportHtml) { console.log('[Brief] 朝刊本文が空のため配信しない'); return; }
+  const digestBlock = `<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:8px;">${reportHtml}</div>`;
+
   for (const r of recipients) {
     if (!r.email) continue;
     try {
-      // 関心カテゴリ（行動ログの重み合計上位）
-      const cats = await db.select({ category: schema.readingEvents.category, w: sql<number>`SUM(${schema.readingEvents.weight})` })
-        .from(schema.readingEvents)
-        .where(eq(schema.readingEvents.userId, r.uid))
-        .groupBy(schema.readingEvents.category)
-        .orderBy(desc(sql`SUM(${schema.readingEvents.weight})`))
-        .limit(4);
-      const topCats = new Set(cats.map(c => c.category).filter(Boolean) as string[]);
-      const interestKws = (r.interests ?? '').toLowerCase().split(/[,、\s]+/).filter(s => s.length >= 2);
-
-      // 直近2日・未読・重要度6以上の候補（最大25件）
-      const cand = await client.execute({
-        sql: `SELECT cd.id AS id, cd.title AS title, cd.title_ja AS titleJa, cd.category AS category,
-                     cd.url AS url, cd.summary AS summary, cd.importance_score AS imp
-              FROM collected_data cd
-              LEFT JOIN user_article_state uas ON uas.article_id = cd.id AND uas.user_id = ?
-              WHERE cd.created_at >= ? AND cd.importance_score >= 6 AND COALESCE(uas.is_read, 0) = 0
-              ORDER BY cd.importance_score DESC LIMIT 25`,
-        args: [r.uid, twoDaysAgo],
-      });
-      // 興味で加点して上位6件
-      const ranked = (cand.rows as any[]).map(a => {
-        const text = `${a.title ?? ''} ${a.titleJa ?? ''} ${a.category ?? ''}`.toLowerCase();
-        let score = Number(a.imp ?? 5);
-        if (a.category && topCats.has(a.category)) score += 5;
-        if (interestKws.some(k => text.includes(k))) score += 4;
-        return { a, score };
-      }).sort((x, y) => y.score - x.score).slice(0, 6).map(x => x.a);
-      // レポート本体があれば、おすすめが0件でも配信する（共有レポートだけでも価値がある）
-      if (ranked.length === 0 && !reportHtml) continue;
-
-      const items = ranked.map(a => `
-        <div style="margin:0 0 12px;padding:12px;border:1px solid #e2e8f0;border-radius:10px;">
-          <div style="font-size:11px;color:#64748b;">${escapeHtml(a.category ?? '')} ・ ★${Number(a.imp ?? 0)}</div>
-          <a href="${siteUrl}/articles/${a.id}" style="font-size:15px;font-weight:600;color:#0f172a;text-decoration:none;">${escapeHtml(a.titleJa || a.title || '無題')}</a>
-          <div style="font-size:12px;color:#475569;margin-top:4px;line-height:1.55;">${escapeHtml(a.summary ?? '')}</div>
-        </div>`).join('');
-      // ✨ あなたへのおすすめ（パーソナライズ・各タイトルはサイトの記事ページへ）
-      const recsBlock = ranked.length > 0 ? `
-        <h2 style="color:#0ea5e9;font-size:16px;margin:24px 0 4px;">✨ あなたへのおすすめ記事</h2>
-        <p style="font-size:13px;color:#64748b;margin:0 0 10px;">あなたの興味に近い新着 ${ranked.length}件です。タイトルを押すとサイトで記事を開けます。</p>
-        ${items}` : '';
       // 特定電子メール法4条の表示義務＋RFC8058（Gmail/Yahooの一括送信者要件）のワンクリック解除。
       // これが無いと有料配信に切り替えた瞬間、法令違反であると同時に到達率が構造的に落ちる。
       const unsubUrl = canSign ? unsubscribeUrl(siteUrl, String(r.uid)) : siteUrl;
       const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;margin:0 auto;color:#0f172a;padding:8px 4px;">
-        <h1 style="font-size:20px;margin:0 0 2px;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日のダイジェスト</h1>
+        <h1 style="font-size:20px;margin:0 0 2px;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日の朝刊</h1>
         <p style="font-size:12px;color:#94a3b8;margin:0 0 16px;">${today}</p>
-        ${reportHtml ? `<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:8px;">${reportHtml}</div>` : ''}
-        ${recsBlock}
+        ${digestBlock}
         ${mailFooter(unsubUrl, siteUrl, canSign)}
       </div>`;
 
@@ -1292,7 +1258,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
       console.warn(`[Brief] uid=${r.uid} 送信失敗: ${(e.message ?? '').slice(0, 60)}`);
     }
   }
-  console.log(`[Brief] パーソナライズbrief配信: ${sent}/${recipients.length}件`);
+  console.log(`[Brief] 朝刊配信: ${sent}/${recipients.length}件`);
 }
 
 async function sendFailureEmail(error: Error) {
@@ -1594,10 +1560,25 @@ async function ingestKnowledge(
 }
 
 // ── v3: 知識抽出（claims + benchmarks + relations を1回の呼び出しで）──────
-async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
-  console.log('[Knowledge] 知識抽出開始');
-  const since = sqlTs(new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000));
+/** 「★9以上、ただし一次情報源は★8から」。朝刊の候補選定（daily-report.ts）と同じ線を使う。 */
+const KNOWLEDGE_WORTHY = sql`(
+  ${schema.collectedData.importanceScore} >= ${MIN_IMPORTANCE}
+  OR (${schema.collectedData.importanceScore} >= ${MIN_IMPORTANCE_PRIMARY} AND (${sql.join(
+    PRIMARY_SOURCE_HOSTS.map(h => sql`LOWER(${schema.collectedData.url}) LIKE ${'%' + h + '%'}`),
+    sql` OR `,
+  )}))
+)`;
 
+async function runKnowledgeExtraction(limit = 60) {
+  console.log('[Knowledge] 知識抽出開始');
+
+  // 旧実装は「直近1日 × 重要度7以上 × 10件」だった。1日窓は、その日の11位以下を
+  // 翌日には対象外にする＝永久欠落を作る（実測: 未抽出 12,783件）。窓を外して
+  // 「まだ抽出していない記事」から選ぶ。
+  //
+  // 閾値を★9にしたのは実測の帰結。ノイズ源を外した後の流入は ★9以上=33.8本/日 に対し
+  // ★8以上=81.6本/日 で、上限60では★8以上は再び飢餓になる（上限<流入）。
+  // ★9以上なら流入を26本/日上回り、滞留3,033件も減らせる。→ [[pattern-throughput-starvation]]
   const targets = await db.select({
     id: schema.collectedData.id,
     title: schema.collectedData.title,
@@ -1608,8 +1589,8 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
   })
     .from(schema.collectedData)
     .where(and(
-      gte(schema.collectedData.importanceScore, 7),
-      gte(schema.collectedData.createdAt, since),
+      KNOWLEDGE_WORTHY,
+      isNull(schema.collectedData.knowledgeExtractedAt),
     ))
     .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
     .limit(limit);
@@ -1637,6 +1618,13 @@ async function runKnowledgeExtraction(sinceDays = 1, limit = 10) {
     } catch (e: any) {
       console.warn(`  [Knowledge] 抽出失敗 (article ${article.id}): ${(e.message ?? '').slice(0, 60)}`);
     }
+    // 成功・失敗どちらでも実施済みにする。claims が0件の記事や恒久的に失敗する記事を
+    // 未実施のまま残すと、重要度順の先頭に居座って60枠を毎日食い潰し、後続が永久に進まない
+    // （withRetry で既に3回試している）。取りこぼしは上の warn で見える。
+    await db.update(schema.collectedData)
+      .set({ knowledgeExtractedAt: sqlTs(new Date()) })
+      .where(eq(schema.collectedData.id, article.id))
+      .catch((e: any) => console.warn(`  [Knowledge] 実施記録の保存失敗 (article ${article.id}): ${(e.message ?? '').slice(0, 60)}`));
   }
 
   console.log(`[Knowledge] claims${claimCount}, benchmarks${benchCount}, relations${relCount}, stale移行${staleCount}`);
@@ -3170,6 +3158,20 @@ const DEAD_SOURCE_VALUES = [
   'https://www.wired.com/feed/tag/artificial-intelligence/rss', // 400（新URLへ移行）
 ];
 
+// 生きてはいるが本紙の題材にならないフィード（2026-09-12 実測で停止）。
+// 「死んでいるから外す」ではなく「朝刊の候補枠を食うから外す」点が上と違う。
+// 実測: 朝刊の候補40枠のうち、これらが7日間で204枠／280枠 = 30% を占めていた。
+const OFF_TOPIC_SOURCE_VALUES = [
+  'https://startupfortune.com/feed/',        // コンテンツファーム。単独で候補枠の11%
+  'https://pasqualepillitteri.it/feed',      // イタリア語の個人ブログ。AI技術と無関係
+  'https://reclaimthenet.org/feed',          // 言論・監視社会系。技術記事ではない
+  'https://winbuzzer.com/feed/',             // Windows一般ニュース
+  'https://dxmagazine.jp/feed/',             // DX商材メディア
+  'https://futurumgroup.com/feed/',          // 調査会社のプレス配信
+  'https://feeds.businessinsider.com/custom/all', // 全ジャンル配信。AI以外が大半
+  'https://www.digitimes.com/rss/daily.xml', // 半導体業界日報。AI以外も全部入る
+];
+
 async function ensureSources() {
   const required = [
     { type: 'rss',             value: 'https://techcrunch.com/category/artificial-intelligence/feed/', score: 6 },
@@ -3191,6 +3193,28 @@ async function ensureSources() {
     { type: 'rss', value: 'https://www.reddit.com/r/LocalLLaMA/.rss',        score: 5 }, // Reddit LocalLLaMA(Atom)
     { type: 'rss', value: 'https://lobste.rs/t/ai.rss',                      score: 5 }, // Lobsters AIタグ
     { type: 'rss', value: 'https://simonwillison.net/atom/everything/',      score: 7 }, // Simon Willison(高信号な個人AIブログ)
+    // ── 2026-09-12 追加。候補40本をHTTPで叩いて「200かつ item>0」を確認した20本だけ登録する。
+    // 落ちた20本は登録しない（Anthropic/Mistral/Groq/IBM/LlamaIndex/The Batch/vLLM=404、
+    // HF papers=401、Perplexity=403、VentureBeat=429、Cohere/DeepSeek/Stability/LangChain=item0）。
+    // 狙いは本数ではなく比率: 一次情報源が流入の2.8%しかなかった（実測・14日3,079本中85本）。
+    { type: 'rss', value: 'https://openai.com/news/rss.xml',                         score: 9 },
+    { type: 'rss', value: 'https://blog.google/technology/google-deepmind/rss/',     score: 9 },
+    { type: 'rss', value: 'https://developer.nvidia.com/blog/feed/',                 score: 8 },
+    { type: 'rss', value: 'https://www.together.ai/blog/rss.xml',                    score: 8 },
+    { type: 'rss', value: 'https://machinelearning.apple.com/rss.xml',               score: 8 },
+    { type: 'rss', value: 'https://www.microsoft.com/en-us/research/feed/',          score: 8 },
+    { type: 'rss', value: 'https://engineering.fb.com/feed/',                        score: 8 },
+    // 技術メディア（AI特化・英語）
+    { type: 'rss', value: 'https://arstechnica.com/ai/feed/',                        score: 7 },
+    { type: 'rss', value: 'https://www.technologyreview.com/topic/artificial-intelligence/feed/', score: 7 },
+    { type: 'rss', value: 'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml',    score: 6 },
+    // 個人ブログ・ニュースレター（高信号・要約が濃い）
+    { type: 'rss', value: 'https://jack-clark.net/feed/',                            score: 7 }, // Import AI
+    { type: 'rss', value: 'https://magazine.sebastianraschka.com/feed',              score: 7 },
+    // 日本語（翻訳コストがかからない＝そのまま本紙に使える）
+    { type: 'rss', value: 'https://www.publickey1.jp/atom.xml',                      score: 7 },
+    { type: 'rss', value: 'https://ascii.jp/rss.xml',                                score: 6 },
+    { type: 'rss', value: 'https://feeds.japan.cnet.com/rss/cnet/all.rdf',           score: 6 },
   ];
   for (const src of required) {
     // Tursoの一過性エラー(コールドスタート/接続ブリップ)で1件失敗しても全体を落とさない。
@@ -3214,11 +3238,28 @@ async function ensureSources() {
   }
 
   // 死亡フィード/APIを停止（収集失敗ノイズを削減）
-  for (const dead of DEAD_SOURCE_VALUES) {
+  for (const dead of [...DEAD_SOURCE_VALUES, ...OFF_TOPIC_SOURCE_VALUES]) {
     const r = await db.update(schema.sources)
       .set({ status: 'stopped' })
       .where(and(eq(schema.sources.value, dead), sql`${schema.sources.status} != 'stopped'`));
-    if (r.rowsAffected > 0) console.log(`[Init] 死亡ソースを停止: ${dead}`);
+    if (r.rowsAffected > 0) console.log(`[Init] ソースを停止: ${dead}`);
+  }
+
+  // 同じURLが複数行に登録されるのを解消する（2026-09-12 実測で発覚）。
+  // ソース選択は `ORDER BY RANDOM() * (1 + score) DESC LIMIT 1` の重み付き抽選なので、
+  // 行が33個あるフィードは他フィードの33倍の確率で選ばれる。実測では itmedia topstory が
+  // 33行・monoist が6行・businessinsider が3行あり、有効rss 69行中42行をこの3つが占めていた。
+  // ＝一次情報源が流入の2.8%しかなかった直接の原因。最小idの1行だけ残して残りを停止する。
+  const dups = await db.all<{ value: string; keep: number; n: number }>(sql`
+    SELECT value, MIN(id) AS keep, COUNT(*) AS n
+    FROM ${schema.sources}
+    WHERE status != 'stopped'
+    GROUP BY value HAVING COUNT(*) > 1`);
+  for (const d of dups) {
+    const r = await db.update(schema.sources)
+      .set({ status: 'stopped' })
+      .where(and(eq(schema.sources.value, d.value), sql`${schema.sources.id} != ${d.keep}`, sql`${schema.sources.status} != 'stopped'`));
+    if (r.rowsAffected > 0) console.log(`[Init] 重複登録を整理: ${d.value} (${d.n}行 → 1行, ${r.rowsAffected}行を停止)`);
   }
 }
 
@@ -3310,9 +3351,9 @@ async function main() {
       process.exit(0);
     }
 
-    // v3: 知識抽出のみ実行（バックフィル・検証用）。直近14日・最大60件を対象
+    // v3: 知識抽出のみ実行（バックフィル・検証用）。未抽出の古い分を多めに消化する
     if (pipelineMode === 'knowledge') {
-      await runKnowledgeExtraction(14, 60);
+      await runKnowledgeExtraction(Number(process.env.KNOWLEDGE_LIMIT ?? 200));
       console.log('=== Knowledge mode 完了 ===');
       process.exit(0);
     }
@@ -3399,7 +3440,7 @@ async function main() {
       process.exit(0);
     }
 
-    // v6: パーソナライズbrief配信のみ（購読者向け・テスト/手動用）
+    // 購読者への朝刊配信のみ（テスト/手動用）
     if (pipelineMode === 'briefs') {
       await sendPersonalizedBriefs();
       console.log('=== Briefs mode 完了 ===');

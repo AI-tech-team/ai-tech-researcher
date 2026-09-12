@@ -4,7 +4,11 @@ import { sql } from "drizzle-orm";
 export const sources = sqliteTable("sources", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   type: text("type").notNull(), // 'keyword', 'channel', 'user'
-  value: text("value").notNull(),
+  // UNIQUE が無いと、3箇所の insert が付けている .onConflictDoNothing() が
+  // 衝突対象を持てず全て空振りする（＝同じURLが何行でも入る）。実測では itmedia topstory が
+  // 33行に増え、重み付き抽選で他フィードの33倍引かれていた。user_topic_weights.keyword で
+  // 踏んだのと同じ型。→ [[feedback-action-side-effects]]
+  value: text("value").notNull().unique(),
   status: text("status").default('candidate'), // 'candidate', 'active', 'low-priority', 'stopped'
   score: real("score").default(0),
   lastHitAt: text("last_hit_at"),
@@ -36,6 +40,11 @@ export const collectedData = sqliteTable("collected_data", {
   extractAttemptedAt: text("extract_attempted_at"),
   extractAttempts: integer("extract_attempts").default(0),
   extractError: text("extract_error"),
+  // 知識抽出の実施記録。これが無いと「まだ抽出していない記事」を選べず1日窓に頼るしかなく、
+  // 窓を過ぎた記事は永久に抽出されない（実測: 9,093件が未抽出のまま）。
+  // claims が0件だった記事もここに時刻を入れる＝「0件」と「未実施」を混同すると、
+  // 抽出できない記事を毎日引き直して枠を食い潰す。→ [[pattern-throughput-starvation]]
+  knowledgeExtractedAt: text("knowledge_extracted_at"),
   publishedAt: text("published_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   // v3ベクトル基盤: 同一ストーリーの代表記事ID（自己参照）と束ねた記事数
