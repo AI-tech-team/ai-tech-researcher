@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { SITE_NOINDEX } from "./src/lib/site";
 
 // セキュリティヘッダ（多層防御）。全ルートに付与する。
 // CSPはNext.js/framer-motion/recharts/Googleログイン/next-imageを壊さない範囲に留める
@@ -30,9 +31,15 @@ const securityHeaders = [
   { key: 'X-DNS-Prefetch-Control', value: 'on' },
 ];
 
+// 未公開のあいだは全レスポンスに noindex を付ける（ページのmetadataより確実で、
+// sitemap.xml や feed.xml のような非HTMLにも効く）。公開時は src/lib/site.ts の SITE_NOINDEX を false に。
+const noindexHeaders = SITE_NOINDEX
+  ? [{ key: 'X-Robots-Tag', value: 'noindex, nofollow' }]
+  : [];
+
 const nextConfig: NextConfig = {
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }];
+    return [{ source: '/:path*', headers: [...securityHeaders, ...noindexHeaders] }];
   },
 };
 

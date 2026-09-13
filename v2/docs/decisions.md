@@ -1209,3 +1209,51 @@ importance は 5〜8 に散っており朝刊の★9には届かない＝一覧�
 - **Papers with Code**: APIは死んでいるが `status='stopped'` で回っていない
 - **`retrieval.ts` の LIMIT 群**: チャット撤去後どこからも呼ばれていない（デッドコード）
 - **週次/月次の `POOL` 上限**: 5,000 / 20,000 は窓の流入（7日1,547件・30日6,640件）を上回る
+
+---
+
+## 2026-09-13 ⑭ arXivのえりすぐり／sitemap全件／未公開のためのnoindex
+
+本人の指示3つ。「Arxivはこのままでいいから、まともな記事をえりすぐって取って」「(sitemap全件は)いいんじゃない？」
+「まだ公開しないからNoindexにしといて」。
+
+### A. arXiv: 窓は広げず、**中身で選ぶ**
+
+旧: 30件取って**新着10件**をそのまま採用。arXiv には HF の👍や GitHub の⭐にあたる
+外形的な信号が無いので、「新着順」以外の基準を持っていなかった。
+
+**決定: 取った30件を全部LLMに見せ、重要度の上位10件だけ採る。**
+1ソース1バッチなので **LLM呼び出しは1回のまま**。増えるのは1回あたりのトークンだけで、
+gemini-2.5-flash-lite なら1日1円未満。窓（`max_results=30`）は指示どおり広げていない。
+
+- 閾値ではなく**順位**で決める。「★7以上」のような閾値は分布を測らずに置くと
+  0件の日と25件の日を作る（[[pattern-distribution-hides-content]]）。上位N件なら分布が動いても壊れない
+- プロンプトに「同じ日の論文どうしを比べて差が付くように」を明示（全部同じ点を付けると順位が意味を失う）
+- ログに `採用n件（★最大〜最小／不採用n件）` を出す。差が付いていない日は数字で分かる
+- **未測定として残したもの**: `arxiv:comment`（"accepted at NeurIPS" 等）を決定論的な信号に使えるか。
+  2026-09-13 は arXiv API のレート制限（`Rate exceeded`）で中身を確認できなかった。
+  **測れていないので「付かない」とは書かない**（コードのコメントも未測定と明記した）
+
+### B. sitemap: 5,000件 → **全件**
+
+⑬で200件（＝1日未満）から5,000件（≒23日分）に広げ、全件にするかは
+「薄い記事を大量にインデックスさせるか」の方針判断として保留していた。本人の判断で**全件**に。
+約22,000URLで、sitemap 1ファイルの上限（50,000URL/50MB）の内側。超えたら `generateSitemaps()` で分割する。
+
+### C. まだ公開しないので noindex
+
+**切り替えは `src/lib/site.ts` の `SITE_NOINDEX` 1本**。公開時はここを `false` にするだけ。
+
+- `next.config.ts` が全レスポンスに `X-Robots-Tag: noindex, nofollow` を付ける
+  （ページのmetadataより確実で、`sitemap.xml` や `feed.xml` のような非HTMLにも効く）
+- ルートlayoutの metadata にも `robots: { index: false, follow: false }`。
+  **二重にしてあるのは、片方だけ外して「公開したつもり」になるのを防ぐため**
+- ⚠ **robots.txt は `Disallow` にしない。** クロールを止めるとクローラが noindex を読めなくなり、
+  既にインデックスされているページが消えない。「載せない」は allow + noindex で実現する
+
+実機確認（`next start` で実測）:
+```
+GET /            → X-Robots-Tag: noindex, nofollow ／ <meta name="robots" content="noindex, nofollow">
+GET /sitemap.xml → X-Robots-Tag: noindex, nofollow
+GET /robots.txt  → Allow: / （意図どおり）
+```

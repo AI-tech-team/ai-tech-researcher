@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,'Segoe UI',sans-serif;background:#e9edf3;color:#0f172a;padding:22px}
+h1{font-size:17px;margin:0 0 14px}
+.row{display:flex;gap:26px;justify-content:center}
+.col{width:220px;text-align:center}
+.phone{width:220px;height:400px;border-radius:28px;background:#03060f;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;border:4px solid #0b1220}
+.depth{background:radial-gradient(circle at 50% 38%,#0e1a33,#03060f 72%)}
+.cap{font-weight:700;font-size:13px;margin-top:9px}
+.logo{width:78px;height:78px;position:relative;filter:drop-shadow(0 6px 18px rgba(34,211,238,.2))}
+.nm{color:#eaf2ff;font-weight:700;font-size:15px;margin-top:14px;position:relative}
+/* ---- 1: 電球が灯る＋名前 ---- */
+.glow{position:absolute;width:250px;height:250px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.42),rgba(34,211,238,0) 60%);animation:g1 3.2s ease-in-out infinite}
+@keyframes g1{0%{opacity:0;transform:scale(.45)}22%{opacity:.95;transform:scale(1)}70%{opacity:.6;transform:scale(1.03)}88%{opacity:0}100%{opacity:0}}
+.a1{animation:a1 3.2s ease infinite}
+@keyframes a1{0%{opacity:0;transform:scale(.82)}20%{opacity:1;transform:scale(1)}74%{opacity:1;transform:scale(1)}88%{opacity:0;transform:scale(1.05)}100%{opacity:0}}
+.n1{animation:n1 3.2s ease infinite}
+@keyframes n1{0%,16%{opacity:0;transform:translateY(9px)}36%{opacity:1;transform:translateY(0)}74%{opacity:1}88%{opacity:0}100%{opacity:0}}
+/* ---- 2: 奥行き＋ロード感 ---- */
+.a2{animation:fade .6s ease both}
+@keyframes fade{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+.n2{animation:fade .6s ease .2s both}
+.track{position:absolute;bottom:42px;width:100px;height:3px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden}
+.ind{position:absolute;height:100%;width:42%;border-radius:3px;background:linear-gradient(90deg,#22d3ee,#6366f1);animation:ind 1.25s ease-in-out infinite}
+@keyframes ind{0%{left:-42%}100%{left:100%}}
+/* ---- 3: 新芽が育つ(SVG) ---- */
+.stem{transform-box:fill-box;transform-origin:50% 100%;animation:stem 3.6s ease infinite}
+@keyframes stem{0%,8%{transform:scaleY(0)}38%{transform:scaleY(1)}84%{transform:scaleY(1)}93%{transform:scaleY(0)}100%{transform:scaleY(0)}}
+.leafL{transform-box:fill-box;transform-origin:100% 70%;animation:leaf 3.6s ease infinite}
+.leafR{transform-box:fill-box;transform-origin:0% 70%;animation:leaf 3.6s ease infinite}
+@keyframes leaf{0%,30%{opacity:0;transform:scale(0)}54%{opacity:1;transform:scale(1)}84%{opacity:1;transform:scale(1)}92%{opacity:0;transform:scale(0)}100%{opacity:0}}
+.seed{transform-box:fill-box;transform-origin:center;animation:seed 3.6s ease infinite}
+@keyframes seed{0%,42%{opacity:0}56%{opacity:1}88%{opacity:1}93%{opacity:0}100%{opacity:0}}
+.bglow{animation:bg 3.6s ease infinite}
+@keyframes bg{0%,20%{opacity:.15}55%{opacity:.5}100%{opacity:.15}}
+</style></head><body>
+<h1>スプラッシュ・モーション比較（ループ）</h1>
+<div class="row">
+  <div class="col">
+    <div class="phone"><div class="glow"></div><img class="logo a1" src="public/icon-512.png"><div class="nm n1">AI Tech Researcher</div></div>
+    <div class="cap">① 電球が灯る＋名前</div>
+  </div>
+  <div class="col">
+    <div class="phone depth"><img class="logo a2" src="public/icon-512.png"><div class="nm n2">AI Tech Researcher</div><div class="track"><div class="ind"></div></div></div>
+    <div class="cap">② 奥行き＋ロード感</div>
+  </div>
+  <div class="col">
+    <div class="phone">
+      <svg width="150" height="165" viewBox="0 0 100 110">
+        <circle class="bglow" cx="50" cy="44" r="30" fill="#22d3ee" opacity=".15"/>
+        <circle cx="50" cy="44" r="26" fill="#0a1326" stroke="#38bdf8" stroke-width="3.4"/>
+        <path d="M40 66 L41.5 80 L58.5 80 L60 66 Z" fill="#0a1326" stroke="#38bdf8" stroke-width="3.4" stroke-linejoin="round"/>
+        <line x1="43" y1="85" x2="57" y2="85" stroke="#64748b" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="44" y1="90" x2="56" y2="90" stroke="#64748b" stroke-width="2.6" stroke-linecap="round"/>
+        <line x1="45" y1="95" x2="55" y2="95" stroke="#64748b" stroke-width="2.6" stroke-linecap="round"/>
+        <rect class="stem" x="48.4" y="44" width="3.2" height="22" rx="1.6" fill="#34d399"/>
+        <path class="leafL" d="M50 54 C44 50 37 47 32 49 C35 54 43 55 50 54 Z" fill="#34d399"/>
+        <path class="leafR" d="M50 50 C56 46 63 43 68 45 C65 50 57 51 50 50 Z" fill="#5fe6ab"/>
+        <circle class="seed" cx="50" cy="44" r="2.2" fill="#eafff5"/>
+      </svg>
+    </div>
+    <div class="cap">③ 新芽が育つ（SVG）</div>
+  </div>
+</div>
+</body></html>

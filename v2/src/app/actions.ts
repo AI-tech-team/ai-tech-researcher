@@ -326,13 +326,13 @@ export async function getAdjacentReports(type: string, reportDate: string): Prom
  *   （クライアント側Server Action）でクローラが辿れないため、**発見経路が事実上そこだけ**だった。
  *   Googlebot が毎日来なければ、その間に流れた記事はインデックスされない。
  *
- * 列を id と日付だけにして join もユーザー状態も無くし、上限を日数で意味が分かる大きさにする。
- * 5,000件 ≒ 23日分。全件(約22,000)を載せるかは「薄い記事を大量にインデックスさせるか」という
- * 別の判断なので、ここでは広げすぎない。
+ * 列を id と日付だけにして join もユーザー状態も無くし、既定で**全件**を載せる（2026-09-13 本人の判断）。
+ * 上限 50,000 は sitemap 1ファイルあたりの Google の上限（URL数）。約22,000件なのでまだ1ファイルで足りる。
+ * 超えたら `generateSitemaps()` で分割する（そのときは lastModified 付きのまま分ければよい）。
  */
-export async function getSitemapArticles(limit = 5000): Promise<Array<{ id: number; date: string | null }>> {
+export async function getSitemapArticles(limit = 50000): Promise<Array<{ id: number; date: string | null }>> {
   try {
-    const lim = Math.min(Math.max(limit, 1), 20000);
+    const lim = Math.min(Math.max(limit, 1), 50000);
     const rows = await cached(`sitemap-articles:${lim}`, 300_000, async () =>
       db.select({ id: collectedData.id, publishedAt: collectedData.publishedAt, createdAt: collectedData.createdAt })
         .from(collectedData)

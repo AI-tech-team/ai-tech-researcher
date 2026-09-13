@@ -364,7 +364,10 @@ async function filterUnseenUrls<T>(items: T[], getUrl: (i: T) => string | null |
 // 1ソースにつき1バッチ＝**LLM呼び出しは1回**なので、上限を上げても呼び出し回数は増えない。
 // 増えるのは1回あたりのトークンだけ（gemini-2.5-flash-lite）。上限を書いたら必ず流入と比べる。
 const RSS_EVAL_MAX = 20;    // 1フィードあたり。7日窓で20件を超えるフィードはほぼ無い
-const ARXIV_EVAL_MAX = 10;  // 流入は1日数百件。ここは意図的な標本（窓を広げるのは別途GO）
+// arXiv は窓（max_results=30）を広げない代わりに、**その30件を全部見て上位だけ採る**
+// （2026-09-13 本人の指示「Arxivはこのままでいいから、まともな記事をえりすぐって取って」）。
+const ARXIV_SCAN_MAX = 30;  // LLMに見せる件数。取得の上限と同じ＝取ったものは全部見る
+const ARXIV_KEEP = 10;      // そのうち実際に採る件数。流入は1日数百件なので、ここは意図的な標本
 const HN_SCAN_DEPTH = 150;  // 走査する順位の深さ（HTTP 150回・10並列）
 const HN_EVAL_MAX = 10;     // 実測(2026-09-13)で条件合致は1日13件。5では8件を毎日捨てていた
 
@@ -608,32 +611,47 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   //   1日分にも足りていない。ここで落とした20件は二度と来ない（[[pattern-throughput-starvation]]）。
   //   窓を広げると評価件数＝LLM課金が増えるので、広げるかは別途GOを取る。
   const unseen = await filterUnseenUrls(recent, it => it.url);
-  const fresh = topByScore(unseen, e => new Date(e.published).getTime(), ARXIV_EVAL_MAX);
-  console.log(`  [ArXiv] 取得${entries.length}件 → 7日以内${recent.length}件 → 未収集${unseen.length}件 → 評価${fresh.length}件`);
-  if (fresh.length === 0) return 0;
+  // ⚠ 旧実装は「新着10件」をそのまま採っていた。arXiv には HF の👍や GitHub の⭐にあたる
+  //   外形的な選別材料が無い。だから**取った30件を全部LLMに見せて、重要度の上位だけを採る**。
+  //   ⚠ 未測定: `arxiv:comment`（"accepted at NeurIPS" 等）を決定論的な信号に使える可能性は
+  //     残っている。2026-09-13 は arXiv API のレート制限で中身を確認できなかった。次に測る。
+  //   1ソース1バッチ＝**LLM呼び出しは1回のまま**で、増えるのは1回あたりのトークンだけ
+  //   （gemini-2.5-flash-lite で1日あたり1円未満）→ [[feedback-api-key-consent]]
+  const scanned = topByScore(unseen, e => new Date(e.published).getTime(), ARXIV_SCAN_MAX);
+  if (scanned.length === 0) {
+    console.log(`  [ArXiv] 取得${entries.length}件 → 7日以内${recent.length}件 → 未収集0件`);
+    return 0;
+  }
 
-  const batchText = fresh.map((e, i) => `[${i}] ${e.title}\n${e.summary}`).join('\n\n');
+  const batchText = scanned.map((e, i) => `[${i}] ${e.title}\n${e.summary}`).join('\n\n');
   const { object: arxivObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
     prompt: `${AI_RELEVANCE_RULE}
 
-以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
+以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。importance は「AI技術のニュースとして読者にとってどれだけ重要か」です。同じ日に投稿された論文どうしを比べて差が付くように答えてください（全部同じ点を付けない）。必ず${scanned.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
   }));
   const evaluations = arxivObject.items;
-  if (evaluations.length !== fresh.length) {
-    console.warn(`  [ArXiv] 評価数不一致: LLM=${evaluations.length}件 / 取得=${fresh.length}件`);
+  if (evaluations.length !== scanned.length) {
+    console.warn(`  [ArXiv] 評価数不一致: LLM=${evaluations.length}件 / 取得=${scanned.length}件`);
   }
   // 件数が合っていても中身は入れ替わりうる。突き合わせが番号で効いたかを毎回出す。
-  console.log(`  [ArXiv] 対応づけ: ${describeAlignment(evaluations, fresh.length)}`);
+  console.log(`  [ArXiv] 対応づけ: ${describeAlignment(evaluations, scanned.length)}`);
   const authorityBonus = getAuthorityBonus(source);
+
+  // ここが「えりすぐり」。評価が出そろってから重要度の上位だけを残す（新着順ではない）。
+  const ranked = scanned.flatMap((item, i) => {
+    const ev = evalAt(evaluations, i);
+    return ev && ev.importance >= 5 ? [{ item, ev }] : [];
+  });
+  const picked = topByScore(ranked, r => r.ev.importance, ARXIV_KEEP);
+  const impScores = picked.map(x => x.ev.importance);
+  console.log(`  [ArXiv] 取得${entries.length}件 → 7日以内${recent.length}件 → 未収集${unseen.length}件 → 評価${scanned.length}件 → 採用${picked.length}件` +
+    (impScores.length ? `（★${Math.max(...impScores)}〜${Math.min(...impScores)}／不採用${ranked.length - picked.length}件）` : ''));
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
-  for (let i = 0; i < fresh.length; i++) {
-    const item = fresh[i];
-    const ev = evalAt(evaluations, i);
-    if (!ev || ev.importance < 5) continue;
+  for (const { item, ev } of picked) {
     if (isNearDuplicate(item.title, titleCache)) continue;
     const r = await db.insert(schema.collectedData).values({
       sourceId: source.id,

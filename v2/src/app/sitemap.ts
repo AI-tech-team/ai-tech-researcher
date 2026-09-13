@@ -26,8 +26,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   let articles: MetadataRoute.Sitemap = [];
   try {
     // ⚠ 上限は「何日分か」で考える。旧実装の200件は流入221件/日を下回り、**1日未満**しか載らなかった。
-    // 5,000件 ≒ 23日分。cookies を読まない専用クエリなので sitemap は静的のまま（revalidate が効く）。
-    const items = await getSitemapArticles(5000);
+    // 2026-09-13 本人の判断で**全件**に。約22,000URL＝Googleの上限(1ファイル50,000URL/50MB)の内側。
+    // cookies を読まない専用クエリなので sitemap は静的のまま（revalidate=3600 が効く）。
+    const items = await getSitemapArticles();
     articles = items.map(i => {
       const d = i.date ? new Date(i.date) : now;
       return {

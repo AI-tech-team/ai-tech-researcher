@@ -4,6 +4,13 @@
  */
 export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ai-tech-researcher.vercel.app').replace(/\/+$/, '');
 export const SITE_NAME = 'Cernoval';
+
+/** まだ一般公開しないので、サイト全体を検索インデックスから外す（2026-09-13 本人の指示）。
+ *  公開するときは **この1行を false にするだけ**（next.config のヘッダと layout の metadata が両方これを見る）。
+ *
+ *  ⚠ robots.txt は `Disallow` にしない。クロールを止めると**クローラが noindex を読めなくなる**ので、
+ *    既にインデックスされているページが消えない。「載せない」は allow + noindex で実現する。 */
+export const SITE_NOINDEX = true;
 export const SITE_TAGLINE = '読むべきものだけを、毎朝';
 export const SITE_DESC = '毎日集まる大量のAI関連ニュースから、本当に読むべきものだけを選び、なぜ重要かを添えて毎朝お届けします。';
 /** 問い合わせ／データ削除依頼の窓口。Vercel に NEXT_PUBLIC_CONTACT_EMAIL を設定すると有効化される。

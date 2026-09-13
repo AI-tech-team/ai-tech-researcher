@@ -7,7 +7,7 @@ import { Providers } from "@/components/Providers";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import { BackToTop } from "@/components/BackToTop";
 import { JsonLd } from "@/components/JsonLd";
-import { SITE_URL, SITE_NAME, SITE_DESC, SITE_TAGLINE, RSS_ALTERNATE_TYPES } from '@/lib/site';
+import { SITE_URL, SITE_NAME, SITE_DESC, SITE_TAGLINE, RSS_ALTERNATE_TYPES, SITE_NOINDEX } from '@/lib/site';
 
 // サイト全体の構造化データ（WebSite＋Organization）。検索ボックス(SearchAction)は
 // URLベースの検索結果(?q=)が無いため今は付けない。
@@ -92,6 +92,9 @@ const SPLASH_BLOBS = [
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
+  // 未公開のあいだは全ページに noindex を出す（src/lib/site.ts の SITE_NOINDEX 1本で切り替わる）。
+  // next.config の X-Robots-Tag と二重にしてあるのは、片方だけ外して公開したつもりになるのを防ぐため。
+  ...(SITE_NOINDEX ? { robots: { index: false, follow: false } } : {}),
   title: { default: `${SITE_NAME} — ${SITE_TAGLINE}`, template: `%s — ${SITE_NAME}` },
   description: SITE_DESC,
   openGraph: {
