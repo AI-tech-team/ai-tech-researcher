@@ -11,6 +11,7 @@ import { CHARS_PER_MINUTE, readableLength } from '@/lib/reading-time';
 import { extractHighlightSection } from '@/lib/digest-highlights';
 import { logError } from '@/lib/logError';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from '@/lib/primary-sources';
+import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
 // 比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日がズレる）。
@@ -232,8 +233,12 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     // 約束しているハイライトは5本で、最も薄い日でも22本あり4倍以上の余裕がある。
     // 材料を増やすより、★7を混ぜない方が紙面は良くなる（本人の指示・2026-09-12）。
     // 一次情報源の救済（★8から拾う・実測2.1本/日）の理由は src/lib/primary-sources.ts を参照。
+    // ⚠ AI関連度もここで見る。importance だけで絞っていた頃、「新潟駅徒歩圏で完結する
+    //    1泊2日観光モデルルート」★9 がこの候補プールに入っていた（2026-09-12 実測）。
+    //    収集側にもゲートを置いたが、それ以前に集めた記事が残っているのでここでも落とす。
+    //    NULL（未判定・本文が取れずLLMに通せなかったHN記事）は落とさない。→ src/lib/ai-relevance.ts
     db.select().from(collectedData)
-      .where(and(gte(collectedData.createdAt, since), MIN_IMPORTANCE_SQL))
+      .where(and(gte(collectedData.createdAt, since), MIN_IMPORTANCE_SQL, AI_RELEVANT_SQL))
       .orderBy(
         desc(collectedData.importanceScore),
         desc(sql`COALESCE(${collectedData.storyCount}, 1)`),

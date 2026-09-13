@@ -413,6 +413,7 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
       url: item.link,
       summary: clampSummary(ev.summary),
       category: ev.category ?? 'その他',
+      aiRelevance: ev.aiRelevance,
       importanceScore: Math.min(10, ev.importance + authorityBonus),
       publishedAt: pubDate && !isNaN(pubDate.getTime()) ? pubDate.toISOString() : new Date().toISOString(),
     }).onConflictDoNothing();
@@ -523,6 +524,9 @@ ${batchText}`,
       // 本文が取れなかったものは summary を付けない（公開UIはタイトル＋リンクだけを出す）
       summary: ev ? clampSummary(ev.summary) : null,
       category: ev?.category ?? 'その他',
+      // 本文が取れずLLMに通せなかったものは null のまま残す。
+      // 0 を入れると「AI無関係と判定した」と「判定していない」が混ざって二度と分けられない。
+      aiRelevance: ev ? ev.aiRelevance : null,
       importanceScore,
       tags: JSON.stringify(['hacker-news', `hn-score:${item.score}`]),
       publishedAt: new Date(item.time * 1000).toISOString(),
@@ -578,7 +582,9 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
   const { object: arxivObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `${AI_RELEVANCE_RULE}
+
+以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = arxivObject.items;
   if (evaluations.length !== fresh.length) {
@@ -599,6 +605,7 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
       url: item.url,
       summary: clampSummary(ev.summary),
       category: ev.category ?? '研究/論文',
+      aiRelevance: ev.aiRelevance,
       importanceScore: Math.min(10, ev.importance + authorityBonus),
       tags: JSON.stringify(['arxiv', ev.category ?? '研究/論文']),
       publishedAt: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
@@ -634,7 +641,9 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
   const { object: ghObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のGitHubトレンドリポジトリ（AI/ML分野）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `${AI_RELEVANCE_RULE}
+
+以下のGitHubトレンドリポジトリ（AI/ML分野）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = ghObject.items;
   if (evaluations.length !== candidates.length) {
@@ -655,6 +664,7 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
       url: item.html_url,
       summary: clampSummary(ev.summary),
       category: ev.category ?? 'ツール/フレームワーク',
+      aiRelevance: ev.aiRelevance,
       importanceScore: ev.importance,
       tags: JSON.stringify(['github-trending', `⭐${item.stargazers_count}`]),
       publishedAt: item.created_at ?? new Date().toISOString(),
@@ -691,7 +701,9 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
   const { object: pwcObject } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `${AI_RELEVANCE_RULE}
+
+以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
   }));
   const evaluations = pwcObject.items;
   if (evaluations.length !== fresh.length) {
@@ -714,6 +726,7 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
       url: paperUrl,
       summary: clampSummary(ev.summary),
       category: ev.category ?? '研究/論文',
+      aiRelevance: ev.aiRelevance,
       importanceScore: Math.min(10, ev.importance + authorityBonus),
       tags: JSON.stringify(['papers-with-code', ...(item.tasks ?? []).slice(0, 2).map((t: any) => t.name as string)]),
       publishedAt: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),

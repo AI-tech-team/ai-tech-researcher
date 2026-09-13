@@ -28,6 +28,13 @@ export const collectedData = sqliteTable("collected_data", {
   isReadLater: integer("is_read_later").default(0),
   isRead: integer("is_read").default(0),
   importanceScore: integer("importance_score").default(5),
+  // 「その記事がAI・機械学習の技術そのものを扱っているか」を 0-10 で持つ。
+  // ⚠ importance_score と**必ず別の列**にすること。1つのスカラーに「AIの話か」と
+  // 「記事として重要か」を兼任させていた頃、よく書けた無関係記事が高得点になり、
+  // 「新潟駅徒歩圏で完結する1泊2日観光モデルルート」★9 が朝刊の候補に入っていた
+  // （2026-09-12 実測）。プロンプトで指示しても直らず、構造で分けて解決した。
+  // NULL = 未判定（2026-09-13 の列追加より前に収集した記事）。表示側は NULL を落とさない。
+  aiRelevance: integer("ai_relevance"),
   normalizedImportanceScore: integer("normalized_importance_score"),
   tags: text("tags"), // JSON array: '["tag1","tag2"]'
   // v7: 記事ページ用の「要点」。抽出本文(rawContent)は著作権上一般公開できないため(第三条)、
