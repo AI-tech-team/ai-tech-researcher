@@ -15,6 +15,7 @@ import { politeFetch } from './src/lib/robots';
 import { decodeHtmlEntities } from './src/lib/html-entities';
 import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
 import { evalAt, INDEX_RULE, describeAlignment } from './src/lib/eval-align';
+import { dedupeByBaseModel, baseModelKey } from './src/lib/model-id';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
@@ -727,10 +728,23 @@ async function collectFromHuggingFaceModels(source: typeof schema.sources.$infer
     return { id, url: `https://huggingface.co/${id}`, downloads: m.downloads ?? 0, likes: m.likes ?? 0, task: m.pipeline_tag ?? '', createdAt: m.createdAt };
   }).filter(m => m.id);
 
-  const unseen = await filterUnseenUrls(items, m => m.url);
+  // 量子化再アップは**別の出来事ではない**。2026-09-13 の実測では8件中3件が同じ Qwen3.8-27B だった
+  //   （本体 ★9 / ISTA-DASLab GGUF ★7 / unsloth GGUF ★6）。
+  // ⚠ 「派生だから捨てる」ではなく「**本体が既にあるなら重ねない**」。派生しかトレンドに
+  //   乗らない日はそれを拾う。収集で落としたものは戻らない → [[pattern-filter-by-recoverability]]
+  const folded = dedupeByBaseModel(items, m => m.id);
+
+  // 本体を昨日拾っていて、今日その量子化版が伸びる場合も重ねない（バッチ内だけでは足りない）。
+  const recentModels = await db.all<{ title: string }>(
+    sql`SELECT title FROM collected_data WHERE title LIKE '[モデル公開]%' AND created_at >= datetime('now', '-7 days')`);
+  const seenBases = new Set(recentModels.map(r => baseModelKey(String(r.title ?? '').replace('[モデル公開] ', ''))).filter(Boolean));
+  const fresh = folded.filter(m => !seenBases.has(baseModelKey(m.id)));
+
+  // ⚠ 絞る（slice）前に落とす。順序が逆だと上限10件の中で重複が枠を食う。
+  const unseen = await filterUnseenUrls(fresh, m => m.url);
   const candidates = unseen.slice(0, 10);
   // ⚠ 0件でも件数を出す。github-trending はこの沈黙で77日気づけなかった。
-  console.log(`  [HF models] 取得${(raw ?? []).length}件 → 話題${hot.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件`);
+  console.log(`  [HF models] 取得${(raw ?? []).length}件 → 話題${hot.length}件 → 重複除去${folded.length}件 → 既出除外${fresh.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件`);
   if (candidates.length === 0) return 0;
 
   const batchText = candidates.map((m, i) =>
