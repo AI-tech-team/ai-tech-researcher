@@ -626,10 +626,25 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
 }
 
 // ── GitHub Trending AI収集（GitHub Search API）────────────────────────
+//
+// ⚠ ここは **77日間、毎日APIを叩いて成功しながら1件も保存していなかった**（2026-09-13 に発見）。
+//   `last_hit_at` は前夜まで更新されているのに、保存された記事の最終は 2026-06-28。
+//   通算11件のうち10件が初回(2026-05-22)、残り1件が firecrawl だけ。原因は2つ重なっていた:
+//
+//   ① `sort=stars&order=desc` は**累計スター数**の順。毎日 tensorflow / transformers / ollama /
+//      AutoGPT という同じ殿堂入りリポジトリが返る。「Trending」という名前で、実際に測っていたのは
+//      流行ではなく**累計の知名度**だった。新規が出るのは「AIリポジトリの歴代トップ10入りしたとき」
+//      だけ＝ほぼ永久に起きない。
+//   ② `items.slice(0, 10)` で**先に10件へ絞ってから**重複除去していた。上位10件が既知になった
+//      瞬間に candidates が空になり、以後ずっと0件。→ [[pattern-throughput-starvation]]
+//      （今セッションで直した claims の `LIMIT 40` と同じ形。**絞る前に落とす**のが鉄則）
+//
+//   直し方: 「60日以内に作られた」で窓を切り、**重複除去してから件数を絞る**。
+//   実測(2026-09-13): 累計順=未収集0件 → 60日窓=プール124件・未収集49件・新規約2.1件/日。
+//   30日窓も測ったが1.5件/日で中身も弱かった（60日側は ⭐7,783 の kimi-k3-in-c 等が入る）。
 async function collectFromGitHubTrending(source: typeof schema.sources.$inferSelect): Promise<number> {
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
-  // OR + created: の組合せはGitHub APIが422を返すため、in:topics + pushed: 形式に修正
-  const url = `https://api.github.com/search/repositories?q=llm+OR+ai-agent+OR+machine-learning+in:topics+stars:>200+pushed:>${sevenDaysAgo}&sort=stars&order=desc&per_page=15`;
+  const createdSince = new Date(Date.now() - 60 * 864e5).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  const url = `https://api.github.com/search/repositories?q=llm+OR+ai-agent+OR+machine-learning+in:topics+stars:>200+created:>${createdSince}&sort=stars&order=desc&per_page=50`;
 
   const res = await fetch(url, {
     headers: { 'User-Agent': 'Cernoval/1.0', 'Accept': 'application/vnd.github+json' },
@@ -640,8 +655,11 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
   const items: any[] = json.items ?? [];
   if (items.length === 0) return 0;
 
-  const allCandidates = items.slice(0, 10);
-  const candidates = await filterUnseenUrls(allCandidates, (r: any) => r.html_url);
+  // ⚠ 重複除去が先、件数を絞るのは後。逆にすると上位が既知になった時点で永久に0件になる。
+  const unseen = await filterUnseenUrls(items, (r: any) => r.html_url);
+  const candidates = unseen.slice(0, 10);
+  // ⚠ 0件で静かに return しない。この沈黙のせいで77日気づけなかった。必ず数を出す。
+  console.log(`  [GitHub] 取得${items.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件`);
   if (candidates.length === 0) return 0;
 
   const batchText = candidates.map((r: any, i: number) =>
@@ -666,6 +684,12 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
     const item = candidates[i];
     const ev = evaluations[i];
     if (!ev || ev.importance < 5) continue;
+    // トピック絞り込みを通っていても「AIと無関係」と判定されるものは入る
+    // （実測: ⭐3,040 の "One-ink editorial print image skill" 等）。他経路と同じ基準で落とす。
+    if (ev.aiRelevance < AI_RELEVANCE_MIN) {
+      console.log(`  [GitHub] AI関連度${ev.aiRelevance}のため除外: ${item.full_name}`);
+      continue;
+    }
     const ghTitle = `[GitHub] ${item.full_name}`;
     if (isNearDuplicate(ghTitle, titleCache)) continue;
     const r = await db.insert(schema.collectedData).values({
@@ -1017,7 +1041,39 @@ importanceは1〜10でAI技術的重要度を評価。tagsは3〜5個の短い�
   }
 
   console.log(`[Collect] ${collected}件完了, ${failed}件失敗`);
+  await reportSilentSources();
   return { collected, failed };
+}
+
+/**
+ * **有効なのに記事を生んでいないソース**を毎回のランで名指しする。
+ *
+ * ⚠ `last_hit_at` を健全性の指標にしてはいけない。あれは「叩いたか」しか見ていない。
+ *   github-trending は `last_hit_at` が毎晩更新されつづける一方で、記事は 2026-06-28 から
+ *   1件も増えていなかった（77日）。**呼ばれたかではなく、生んだかを見る。**
+ *   → [[pattern-wired-but-never-called]]
+ *
+ * 落とさない・止めない。ログに出すだけ。自動停止にすると、たまたま静かな週に良いソースを殺す。
+ */
+async function reportSilentSources(days = 30): Promise<void> {
+  try {
+    const rows = await db.all<{ type: string; value: string; last: string | null; n: number }>(sql`
+      SELECT s.type, s.value, MAX(cd.created_at) AS last, COUNT(cd.id) AS n
+      FROM sources s LEFT JOIN collected_data cd ON cd.source_id = s.id
+      WHERE s.status = 'active'
+      GROUP BY s.id
+      HAVING last IS NULL OR last < datetime('now', ${`-${days} day`})
+      ORDER BY last IS NULL DESC, last ASC
+      LIMIT 20`);
+    if (rows.length === 0) { console.log(`[Collect] ${days}日以上沈黙している有効ソース: なし`); return; }
+    console.warn(`[Collect] ⚠ ${days}日以上記事を生んでいない有効ソースが ${rows.length}本:`);
+    for (const r of rows) {
+      console.warn(`    ${String(r.type).padEnd(16)} 通算${String(r.n).padStart(5)}件  最終 ${r.last ?? '一度も無し'}  ${r.value.slice(0, 60)}`);
+    }
+  } catch (e) {
+    // 監視が本体を落とさないこと（収集結果は既に確定している）
+    console.warn('[Collect] 沈黙ソースの点検に失敗:', (e as Error).message);
+  }
 }
 
 // 日次レポート生成＋全購読者へ同一ダイジェスト配信。生成本体は共通の buildDailyReport（サイト掲載と同一内容）。
@@ -3265,6 +3321,7 @@ const DEAD_SOURCE_VALUES = [
   'https://www.anthropic.com/rss.xml',       // 404・代替RSSなし
   'https://mistral.ai/news/rss/',            // 404・代替RSSなし
   'https://paperswithcode.com/api/v1/papers/', // APIがHTML返却（廃止）
+  'https://blogs.microsoft.com/ai/feed/',     // 410 Gone（2026-09-13 実測）。通算0件のまま有効だった
   'https://www.wired.com/feed/tag/artificial-intelligence/rss', // 400（新URLへ移行）
 ];
 
