@@ -16,6 +16,21 @@ export const OG_CATEGORY_COLORS: Record<string, string> = {
   'ハードウェア': '#fb923c', 'ビジネス応用': '#f472b6', '研究/論文': '#a78bfa', 'その他': '#7dd3fc',
 };
 
+/** ブランドマーク。アイコン（src/app/icon.png ほか）と同じ幾何・同じ夜明けのグラデーション。
+ *  ⚠ 以前ここには Knowledge Tree 時代の「AI」タイル（linear-gradient(135deg,#0ea5e9,#4f46e5)）が
+ *    残っていた。ロゴは12ファイルから撤去したのに、**SNSで最も共有される面にだけ生き残っていた**
+ *    （2026-09-13 本番のOG画像を実際に取得して発見）。
+ *  ⚠ アイコンを変えるときは `scripts/_export_icon.mjs` とこの2箇所を必ず同時に直す。
+ *  ⚠ SVGはy軸が下向き＝角度が増える向きが画面上の時計回り。arc の sweep-flag は 1。 */
+const MARK_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">' +
+  '<defs><linearGradient id="d" gradientUnits="userSpaceOnUse" x1="96" y1="416" x2="416" y2="96">' +
+  '<stop offset="0%" stop-color="#a5b4fc"/><stop offset="46%" stop-color="#38bdf8"/>' +
+  '<stop offset="100%" stop-color="#fde68a"/></linearGradient></defs>' +
+  '<path d="M 370.9 352.4 A 150 150 0 1 1 370.9 159.6" fill="none" stroke="url(#d)" stroke-width="78"/>' +
+  '</svg>';
+const MARK_URI = `data:image/svg+xml;utf8,${encodeURIComponent(MARK_SVG)}`;
+
 // 表示する日本語コピー（フォントサブセットの対象もこれで決まる）
 const JP_HEADLINE = 'AIの最新を、毎朝日本語で。';
 const JP_SUB = '自動で収集・要約し、知識として蓄積していく。';
@@ -64,9 +79,11 @@ export async function renderOgImage(): Promise<ImageResponse> {
           <div style={{
             width: 76, height: 76, borderRadius: 18, marginRight: 26,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            backgroundImage: 'linear-gradient(135deg, #0ea5e9, #4f46e5)',
-            color: 'white', fontSize: 34, fontWeight: 700,
-          }}>AI</div>
+            backgroundColor: '#000000',
+          }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={MARK_URI} width={76} height={76} alt="" />
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: -0.5 }}>{SITE_NAME}</div>
             <div style={{ fontSize: 22, color: '#7dd3fc', marginTop: 4 }}>{kicker}</div>
@@ -128,9 +145,11 @@ export async function renderEntityOgImage(opts: {
           <div style={{
             width: 64, height: 64, borderRadius: 16, marginRight: 22,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            backgroundImage: 'linear-gradient(135deg, #0ea5e9, #4f46e5)',
-            color: 'white', fontSize: 28, fontWeight: 700,
-          }}>AI</div>
+            backgroundColor: '#000000',
+          }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={MARK_URI} width={64} height={64} alt="" />
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: -0.5 }}>{SITE_NAME}</div>
             <div style={{ fontSize: 21, color: accent, marginTop: 3 }}>{kicker}</div>
