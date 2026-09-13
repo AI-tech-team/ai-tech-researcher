@@ -317,6 +317,35 @@ export async function getAdjacentReports(type: string, reportDate: string): Prom
 }
 
 // sitemap用: 中身が充実したエンティティ名（関係を持つもの＝/topic が noindex にならない）を列挙。
+/**
+ * sitemap 専用の記事一覧（id と日付だけ）。
+ *
+ * ⚠ 旧実装は `getCollectedDataList(200, 0, true)` を使っていた。この関数は公開Actionなので
+ *   上限200がハードコードされており、**1日の流入221件（実測・2026-09-06のバックアップ）より少ない**。
+ *   つまり sitemap に載っている時間が1日弱しかなく、記事一覧の続きは「もっと読む」ボタン
+ *   （クライアント側Server Action）でクローラが辿れないため、**発見経路が事実上そこだけ**だった。
+ *   Googlebot が毎日来なければ、その間に流れた記事はインデックスされない。
+ *
+ * 列を id と日付だけにして join もユーザー状態も無くし、上限を日数で意味が分かる大きさにする。
+ * 5,000件 ≒ 23日分。全件(約22,000)を載せるかは「薄い記事を大量にインデックスさせるか」という
+ * 別の判断なので、ここでは広げすぎない。
+ */
+export async function getSitemapArticles(limit = 5000): Promise<Array<{ id: number; date: string | null }>> {
+  try {
+    const lim = Math.min(Math.max(limit, 1), 20000);
+    const rows = await cached(`sitemap-articles:${lim}`, 300_000, async () =>
+      db.select({ id: collectedData.id, publishedAt: collectedData.publishedAt, createdAt: collectedData.createdAt })
+        .from(collectedData)
+        .where(AI_RELEVANT_SQL)
+        .orderBy(desc(collectedData.createdAt))
+        .limit(lim));
+    return rows.map(r => ({ id: r.id, date: r.publishedAt ?? r.createdAt ?? null }));
+  } catch (error) {
+    await logError('getSitemapArticles', error);
+    return [];
+  }
+}
+
 export async function getSitemapTopics(limit = 300): Promise<string[]> {
   try {
     // ⚠️ 旧実装は ORDER BY が無く、UNION の結果をそのまま LIMIT していた。その結果 sitemap に
@@ -758,14 +787,28 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
       : eq(benchmarks.entityName, canonical);
 
     const [bench, relsOut, relsIn, clm, claimArts, benchArts] = await Promise.all([
+      // ⚠ 上限は**表示する数ではなく、表示側で捨てる分を見込んだ数**にする。
+      // ベンチは表示側(visibleBenchmarks)で `tok/s` `unknown` `2026年売上高見通し 430億ユーロ` のような
+      // 非ベンチを落とし、表記ゆれも畳む。旧実装は12件取ってから落としていたので、
+      // 新しい日付の無効行が12枠を埋めた日は有効なベンチが1件も出なかった（絞ってから落とす形）。
+      // 40件取って表示側で12件に切る。claims も同じ理由で 8→30。
       db.select({ benchmark: benchmarks.benchmarkName, score: benchmarks.score, unit: benchmarks.unit, date: benchmarks.recordedDate })
-        .from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.recordedDate)).limit(12),
+        .from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.recordedDate)).limit(40),
+      // ⚠ relations には一意制約が無く、同じ (subject, type, object) が**記事の数だけ重複する**。
+      // 旧実装は ORDER BY 無しの LIMIT 20 で、SQLiteは rowid 順＝最も古い20行を返していた
+      // （すぐ下の claims/benchmarks では同じ罠を直したのに、この2本だけ直っていなかった）。
+      // しかも重複除去は表示側(relatedNames)なので、20枠が同じ相手の繰り返しで埋まると
+      // 「関連トピック」が数件しか出ない。→ SQLで先に畳み、新しい関係から取る。
       db.select({ type: relations.relationType, other: relations.objectName })
-        .from(relations).where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`)).limit(20),
+        .from(relations).where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`))
+        .groupBy(relations.relationType, relations.objectName)
+        .orderBy(desc(sql`MAX(${relations.id})`)).limit(24),
       db.select({ type: relations.relationType, other: relations.subjectName })
-        .from(relations).where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`)).limit(20),
+        .from(relations).where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`))
+        .groupBy(relations.relationType, relations.subjectName)
+        .orderBy(desc(sql`MAX(${relations.id})`)).limit(24),
       db.select({ predicate: claims.predicate, value: claims.value })
-        .from(claims).where(and(claimMatch, eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(8),
+        .from(claims).where(and(claimMatch, eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(30),
       // ⚠ この2本の LIMIT 40 には **ORDER BY を必ず付ける**。付けないとSQLiteは rowid 順＝
       // 挿入の古い順に40行返すので、「関連記事」の候補プールがそのトピックで**最も古い40件**になる。
       // 本番実測(2026-09-13, /topic/OpenAI): claims 107行のうち古い40行 → 記事29件、中央値98日前。
@@ -886,7 +929,11 @@ function dedupeByStory(items: CollectedItem[], limit: number): CollectedItem[] {
 async function relatedByPRF(lex: { ids: number[] }): Promise<number[]> {
   const seeds = lex.ids.slice(0, 8);
   if (!seeds.length) return [];
-  const matched = new Set(lex.ids.slice(0, 25)); // 「一致した記事」と重複させない
+  // ⚠ 「一致した記事」と重複させないための除外。**表示している数を必ず覆うこと。**
+  // 旧実装は上位25件だけ除外していたが、/search は最大50件表示する（パレットは25件）。
+  // 26〜50位の記事が近傍に入ると**同じ記事が同じ画面に二度出る**。
+  // 除外を全件(60)に広げても関連レーンが痩せるだけの害は無い（近傍はコーパス全体から取る）。
+  const matched = new Set(lex.ids);
   const embRes = await client.execute({
     sql: `SELECT id, vector_extract(embedding) AS e FROM collected_data
           WHERE embedding IS NOT NULL AND id IN (${seeds.map(() => '?').join(',')})`,

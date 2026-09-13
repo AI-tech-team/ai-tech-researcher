@@ -16,7 +16,7 @@ import { decodeHtmlEntities } from './src/lib/html-entities';
 import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
 import { evalAt, INDEX_RULE, describeAlignment } from './src/lib/eval-align';
 import { dedupeByBaseModel, baseModelKey } from './src/lib/model-id';
-import { topByScore } from './src/lib/collect-select';
+import { topByScore, spreadByDay } from './src/lib/collect-select';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
@@ -1395,16 +1395,36 @@ async function sendDigestPush(reportId: number | null): Promise<void> {
   console.log(`[Push] 通知送信: ${sent}/${subs.length}件（失効削除 ${pruned}件）`);
 }
 
+// ── 期間レポートの候補数 ─────────────────────────────────────────────
+// POOL = 窓から引く行の上限。**窓の流入を必ず上回らせる**（実測: 221件/日＝7日1,547件・30日6,640件）。
+//   ここが流入より小さいと、上限で切った時点でまた期間が縮む。列は5つだけなので行数は持てる。
+// CONTEXT = LLMに渡す件数。日ごとに均等に配るので「何日分か」がログに出る。
+const WEEKLY_POOL_MAX = 5000;
+const WEEKLY_CONTEXT = 70;
+const MONTHLY_POOL_MAX = 20000;
+const MONTHLY_CONTEXT = 100;
+
 async function generateWeeklyReport(): Promise<string | null> {
   console.log('[WeeklyReport] 週次レポート生成開始');
 
   const sevenDaysAgoISO = sqlTs(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
 
-  const [recentData, prevWeekly] = await Promise.all([
-    db.select().from(schema.collectedData)
+  // ⚠ 旧実装は `importance DESC, created_at DESC LIMIT 70`。同点が多いと**最終日に偏る**
+  //   （実測: 7日窓1,599件のうち★10が48件、残り22枠を★9の300件から新着順に取っていた）。
+  //   候補は日ごとに均等に配る → src/lib/collect-select.ts の spreadByDay。
+  //   窓の全件を引くので列は必要な5つだけにする（raw_content を載せない）。
+  const [windowRows, prevWeekly] = await Promise.all([
+    db.select({
+        title: schema.collectedData.title,
+        summary: schema.collectedData.summary,
+        category: schema.collectedData.category,
+        importanceScore: schema.collectedData.importanceScore,
+        createdAt: schema.collectedData.createdAt,
+      })
+      .from(schema.collectedData)
       .where(gte(schema.collectedData.createdAt, sevenDaysAgoISO))
       .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
-      .limit(70),
+      .limit(WEEKLY_POOL_MAX),
     db.select({ content: schema.reports.content })
       .from(schema.reports)
       .where(eq(schema.reports.type, 'weekly'))
@@ -1412,7 +1432,10 @@ async function generateWeeklyReport(): Promise<string | null> {
       .limit(1),
   ]);
 
-  if (recentData.length === 0) { console.log('[WeeklyReport] データなし、スキップ'); return null; }
+  if (windowRows.length === 0) { console.log('[WeeklyReport] データなし、スキップ'); return null; }
+  const recentData = spreadByDay(windowRows, r => String(r.createdAt ?? '').slice(0, 10), r => r.importanceScore ?? 0, WEEKLY_CONTEXT);
+  const wDays = new Set(recentData.map(r => String(r.createdAt ?? '').slice(0, 10))).size;
+  console.log(`[WeeklyReport] 窓${windowRows.length}件 → 候補${recentData.length}件（${wDays}日分）`);
 
   const contextStr = recentData
     .map(d => `[重要度:${d.importanceScore ?? 5}][${d.category ?? '未分類'}] ${d.title}\n${d.summary}`)
@@ -1460,11 +1483,21 @@ async function generateMonthlyReport(): Promise<string | null> {
 
   const thirtyDaysAgoISO = sqlTs(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
 
-  const [recentData, prevMonthly] = await Promise.all([
-    db.select().from(schema.collectedData)
+  // ⚠ 旧実装は `importance DESC, created_at DESC LIMIT 100`。実測(2026-09-06)で
+  //   30日窓6,469件のうち★10が173件あり、**上位100件は★10だけで埋まって17日分**しか入らなかった。
+  //   08-07〜08-20 の14日間が1件も入らないまま「月次」を書いていた。→ spreadByDay で日ごとに配る。
+  const [windowRows, prevMonthly] = await Promise.all([
+    db.select({
+        title: schema.collectedData.title,
+        summary: schema.collectedData.summary,
+        category: schema.collectedData.category,
+        importanceScore: schema.collectedData.importanceScore,
+        createdAt: schema.collectedData.createdAt,
+      })
+      .from(schema.collectedData)
       .where(gte(schema.collectedData.createdAt, thirtyDaysAgoISO))
       .orderBy(desc(schema.collectedData.importanceScore), desc(schema.collectedData.createdAt))
-      .limit(100),
+      .limit(MONTHLY_POOL_MAX),
     db.select({ content: schema.reports.content })
       .from(schema.reports)
       .where(eq(schema.reports.type, 'monthly'))
@@ -1472,7 +1505,10 @@ async function generateMonthlyReport(): Promise<string | null> {
       .limit(1),
   ]);
 
-  if (recentData.length === 0) { console.log('[MonthlyReport] データなし、スキップ'); return null; }
+  if (windowRows.length === 0) { console.log('[MonthlyReport] データなし、スキップ'); return null; }
+  const recentData = spreadByDay(windowRows, r => String(r.createdAt ?? '').slice(0, 10), r => r.importanceScore ?? 0, MONTHLY_CONTEXT);
+  const mDays = new Set(recentData.map(r => String(r.createdAt ?? '').slice(0, 10))).size;
+  console.log(`[MonthlyReport] 窓${windowRows.length}件 → 候補${recentData.length}件（${mDays}日分）`);
 
   const contextStr = recentData
     .map(d => `[重要度:${d.importanceScore ?? 5}][${d.category ?? '未分類'}] ${d.title}\n${d.summary}`)
@@ -2620,7 +2656,28 @@ function buildEmbeddingInput(r: { title: string; summary: string; raw: string })
   return `${head}\n${body}`.slice(0, EMBED_INPUT_MAX);
 }
 
-async function runEmbeddings(limit = 300): Promise<number> {
+// ── 滞留の可視化 ─────────────────────────────────────────────────────
+// 「n件処理しました」は健康の証拠にならない。**残りが何件あるか**を毎日出す。
+// 「1回の上限 < 1日の流入」は本番で9箇所やっている（[[pattern-throughput-starvation]]）。
+// 残りが上限以上なら**翌日も追いつかない**＝静かに積み上がっている、と読める形にする。
+// バックアップ実測(2026-09-06): 流入は平均221件/日・ピーク318件/日、重要度>=7 は平均173件/日。
+async function reportBacklog(label: string, whereSql: string, limit: number): Promise<number> {
+  try {
+    const r = await client.execute(`SELECT COUNT(*) AS n FROM collected_data WHERE ${whereSql}`);
+    const n = Number(r.rows[0]?.n ?? 0);
+    if (n >= limit) console.warn(`${label} ⚠ 未処理の残り${n}件 ≧ 1回の上限${limit}件＝翌日も追いつかない（滞留）`);
+    else console.log(`${label} 未処理の残り${n}件（1回の上限${limit}件）`);
+    return n;
+  } catch (e: any) {
+    console.warn(`${label} 残数の確認に失敗(非致命): ${(e.message ?? '').slice(0, 60)}`);
+    return -1;
+  }
+}
+
+// ⚠ 上限は流入のピークを上回らせる。300は実測ピーク318件/日を**下回っていた**（2026-09-13）。
+//   記事1件は一度しか埋め込まれないので、上限を上げても**総コストは増えない**（順番が早く回るだけ）。
+//   埋め込みは激安（$0.15/1M・全件でも¥60〜¥340）→ [[feedback-api-key-consent]]
+async function runEmbeddings(limit = 600): Promise<number> {
   console.log('[Embed] 埋め込み生成開始');
   const res = await client.execute({
     sql: `SELECT id, title, summary, raw_content FROM collected_data WHERE embedding IS NULL ORDER BY created_at DESC LIMIT ?`,
@@ -2658,6 +2715,7 @@ async function runEmbeddings(limit = 300): Promise<number> {
     }
   }
   console.log(`[Embed] ${embedded}件ベクトル化`);
+  await reportBacklog('[Embed]', 'embedding IS NULL', limit);
   return embedded;
 }
 
@@ -2738,6 +2796,8 @@ async function runChunkEmbeddings(limit = 40): Promise<number> {
   const s = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
   console.log(`[Chunk] ${arts.length}記事 → ${total}チャンク埋め込み (API ${Math.ceil(units.length / EMBED_BATCH)}回)`);
   console.log(`[Chunk] 内訳: 埋め込み ${s(embedMs)} / DB書込 ${s(dbMs)} (1チャンクあたり 埋込 ${(embedMs / Math.max(total, 1)).toFixed(0)}ms / 書込 ${(dbMs / Math.max(total, 1)).toFixed(0)}ms)`);
+  await reportBacklog('[Chunk]',
+    'raw_content IS NOT NULL AND importance_score >= 7 AND id NOT IN (SELECT DISTINCT article_id FROM content_chunks)', limit);
   return total;
 }
 
@@ -2902,6 +2962,7 @@ async function runStoryGrouping(limit = 400): Promise<{ stories: number; merged:
   }
 
   console.log(`[Story] 新規ストーリー${newStories}件, 重複統合${merged}件`);
+  await reportBacklog('[Story]', 'embedding IS NOT NULL AND story_id IS NULL', limit);
   return { stories: newStories, merged };
 }
 
@@ -2913,22 +2974,29 @@ const TitleTransSchema = z.object({
 
 async function translateTitles(limit = 80): Promise<number> {
   console.log('[Translate] タイトル翻訳開始');
-  // title_ja が NULL、または「英語のまま残っている」もの（英語ソースのみ）を新しい順に対象化。
+  // title_ja が NULL、または「英語のまま残っている」もの（英語ソースのみ）を対象化。
   // 広めに取って JS 側で「要翻訳」だけ抽出する（英語のまま残ったtitleJaも再翻訳の対象にする）。
+  //
+  // ⚠ 旧実装は `ORDER BY created_at DESC LIMIT 800` だけで、**新着800行＝約3.6日分しか見ていなかった**。
+  //   そこから外れた未翻訳は日次では二度と届かない。実測(2026-09-06のバックアップ):
+  //   未翻訳248件のうち**241件が窓の外**。うち93件は4語以上の本物の英文で、残りは
+  //   `llama.cpp.md` `zai-org/GLM-5.3-Flash · Hugging Face` のような訳しようのない名前だった。
+  //   → 未翻訳(title_ja IS NULL)を先に並べ、滞留から先に消化する。
   const rows = await db.select({ id: schema.collectedData.id, title: schema.collectedData.title, titleJa: schema.collectedData.titleJa })
     .from(schema.collectedData)
     .where(sql`${schema.collectedData.title} IS NOT NULL`)
-    .orderBy(desc(schema.collectedData.createdAt))
+    .orderBy(sql`(${schema.collectedData.titleJa} IS NULL) DESC`, desc(schema.collectedData.createdAt))
     .limit(limit * 4);
 
   const targets = rows.filter(r => {
     const t = r.title ?? '';
     if (!t || JA_CHAR.test(t)) return false;                 // 元から日本語のタイトル＝翻訳不要
+    if (r.titleJa === t) return false;                       // 「訳しようがない」と判定済みの印（下を参照）
     return !r.titleJa || !JA_CHAR.test(r.titleJa);           // titleJa無し or 英語のまま残存
   }).slice(0, limit);
   if (targets.length === 0) { console.log('[Translate] 対象なし'); return 0; }
 
-  let translated = 0;
+  let translated = 0, marked = 0;
   const BATCH = 25;
   for (let i = 0; i < targets.length; i += BATCH) {
     const chunk = targets.slice(i, i + BATCH);
@@ -2940,22 +3008,35 @@ async function translateTitles(limit = 80): Promise<number> {
 
 ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
       }));
+      const orig = new Map(chunk.map(c => [c.id, c.title ?? '']));
       for (const it of object.items) {
-        if (!it.titleJa || !JA_CHAR.test(it.titleJa)) continue;   // 日本語が無い訳は書かない（英語のまま再保存しない）
         // 上のプロンプトで渡した `[id] ` を訳文にそのまま残すことがある。頼んでも守られないので
         // ここで剥がす（本番で1,732件が「[21984] …」の形で公開面に出ていた・src/lib/title-prefix.ts）。
-        const ja = stripIdPrefix(it.titleJa, it.id);
-        if (!ja || !JA_CHAR.test(ja)) continue;
+        const ja = it.titleJa ? stripIdPrefix(it.titleJa, it.id) : '';
+        if (ja && JA_CHAR.test(ja)) {
+          await db.update(schema.collectedData)
+            .set({ titleJa: ja.slice(0, 300) })
+            .where(eq(schema.collectedData.id, it.id));
+          translated++;
+          continue;
+        }
+        // ⚠ 日本語が返らなかった＝訳しようがない題。原題をそのまま書き戻して「試した」印にする。
+        //   印が無いと、未翻訳を先頭に並べた瞬間に**訳せない題が毎日先頭を占めて枠を食う**
+        //   （runDeepExtraction が試行回数で解いたのと同じ詰まり）。列の追加は要らない:
+        //   表示は全て `titleJa || title` なので同値でも見え方は変わらず、
+        //   ArticleDetailContent は `titleJa !== title` のときだけ原題を併記する。
+        const t = orig.get(it.id) ?? '';
+        if (!t) continue;
         await db.update(schema.collectedData)
-          .set({ titleJa: ja.slice(0, 300) })
+          .set({ titleJa: t.slice(0, 300) })
           .where(eq(schema.collectedData.id, it.id));
-        translated++;
+        marked++;
       }
     } catch (e: any) {
       console.warn(`  [Translate] バッチ失敗(非クリティカル): ${(e.message ?? '').slice(0, 60)}`);
     }
   }
-  console.log(`[Translate] ${translated}件翻訳`);
+  console.log(`[Translate] ${translated}件翻訳${marked ? ` / 訳しようのない題 ${marked}件に印` : ''}（候補${targets.length}件）`);
   return translated;
 }
 
@@ -3222,6 +3303,8 @@ async function runDeepExtraction(maxArticles = 300): Promise<void> {
   }
   const breakdown = [...errs.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join(' ');
   console.log(`[DeepExtract] 本文抽出 ${done}/${rows.length}件${breakdown ? ` / 失敗内訳 ${breakdown}` : ''}`);
+  await reportBacklog('[DeepExtract]',
+    `importance_score >= 7 AND raw_content IS NULL AND COALESCE(extract_attempts, 0) < ${EXTRACT_MAX_ATTEMPTS}`, maxArticles);
 }
 
 // ── v4: フィード自己監視（沈黙した自動発見フィードを降格し巡回/評価の無駄を防ぐ）──

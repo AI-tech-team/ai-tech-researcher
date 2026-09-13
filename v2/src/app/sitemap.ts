@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
-import { getCollectedDataList, getReportsData, getSitemapTopics } from '@/app/actions';
+import { getSitemapArticles, getReportsData, getSitemapTopics } from '@/app/actions';
 
 // 記事のカテゴリ（固定セット）。/category/[name] ランディング用。
 const CATEGORIES = ['LLM推論', 'エージェント', 'ツール/フレームワーク', 'ハードウェア', 'ビジネス応用', '研究/論文', 'その他'];
@@ -25,11 +25,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   let articles: MetadataRoute.Sitemap = [];
   try {
-    // 第3引数 true = 匿名取得。これを付けないと currentUserId()→auth()→cookies() を読んでしまい、
-    // sitemap 全体が動的レンダリングに落ちて上の revalidate が無効化される。
-    const items = await getCollectedDataList(200, 0, true);
+    // ⚠ 上限は「何日分か」で考える。旧実装の200件は流入221件/日を下回り、**1日未満**しか載らなかった。
+    // 5,000件 ≒ 23日分。cookies を読まない専用クエリなので sitemap は静的のまま（revalidate が効く）。
+    const items = await getSitemapArticles(5000);
     articles = items.map(i => {
-      const d = i.publishedAt ? new Date(i.publishedAt) : now;
+      const d = i.date ? new Date(i.date) : now;
       return {
         url: `${SITE_URL}/articles/${i.id}`,
         lastModified: isNaN(d.getTime()) ? now : d,

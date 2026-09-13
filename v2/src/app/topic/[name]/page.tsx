@@ -46,6 +46,11 @@ function relatedNames(rels: { other: string }[], self: string, limit = 24): stri
  * 品質ゲートを表示側にも置くのは、DB側のクリーンアップ（日次パイプライン）を待たずに
  * `2026年売上高見通し 430億ユーロ` `tok/s` `unknown` のような非ベンチを公開面から即座に消すため。
  */
+// 表示件数の上限はここに置く。DB側の LIMIT は「表示側で捨てる分」を見込んで多めに取ってあるので、
+// 最後に切るのはここ（絞ってから落とすと、捨てる予定のもので枠が埋まる）。
+const BENCH_SHOWN = 12;
+const CLAIMS_SHOWN = 8;
+
 function visibleBenchmarks<T extends { benchmark: string; unit: string | null }>(items: T[]): T[] {
   const seen = new Set<string>();
   return items.filter((b) => {
@@ -54,7 +59,7 @@ function visibleBenchmarks<T extends { benchmark: string; unit: string | null }>
     if (!k || seen.has(k)) return false;
     seen.add(k);
     return true;
-  });
+  }).slice(0, BENCH_SHOWN);
 }
 
 // getEntityKnowledgePage は generateMetadata と本体で2回呼ばれるため、リクエスト内でキャッシュ（6クエリの二重実行を防ぐ）
@@ -68,7 +73,7 @@ function isEmpty(p: Awaited<ReturnType<typeof getTopic>>): boolean {
 
 /** 推測・伝聞・文になった述語のクレームは出さない（DBクリーンアップ前でも公開面から消す） */
 function visibleClaims(p: NonNullable<Awaited<ReturnType<typeof getTopic>>>) {
-  return p.claims.filter(c => isValidClaim(p.name, c.predicate, c.value));
+  return p.claims.filter(c => isValidClaim(p.name, c.predicate, c.value)).slice(0, CLAIMS_SHOWN);
 }
 
 // クロールに出してよいページか。中身が空、または名前が公開に耐えない（一般名詞 AI/China/CEO、

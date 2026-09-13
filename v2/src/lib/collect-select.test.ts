@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { topByScore } from './collect-select';
+import { topByScore, spreadByDay } from './collect-select';
 
 const V = (n: number[]) => n.map((up, i) => ({ up, tag: `p${i}` }));
 
@@ -56,4 +56,44 @@ test('RSS: 日付が読めない項目があっても落ちず、全部読めな
   assert.deepEqual(topByScore(mixed, f => D(f.d), 2).map(f => f.t), ['y', 'x'], '日付なしは後ろへ');
   const undated = [{ t: 'p', d: '' }, { t: 'q', d: 'not a date' }, { t: 'r', d: '' }];
   assert.deepEqual(topByScore(undated, f => D(f.d), 3).map(f => f.t), ['p', 'q', 'r']);
+});
+
+// ── 期間レポート: 上限で切ると「期間」が縮む（月次が実測17/30日だった）──────
+const mk = (d: string, imp: number) => ({ d, imp });
+type Row = { d: string; imp: number };
+const DAY = (r: Row) => r.d;
+const IMP = (r: Row) => r.imp;
+
+test('月次の形: ★10が上限より多くても全部の日が入る', () => {
+  // 30日 × 各日6件（うち1件だけ★10）＝★10が30件。上限20で旧方式なら新しい日だけになる
+  const rows: Row[] = [];
+  for (let i = 1; i <= 30; i++) {
+    const d = `2026-08-${String(i).padStart(2, '0')}`;
+    rows.push(mk(d, 10));
+    for (let k = 0; k < 5; k++) rows.push(mk(d, 9));
+  }
+  const old = topByScore(rows, IMP, 20);
+  assert.equal(new Set(old.map(DAY)).size, 20, '旧: 上限の数だけしか日が入らない');
+
+  const neu = spreadByDay(rows, DAY, IMP, 20);
+  assert.equal(neu.length, 20);
+  assert.equal(new Set(neu.map(DAY)).size, 20);
+  assert.deepEqual(neu.slice(0, 3).map(DAY), ['2026-08-30', '2026-08-29', '2026-08-28'], '新しい日から配る');
+  assert.ok(neu.every(r => r.imp === 10), '各日の1周目は最上位（★10）が入る');
+});
+
+test('上限が日数より多ければ2周目で埋め、各日の中はスコア順', () => {
+  const rows = [
+    mk('2026-09-01', 5), mk('2026-09-01', 9), mk('2026-09-01', 7),
+    mk('2026-09-02', 8), mk('2026-09-02', 6),
+  ];
+  const got = spreadByDay(rows, DAY, IMP, 4);
+  assert.deepEqual(got.map(r => `${r.d.slice(8)}:${r.imp}`), ['02:8', '01:9', '02:6', '01:7']);
+});
+
+test('全件が上限に満たなければ全件返る（無限ループしない）', () => {
+  const rows = [mk('2026-09-01', 5), mk('2026-09-02', 6)];
+  assert.equal(spreadByDay(rows, DAY, IMP, 50).length, 2);
+  assert.deepEqual(spreadByDay([], DAY, IMP, 10), []);
+  assert.deepEqual(spreadByDay(rows, DAY, IMP, 0), []);
 });

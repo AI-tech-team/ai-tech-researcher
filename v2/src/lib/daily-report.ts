@@ -508,7 +508,12 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
       .from(benchmarks).where(gte(benchmarks.createdAt, since)).orderBy(desc(benchmarks.createdAt)).limit(12),
   ]);
 
-  if (rawRecent.length === 0) return null;
+  // ⚠ 黙って return しない。ここが空＝収集が止まったかゲートが効きすぎた、という朝刊が出ない最大の分岐で、
+  //   同じ関数の後半では空レポートを warn しているのにここだけ無言だった（沈黙は19日間気づけない）。
+  if (rawRecent.length === 0) {
+    console.warn('[Report] 候補0件のため朝刊を生成できない（収集停止・AI関連ゲート・除外ホストのいずれかを疑う）');
+    return null;
+  }
 
   // 1社が朝刊を占拠しないようにドメイン上限を掛けてから上位40件に絞る
   const topRecent = pickTopWithDomainCap(rawRecent, TOP_N, PER_DOMAIN_CAP);
