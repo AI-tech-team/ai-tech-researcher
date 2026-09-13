@@ -16,6 +16,7 @@ import { decodeHtmlEntities } from './src/lib/html-entities';
 import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
 import { evalAt, INDEX_RULE, describeAlignment } from './src/lib/eval-align';
 import { dedupeByBaseModel, baseModelKey } from './src/lib/model-id';
+import { topByVotes } from './src/lib/collect-select';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
@@ -816,8 +817,12 @@ async function collectFromHuggingFacePapers(source: typeof schema.sources.$infer
   // 投票がほとんど無いものはコミュニティも選んでいない＝選り分け済みの利点が無い。
   const picked = items.filter(p => p.upvotes >= 5);
   const unseen = await filterUnseenUrls(picked, p => p.url);
-  const candidates = unseen.slice(0, 8);
-  console.log(`  [HF papers] 取得${items.length}件 → 5票以上${picked.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件`);
+  // ⚠ この API は upvote 順で返らない。先頭8件を取ると👍444の筆頭論文を捨てて👍8を評価していた
+  //   （2026-09-13 実測）。絞る前に票で並べ替える → src/lib/collect-select.ts
+  const candidates = topByVotes(unseen, p => p.upvotes, 8);
+  const votes = candidates.map(p => p.upvotes);
+  console.log(`  [HF papers] 取得${items.length}件 → 5票以上${picked.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件` +
+    (votes.length ? `（👍${Math.max(...votes)}〜${Math.min(...votes)}）` : ''));
   if (candidates.length === 0) return 0;
 
   const batchText = candidates.map((p, i) => `[${i}] (👍${p.upvotes}) ${p.title}\n${p.abstract}`).join('\n\n');
