@@ -12,8 +12,8 @@
  *   ダンプ対象から外しているので、この68行のバックアップはどこにも無い。それでよい。
  *
  * 使い方:
- *   npx tsx scripts/migrate_2026_09_14_drop_reading_events.ts .env.prod.readonly --dry  # 確認だけ
- *   npx tsx scripts/migrate_2026_09_14_drop_reading_events.ts .env.prod.write           # 適用
+ *   npx tsx scripts/migrate_2026_09_13_drop_reading_events.ts .env.prod.readonly --dry  # 確認だけ
+ *   npx tsx scripts/migrate_2026_09_13_drop_reading_events.ts .env.prod.write           # 適用
  */
 import { createClient } from '@libsql/client';
 import { config } from 'dotenv';
@@ -21,7 +21,7 @@ import { config } from 'dotenv';
 const envPath = process.argv[2];
 const dry = process.argv.includes('--dry');
 if (!envPath) {
-  console.error('使い方: npx tsx scripts/migrate_2026_09_14_drop_reading_events.ts <envファイル> [--dry]');
+  console.error('使い方: npx tsx scripts/migrate_2026_09_13_drop_reading_events.ts <envファイル> [--dry]');
   process.exit(1);
 }
 config({ path: envPath });

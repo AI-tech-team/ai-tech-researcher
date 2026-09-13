@@ -22,7 +22,7 @@ export default function PrivacyPage() {
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
         <h1 className="text-2xl font-bold text-white font-outfit">プライバシーポリシー</h1>
-        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年9月14日</p>
+        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年9月13日</p>
 
         <p className="text-sm text-slate-300 leading-relaxed mt-6">
           {SITE_NAME}（以下「本サービス」）における、利用者の情報の取り扱いについて定めます。
@@ -78,7 +78,7 @@ export default function PrivacyPage() {
           </li>
           <li>
             <span className="text-slate-200">閲覧履歴を保存しません。</span>
-            どの記事をいつ開いたかの行動ログは、2026年9月14日に、
+            どの記事をいつ開いたかの行動ログは、2026年9月13日に、
             過去に残っていた分を<strong className="text-slate-200">テーブルごと削除</strong>しました。
             現在は記録する仕組み自体がありません。
           </li>
