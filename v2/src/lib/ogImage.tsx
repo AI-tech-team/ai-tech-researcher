@@ -33,11 +33,14 @@ const MARK_URI = `data:image/svg+xml;utf8,${encodeURIComponent(MARK_SVG)}`;
 
 // 表示する日本語コピー（フォントサブセットの対象もこれで決まる）
 const JP_HEADLINE = 'AIの最新を、毎朝日本語で。';
-const JP_SUB = '自動で収集・要約し、知識として蓄積していく。';
+// ⚠ 読者側の言葉で書く。以前は「自動で収集・要約し、知識として蓄積していく。」だったが、
+// これは**機械の動作説明**で、読者の得になっていない（「自慢するんじゃないよ。相手に必要な
+// ものをおくだけ」という方針と逆）。SNSで最初に読まれる1行なので、読者が得るものを書く。
+const JP_SUB = '毎朝3〜5本。3分で読み終わる。';
 
 // 日本語フォントの取得に失敗したときの英語フォールバック（標準フォントで描画可能）
 const EN_HEADLINE = 'The latest in AI, every morning — in Japanese.';
-const EN_SUB = 'Auto-collected, summarized, and built into living knowledge.';
+const EN_SUB = 'Three to five stories each morning. A three-minute read.';
 
 /** Google Fonts から、渡したテキストに含まれる文字だけをサブセットしたフォントを取得 */
 async function loadJpFont(text: string): Promise<ArrayBuffer | null> {
