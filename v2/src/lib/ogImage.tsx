@@ -53,7 +53,7 @@ export async function renderOgImage(): Promise<ImageResponse> {
         style={{
           width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
           justifyContent: 'space-between', padding: '76px 84px',
-          backgroundColor: '#03060f', color: '#f1f5f9', fontFamily,
+          backgroundColor: '#000000', color: '#f1f5f9', fontFamily,
           backgroundImage:
             'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.20), transparent 42%),' +
             'radial-gradient(circle at 100% 100%, rgba(129,140,248,0.20), transparent 42%)',
@@ -117,7 +117,7 @@ export async function renderEntityOgImage(opts: {
         style={{
           width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
           justifyContent: 'space-between', padding: '72px 84px',
-          backgroundColor: '#03060f', color: '#f1f5f9', fontFamily,
+          backgroundColor: '#000000', color: '#f1f5f9', fontFamily,
           backgroundImage:
             'radial-gradient(circle at 0% 0%, rgba(56,189,248,0.18), transparent 42%),' +
             'radial-gradient(circle at 100% 100%, rgba(129,140,248,0.18), transparent 42%)',

@@ -9,7 +9,9 @@ export default function GlobalError({
 }) {
   return (
     <html lang="ja">
-      <body style={{ margin: 0, background: '#03060f', color: '#f1f5f9', fontFamily: 'system-ui, sans-serif' }}>
+      {/* 地は純黒。表側（.page）・起動スプラッシュ・アイコン・manifest と同値に保つ。
+          ここだけ青黒いと、クラッシュした瞬間に背景色が変わって「別サイトに飛ばされた」ように見える。 */}
+      <body style={{ margin: 0, background: '#000000', color: '#f1f5f9', fontFamily: 'system-ui, sans-serif' }}>
         <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
           <div style={{ textAlign: 'center', maxWidth: 420 }}>
             <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>問題が発生しました</h1>
