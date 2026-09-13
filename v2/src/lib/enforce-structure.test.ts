@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  firstSentences, enforceStructure, fitToBudget, dropSection, limitBullets,
+  firstSentences, enforceStructure, fitToBudget, dropSection, limitBullets, limitSentencesIn,
   countHighlights, checkBudget, readableLength,
 } from './daily-report';
 
@@ -10,7 +10,7 @@ import {
 const REAL = `## 🔥 今日のハイライト
 
 ### 1. OpenAIのサム・アルトマンCEO、AI開発速度を緩める可能性を示唆
-*   **何が起きたか**: OpenAIのサム・アルトマンCEOが、AI開発のペースを落とす可能性について言及しました。AIの急速な進化に対する懸念が背景にあると見られます。
+*   **何が起きたか**: OpenAIのサム・アルトマンCEOが、AI開発のペースを落とす可能性について言及しました。AIの急速な進化に対する懸念が背景にあると見られます。3文目はここで落ちる。
 *   **なぜ重要か**: これは業界のリーダーが、AIの安全性を重視し始めている兆候です。今後のAI開発戦略に大きな影響を与える可能性があります。
 *   **実務への影響**: AI開発者は、社会への影響も考慮した開発が求められます。倫理的ガイドラインの策定にも注目すべきです。
 
@@ -54,13 +54,28 @@ test('firstSentences: 句点で切り、末尾の断片は落とす', () => {
   assert.equal(firstSentences(''), '');
 });
 
-test('ハイライトは本数を変えず、各行を1文にする', () => {
+// 2026-09-13: 🔥 は 1文 → 2文に緩めた（3分の器に1分50秒しか入っていなかった）。
+// 守るべき線は「本数を触らない」ことと「3文目は落ちる」こと。
+test('ハイライトは本数を変えず、各行を2文までにする', () => {
   const out = enforceStructure(REAL);
   assert.equal(countHighlights(out), countHighlights(REAL), 'ハイライトの本数は触らない');
-  assert.match(out, /\*\*何が起きたか\*\*: OpenAIのサム・アルトマンCEOが、AI開発のペースを落とす可能性について言及しました。\n/);
-  assert.doesNotMatch(out, /AIの急速な進化に対する懸念/, '2文目は落ちる');
+  assert.match(out, /AIの急速な進化に対する懸念が背景にあると見られます。/, '2文目は残る');
+  assert.doesNotMatch(out, /3文目はここで落ちる/, '3文目は落ちる');
   assert.match(out, /### 1\. /);
   assert.match(out, /### 2\. /);
+});
+
+// 緩めた分の受け皿。これが無いと 🔥 が膨らんだ号を誰も止められない（2026-09-10 の9分07秒の型）。
+test('最後の手段としてハイライトを1文に戻せる（本数は変えない）', () => {
+  const out = limitSentencesIn(REAL, '🔥', 1);
+  assert.equal(countHighlights(out), countHighlights(REAL), '本数は変えない');
+  assert.doesNotMatch(out, /AIの急速な進化に対する懸念/, '2文目が落ちる');
+  assert.ok(readableLength(out) < readableLength(REAL), '短くなる');
+});
+
+test('limitSentencesIn は対象セクション以外に触らない', () => {
+  const out = limitSentencesIn(REAL, '🔥', 1);
+  assert.match(out, /京セラは、シリコン光回路上への光アイソレータ直接集積技術に成功しました。/, '📊 は無傷');
 });
 
 test('カテゴリは最大3つ、1カテゴリ1項目1文にする', () => {

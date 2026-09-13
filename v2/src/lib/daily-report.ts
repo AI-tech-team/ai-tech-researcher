@@ -10,7 +10,7 @@ import { withRetry } from '@/lib/llm';
 import { CHARS_PER_MINUTE, readableLength } from '@/lib/reading-time';
 import { extractHighlightSection } from '@/lib/digest-highlights';
 import { logError } from '@/lib/logError';
-import { PRIMARY_SOURCE_HOSTS, DIGEST_EXCLUDED_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from '@/lib/primary-sources';
+import { PRIMARY_SOURCE_HOSTS, DIGEST_EXCLUDED_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY, isPrimarySource } from '@/lib/primary-sources';
 import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
@@ -160,7 +160,11 @@ function trimBullet(line: string, sentences: number): string {
 
 /** セクションごとの上限。すべて REPORT_SYSTEM_PROMPT に既に書いてある数と同じ。 */
 const STRUCTURE = {
-  '🔥': { bulletSentences: 1 },                                   // 各行1文（本数は触らない）
+  // ⚠ 2026-09-13 に 1 → 2 へ緩めた。3分の器に対して実測1分50秒（予算の61%）しか使っておらず、
+  //   短さそのものが目的化していた。**約束は「3分以内」であって「短いほど良い」ではない。**
+  //   緩めても暴走しないのは、この日 fitToBudget() に「ハイライトを1文に戻す」最終段を足したから
+  //   （以前は 🔥 に触る手段が無く、ここを緩めると受け止める網が無かった）。
+  '🔥': { bulletSentences: 2 },                                   // 各行2文まで（本数は触らない）
   '🚀': { paragraphSentences: 2 },                                // 2文
   '📊': { maxBlocks: 3, maxItemsPerBlock: 1, bulletSentences: 1 },// 最大3カテゴリ・1項目1文
   '💡': { maxItems: 3, bulletSentences: 1 },                      // 3項目以内・1項目1文
@@ -237,6 +241,17 @@ export function dropSection(text: string, mark: string): string {
   return kept.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
 }
 
+/** `## <印>` セクションの箇条書きを、1項目あたり先頭 n 文までにする。 */
+export function limitSentencesIn(text: string, mark: string, n: number): string {
+  const out: string[] = [];
+  let inSec = false;
+  for (const line of text.split('\n')) {
+    if (/^##\s/.test(line)) { inSec = line.trimStart().startsWith(`## ${mark}`); out.push(line); continue; }
+    out.push(inSec && isBullet(line) ? trimBullet(line, n) : line);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
 /** `## <印>` セクションの箇条書きを先頭 n 項目までにする。 */
 export function limitBullets(text: string, mark: string, n: number): string {
   const out: string[] = [];
@@ -252,7 +267,9 @@ export function limitBullets(text: string, mark: string, n: number): string {
 /**
  * 3分の約束（TOTAL_BUDGET）に収まるまで、**価値の低い順に**構造を落とす。
  *
- * ⚠ ハイライト5本には絶対に触らない。それが商品の約束そのもの。
+ * ⚠ ハイライトの**本数**（5本）には絶対に触らない。それが商品の約束そのもの。
+ *   ただし2026-09-13から、最後の手段として各行を1文に戻す段を持つ（本数は変えない）。
+ *   同日 STRUCTURE['🔥'] を2文に緩めたので、受け止める網が要る。
  *
  * 落とす順番は実測で決めてある（2026-09-13・直近21号）:
  *  1. カテゴリ別トピック … **中央値100%がハイライトの言い直し**だった。
@@ -280,6 +297,9 @@ export function fitToBudget(text: string): { text: string; steps: string[] } {
     ['インサイトを2項目にした', s => limitBullets(s, '💡', 2)],
     ['インサイトを落とした', s => dropSection(s, '💡')],
     ['急上昇トレンドを落とした', s => dropSection(s, '🚀')],
+    // 最後の手段。ここまで来ても収まらないときだけハイライトを1文に戻す。
+    // 本数は5本のまま＝約束は守る。削るのは密度であって品目ではない。
+    ['ハイライトを1文に戻した', s => limitSentencesIn(s, '🔥', 1)],
   ];
   for (const [name, fn] of drops) {
     if (readableLength(out) <= TOTAL_BUDGET) break;
@@ -318,6 +338,25 @@ export function fitToBudget(text: string): { text: string; steps: string[] } {
  *        この判断の根拠は指標ではなく、対応する行を並べて読んだ結果である。
  *
  *   残した「なぜ重要か」は商品の核（cernere＝選り分ける＋その理由を添える）なので削らない。
+ *
+ * ⚠ 2026-09-13（同日・夕方）、上の構成変更を本番データでプレビューしたら**別の2つが見えた**:
+ *
+ *   A. **一次情報がハイライトに1本も入らない。**素材15件のうち8件（NVIDIA開発者ブログ4・
+ *      Together AI 2・Apple ML・Google）が一次情報だったのに、選ばれた5本は
+ *      theverge×3 / gigazine / technologyreview で**一次情報ゼロ**。LLMは「揉めている・
+ *      金が動いた」記事を選ぶので、発表そのものは放っておくと載らない。
+ *      → 素材に `[一次情報]`/`[報道]` を明示し、**5本中最低2本**を一次情報からと指定した。
+ *      あわせて各項目に **出典**行を足し、どちらなのかを読者にも見えるようにした
+ *      （本人の指示「その人の見解と一次情報を混ぜないように」に対応する最初の一歩）。
+ *
+ *   B. **3分の器に1分50秒しか入れていない**（ハイライト785字 / 上限1350字＝予算の61%）。
+ *      短さを目的化していた。約束は「3分以内」であって「短いほど良い」ではない。
+ *      → 「何が起きたか」を 1文 → **1〜2文**（2文目は数字・固有名詞などの具体に使う）。
+ *      ⚠ 緩められるのは fitToBudget() に「ハイライトを1文に戻す」最終段を同時に足したから。
+ *        網を張らずに緩めると 2026-09-10 の9分07秒が再演する。
+ *      ⚠ Bの観測は**プレビュー1回（n=1）**で、しかも新着窓が半日しかない状態の測定である。
+ *        実際の04:07ランは24時間窓なので素材も本文も増える。「61%」を一般的な性質として
+ *        扱わないこと。明日の実物で測り直す。→ [[pattern-tests-from-observed-failures]]
  */
 export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナリストです。収集データを元に、AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
 
@@ -326,8 +365,9 @@ export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナ�
 記事を**ちょうど5点**。4点でも6点でもなく5点。各項目は必ず次の形で書く（### の見出しは省略しない）。
 
 ### 1. （記事の見出しを1行で）
-*   **何が起きたか**: 1文
+*   **何が起きたか**: 1〜2文。2文目は数字・製品名・組織名といった具体を出すために使う（無ければ1文でよい）
 *   **なぜ重要か**: 1文
+*   **出典**: 媒体名と、収集データに付いている [一次情報] / [報道] の別をそのまま書く
 
 ### 2.（以下同じ形で、### 5. まで必ず書く）
 
@@ -342,6 +382,8 @@ export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナ�
 - **行数・項目数の指定を超えない。** 書きたいことが多いときは、項目を増やさず優先度の低いものを落とす
 - ハイライトの各項目には必ず ### の見出し（その記事のタイトル）を付ける。見出しの無い箇条書きだけの項目は不可
 - **ハイライトの ### 見出しは 1. から 5. まで、5つとも必ず出す。**材料が足りないと感じても、関連の薄い記事を5本目に回さず、収集データの中から最も読む価値のあるものを選んで5本にする
+- **ハイライト5本のうち、[一次情報] が付いた記事を最低2本入れる。**開発元・研究機関が自分で出した発表は、それを報じた記事より優先する。[一次情報] が2本未満しか無い日は、あるだけ入れる
+- **[一次情報] と [報道] を混ぜて1つの項目にしない。**発表そのものと、それを報じた記事の評価・論評は別の出来事として扱う
 - 収集データは前回レポート以降の新着のみ。**前回レポートで既に扱った話題は、新しい進展がある場合だけ「続報」として扱い、単なる繰り返し・焼き直しは禁止**
 - **同じ号の中で同じ話を2回書かない。**ハイライトで挙げた出来事を、トレンドやインサイトで言い換えて再掲しない
 - 主観でなく客観的な事実ベースで記述
@@ -485,7 +527,13 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
       // storyCountは「同一ストーリーの記事数」であって媒体数ではない（実測: 160件のstoryでも実媒体は6）。
       // 「N媒体が報じた」と書くとLLMがその誇張をそのままレポートに載せるため、件数として渡す。
       const multi = (d.storyCount ?? 1) > 1 ? `（同一トピックで${d.storyCount}件）` : '';
-      return `[重要度:${d.importanceScore ?? 5}/10][${d.category ?? '未分類'}]${multi} ${d.titleJa || d.title}\n${d.summary}\nURL: ${d.url}\n公開日: ${d.publishedAt?.split('T')[0] ?? '不明'}`;
+      // ⚠ 一次情報かどうかを**素材に明示する**。プロンプト側で「最低2本入れる」と言っても、
+      //   材料のどれが一次情報なのかをLLMが知らなければ守りようがない。
+      //   実測（2026-09-13 プレビュー）: 素材15件中8件が一次情報だったのに、
+      //   選ばれたハイライト5本は **theverge×3 / gigazine / technologyreview = 一次情報ゼロ**。
+      //   LLMは「揉めている・金が動いた」記事を選ぶので、放っておくと発表そのものは載らない。
+      const tier = isPrimarySource(d.url) ? '[一次情報]' : '[報道]';
+      return `${tier}[重要度:${d.importanceScore ?? 5}/10][${d.category ?? '未分類'}]${multi} ${d.titleJa || d.title}\n${d.summary}\nURL: ${d.url}\n公開日: ${d.publishedAt?.split('T')[0] ?? '不明'}`;
     })
     .join('\n\n---\n\n');
 
