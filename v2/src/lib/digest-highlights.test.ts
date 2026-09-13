@@ -122,3 +122,35 @@ test('ハイライトが無い・空入力なら空配列（落ちない）', ()
   assert.deepEqual(parseHighlights('## 🚀 急上昇トレンド\n本文'), []);
   assert.equal(extractHighlightSection(''), null);
 });
+
+// 2026-09-13 から出る形。「実務への影響」を廃し、代わりに **出典** を置いた。
+// 出典行はこの日に足したばかりで、サイト表示もメールもこのパーサを通る＝壊れると全面に出る。
+const NEW_FORMAT = `## 🔥 今日のハイライト
+
+### 3. マルチモーダルモデルサービングを高速化するEncode-Prefill-Decode分離技術
+*   **何が起きたか**: NVIDIAがEPD分離技術について解説しました。ビジョンエンコーダとプリフィル/デコード処理を分離することで推論効率の向上が期待されます。
+*   **なぜ重要か**: 大規模マルチモーダルAIの実用化に向けた具体的な技術的アプローチを示しています。
+*   **出典**: NVIDIA Developer Blog [一次情報]
+
+### 5. Universal MusicとElevenLabsがAI音楽プラットフォームを共同ローンチ
+*   **何が起きたか**: Universal Music GroupがElevenLabsと提携しました。
+*   **なぜ重要か**: 音楽業界におけるAIの商業利用が本格化しています。
+*   **出典**: The Verge [報道]
+`;
+
+test('新形式（出典行つき・何が起きたかが2文）を落とさない', () => {
+  const hi = parseHighlights(NEW_FORMAT);
+  assert.equal(hi.length, 2);
+  assert.deepEqual(hi[0].points.map(p => p.label), ['何が起きたか', 'なぜ重要か', '出典']);
+  assert.match(hi[0].points[0].text, /ビジョンエンコーダ/, '2文目が残る');
+  assert.equal(hi[0].points[2].text, 'NVIDIA Developer Blog [一次情報]');
+  assert.equal(hi[1].points[2].text, 'The Verge [報道]');
+});
+
+// 出典が読者に見える形で残ることが、「見解と一次情報を混ぜない」の担保になっている。
+test('出典の [一次情報] / [報道] の別が本文として取り出せる', () => {
+  const hi = parseHighlights(NEW_FORMAT);
+  const tiers = hi.map(h => h.points.find(p => p.label === '出典')?.text ?? '');
+  assert.equal(tiers.filter(t => t.includes('[一次情報]')).length, 1);
+  assert.equal(tiers.filter(t => t.includes('[報道]')).length, 1);
+});
