@@ -16,7 +16,7 @@ import { decodeHtmlEntities } from './src/lib/html-entities';
 import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
 import { evalAt, INDEX_RULE, describeAlignment } from './src/lib/eval-align';
 import { dedupeByBaseModel, baseModelKey } from './src/lib/model-id';
-import { topByVotes } from './src/lib/collect-select';
+import { topByScore } from './src/lib/collect-select';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
@@ -360,6 +360,14 @@ async function filterUnseenUrls<T>(items: T[], getUrl: (i: T) => string | null |
   return items.filter(i => { const u = getUrl(i); return !u || !seen.has(u); });
 }
 
+// ── 評価（＝LLM課金）に回す上限 ──────────────────────────────────────
+// 1ソースにつき1バッチ＝**LLM呼び出しは1回**なので、上限を上げても呼び出し回数は増えない。
+// 増えるのは1回あたりのトークンだけ（gemini-2.5-flash-lite）。上限を書いたら必ず流入と比べる。
+const RSS_EVAL_MAX = 20;    // 1フィードあたり。7日窓で20件を超えるフィードはほぼ無い
+const ARXIV_EVAL_MAX = 10;  // 流入は1日数百件。ここは意図的な標本（窓を広げるのは別途GO）
+const HN_SCAN_DEPTH = 150;  // 走査する順位の深さ（HTTP 150回・10並列）
+const HN_EVAL_MAX = 10;     // 実測(2026-09-13)で条件合致は1日13件。5では8件を毎日捨てていた
+
 // ── RSS収集（RSS/Atom両対応）─────────────────────────────────────────
 async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenDaysAgo: string): Promise<number> {
   // SSRF対策＋robots.txt 遵守。politeFetch が拒否（robots禁止／内部宛）なら 0 件として静かに終える。
@@ -374,11 +382,16 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   // ＝フィードは200を返し、収集は「0件成功」で終わり、last_hit_at も更新されるため
   // どこにも異常が出ない。純粋関数はテストできる場所に置く。
   const items = parseFeedItems(xml);
-  const recent = filterByDate(items, new Date(sevenDaysAgo).getTime()).slice(0, 20);
-
+  const recent = filterByDate(items, new Date(sevenDaysAgo).getTime());
   if (recent.length === 0) return 0;
 
-  const fresh = await filterUnseenUrls(recent, it => it.link);
+  // ⚠ 旧実装は `.slice(0, 20)` を**重複除去の前**に置き、フィードが新しい順に並んでいることを
+  //   暗黙に仮定していた。実測(2026-09-13・40本)では読めた34本のうち**6本(17.6%)が降順でない**
+  //   （NVIDIA Developer Blog は最新が2番目）。並びを信じて先頭から切ると、新しい記事を落として
+  //   古い記事を評価する。さらに絞ってから重複を除くと、先頭20件が既知になった日に0件で終わる。
+  //   → 重複除去 → 日付の新しい順 → 上限、の順（src/lib/collect-select.ts）
+  const unseen = await filterUnseenUrls(recent, it => it.link);
+  const fresh = topByScore(unseen, it => new Date(it.pubDate).getTime(), RSS_EVAL_MAX);
   if (fresh.length === 0) return 0;
 
   const batchText = fresh.map((item, i) => `[${i}] ${item.title}\n${item.description}`).join('\n\n');
@@ -434,30 +447,41 @@ async function collectFromHN(source: typeof schema.sources.$inferSelect): Promis
   const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const candidates: Array<{ title: string; url: string; score: number; time: number; selfText: string }> = [];
 
-  for (const id of topIds.slice(0, 150)) {
-    if (candidates.length >= 5) break;
-    try {
-      const itemRes = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      const item = await itemRes.json();
+  // ⚠ 旧実装は `if (candidates.length >= 5) break` で**重複除去の前に**5件で打ち切っていた。
+  //   HNの順位はスコア順ではない（新しさと勢いで決まる）ので、これは「上位5件」ですらなかった。
+  //   実測(2026-09-13): top150 に条件を満たすAI記事が13件あり、break は順位21で止まって
+  //   ▲1191「A misalignment of AI in mathematics」/ ▲932「OpenAI agents…」/ ▲666「Claude is only
+  //   available to people over 18」/ ▲345「OpenAI Agents API」を**一度も見ていなかった**。
+  //   拾っていたのは▲129と▲131を含む5件。しかも上位5件が既知になった日は0件で終わり、
+  //   深い順位のものは順位が下がるだけで二度と来ない → [[pattern-throughput-starvation]]
+  //   直し方: 150件を最後まで見る → 重複を除く → **スコアの高い順**に上限まで取る。
+  const scanned = topIds.slice(0, HN_SCAN_DEPTH);
+  for (let i = 0; i < scanned.length; i += 10) {
+    const batch = await Promise.all(scanned.slice(i, i + 10).map(async id => {
+      try {
+        const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, { signal: AbortSignal.timeout(5000) });
+        return await r.json();
+      } catch { return null; }
+    }));
+    for (const item of batch) {
       if (!item?.url || !item.title) continue;
       if ((item.score ?? 0) < 100) continue;
       if (item.time && item.time * 1000 < sevenDaysAgoMs) continue;
-      const titleLower = (item.title as string).toLowerCase();
-      if (looksAiRelated(titleLower)) {
-        // Ask HN 等の自己投稿は本文が item.text に入る。要約の材料として使う。
-        const selfText = typeof item.text === 'string'
-          ? decodeHtmlEntities(item.text.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
-          : '';
-        candidates.push({ title: item.title, url: item.url, score: item.score, time: item.time, selfText });
-      }
-    } catch { /* ignore */ }
+      if (!looksAiRelated((item.title as string).toLowerCase())) continue;
+      // Ask HN 等の自己投稿は本文が item.text に入る。要約の材料として使う。
+      const selfText = typeof item.text === 'string'
+        ? decodeHtmlEntities(item.text.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim()
+        : '';
+      candidates.push({ title: item.title, url: item.url, score: item.score, time: item.time, selfText });
+    }
   }
 
-  if (candidates.length === 0) return 0;
-
-  const fresh = await filterUnseenUrls(candidates, it => it.url);
+  const unseen = await filterUnseenUrls(candidates, it => it.url);
+  const fresh = topByScore(unseen, it => it.score, HN_EVAL_MAX);
+  const hnScores = fresh.map(f => f.score);
+  // ⚠ 0件でも必ず数を出す。沈黙は「毎日成功して0件」を隠す。
+  console.log(`  [HN] 走査${scanned.length}件 → 条件合致${candidates.length}件 → 未収集${unseen.length}件 → 評価${fresh.length}件` +
+    (hnScores.length ? `（▲${Math.max(...hnScores)}〜${Math.min(...hnScores)}）` : ''));
   if (fresh.length === 0) return 0;
 
   // ⚠️ 以前はここでタイトルだけをLLMに渡していた。その結果
@@ -576,11 +600,16 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
 
   const recent = entries.filter(e =>
     e.published && new Date(e.published).getTime() >= sevenDaysAgoMs
-  ).slice(0, 10);
-
+  );
   if (recent.length === 0) return 0;
 
-  const fresh = await filterUnseenUrls(recent, it => it.url);
+  // ⚠ 絞るのは重複除去の後。逆だと先頭10件が既知になった日に0件で終わる。
+  //   実測(2026-09-13): max_results=30 が**全部同じ投稿日**＝この窓は cs.AI/cs.LG/cs.CL の
+  //   1日分にも足りていない。ここで落とした20件は二度と来ない（[[pattern-throughput-starvation]]）。
+  //   窓を広げると評価件数＝LLM課金が増えるので、広げるかは別途GOを取る。
+  const unseen = await filterUnseenUrls(recent, it => it.url);
+  const fresh = topByScore(unseen, e => new Date(e.published).getTime(), ARXIV_EVAL_MAX);
+  console.log(`  [ArXiv] 取得${entries.length}件 → 7日以内${recent.length}件 → 未収集${unseen.length}件 → 評価${fresh.length}件`);
   if (fresh.length === 0) return 0;
 
   const batchText = fresh.map((e, i) => `[${i}] ${e.title}\n${e.summary}`).join('\n\n');
@@ -819,7 +848,7 @@ async function collectFromHuggingFacePapers(source: typeof schema.sources.$infer
   const unseen = await filterUnseenUrls(picked, p => p.url);
   // ⚠ この API は upvote 順で返らない。先頭8件を取ると👍444の筆頭論文を捨てて👍8を評価していた
   //   （2026-09-13 実測）。絞る前に票で並べ替える → src/lib/collect-select.ts
-  const candidates = topByVotes(unseen, p => p.upvotes, 8);
+  const candidates = topByScore(unseen, p => p.upvotes, 8);
   const votes = candidates.map(p => p.upvotes);
   console.log(`  [HF papers] 取得${items.length}件 → 5票以上${picked.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件` +
     (votes.length ? `（👍${Math.max(...votes)}〜${Math.min(...votes)}）` : ''));
