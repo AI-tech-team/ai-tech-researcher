@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { cached } from '@/lib/cache';
 import { vocabCandidates, segmentQuery, toMatchExpr } from '@/lib/search-tokens';
 import { isPublishableEntity } from '@/lib/entity-quality';
-import { AI_RELEVANT_SQL, aiRelevantRaw } from '@/lib/ai-relevance';
+import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
 import type { CollectedItem, KnowledgeStats, Report } from '@/types';
 
 // created_at等はSQLiteのCURRENT_TIMESTAMP（"YYYY-MM-DD HH:MM:SS" 空白区切り）で格納される。
@@ -200,6 +200,8 @@ export async function getCollectedDataList(limit = 60, offset = 0, anonymous = f
       const rows = await db.select(COLLECTED_SELECT)
         .from(collectedData)
         .leftJoin(sources, eq(collectedData.sourceId, sources.id))
+        // ai_relevance=0（AIと無関係と明示判定）だけを外す。外れても検索と直リンクでは出る
+        // ＝回復可能なのでここは掛けてよい。閾値を上げてはいけない理由は lib/ai-relevance.ts。
         .where(AI_RELEVANT_SQL)
         .orderBy(desc(collectedData.createdAt))
         .limit(lim)
@@ -778,7 +780,7 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
         id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa,
         category: collectedData.category,
         storyCount: collectedData.storyCount, publishedAt: collectedData.publishedAt,
-      }).from(collectedData).where(and(inArray(collectedData.id, ids), AI_RELEVANT_SQL))
+      }).from(collectedData).where(inArray(collectedData.id, ids))
         // ⚠ 並び順に**新しさ**を入れること。importance だけで並べていた頃、このページの関連記事は
         // 本番実測で /topic/OpenAI が中央値94日前・最古115日前だった（2026-09-13）。
         // 収集データ自体は93.4%が当日で健全なのに、表示だけが3か月前を向いていた
@@ -848,7 +850,7 @@ async function lexicalSearch(q: string, limit = 60): Promise<{ ids: number[]; sc
   const r = await client.execute({
     sql: `SELECT search_fts.rowid AS id, bm25(search_fts) AS bm, cd.importance_score AS imp, cd.created_at AS created
           FROM search_fts JOIN collected_data cd ON cd.id = search_fts.rowid
-          WHERE search_fts MATCH ? AND ${aiRelevantRaw('cd')} ORDER BY bm25(search_fts) LIMIT ?`,
+          WHERE search_fts MATCH ? ORDER BY bm25(search_fts) LIMIT ?`,
     args: [expr, limit],
   });
   const score = new Map<number, number>();
@@ -940,7 +942,7 @@ export async function searchRelated(query: string): Promise<CollectedItem[]> {
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-      .where(and(inArray(collectedData.id, relatedIds), AI_RELEVANT_SQL));
+      .where(inArray(collectedData.id, relatedIds));
     const byId = new Map(parseCollectedRows(rows).map(it => [it.id, it]));
     const relRank = new Map(relatedIds.map((id, i) => [id, i]));
     const relItems = relatedIds.map(id => byId.get(id)).filter((x): x is CollectedItem => !!x)
@@ -969,7 +971,7 @@ export async function searchArticles(query: string, limit = 25): Promise<Collect
     const rows = await db.select(COLLECTED_SELECT)
       .from(collectedData)
       .leftJoin(sources, eq(collectedData.sourceId, sources.id))
-      .where(and(inArray(collectedData.id, lex.ids), AI_RELEVANT_SQL));
+      .where(inArray(collectedData.id, lex.ids));
     const items = parseCollectedRows(rows)
       .sort((a, b) => (lex.score.get(b.id) ?? 0) - (lex.score.get(a.id) ?? 0));
     const out = dedupeByStory(items, cap);

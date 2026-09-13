@@ -55,14 +55,21 @@ const PER_DOMAIN_CAP = 5;
  *   実際は 4,269〜5,655字（約2.5倍）だった。
  */
 export const SECTION_BUDGET = [
-  { mark: '🔥', name: '今日のハイライト', max: 1100 },
+  // ⚠ 2026-09-13 に「カテゴリ別トピック(📊) 250字」を廃止し、その枠をハイライトに回した。
+  //   理由: 直近21号を実測したところ、📊 の項目がハイライトの見出しと語を共有している割合が
+  //   **中央値100%**だった（＝毎号ハイライトの言い直し）。実物でも「Agents API」「京セラ」が
+  //   ハイライトと📊の両方に出ていた。読者が同じ話を2回読まされて3分を使っていた。
+  { mark: '🔥', name: '今日のハイライト', max: 1350 },
   { mark: '🚀', name: '急上昇トレンド', max: 150 },
-  { mark: '📊', name: 'カテゴリ別トピック', max: 250 },
   { mark: '💡', name: 'エンジニアへの実践的インサイト', max: 300 },
 ] as const;
 
-/** 全文の上限（＝3分）。各セクション上限の合計。 */
-const TOTAL_BUDGET = SECTION_BUDGET.reduce((n, s) => n + s.max, 0);
+/**
+ * 全文の上限＝**3分ちょうど**。表示側と同じ CHARS_PER_MINUTE で数える。
+ * ⚠ セクション上限の合計から導かない。セクションを1つ増減させるたびに読者への約束が
+ *   勝手に動いてしまうため（📊 を外したとき 1800→1550字＝2.6分に縮む挙動になっていた）。
+ */
+const TOTAL_BUDGET = 3 * CHARS_PER_MINUTE;
 
 /** ハイライトの必要本数。商品の約束（毎朝5本）そのものなので、生成後に必ず数える。 */
 export const REQUIRED_HIGHLIGHTS = 5;
@@ -102,6 +109,177 @@ const fmtOver = (over: { name: string; len: number; max: number }[]): string =>
   over.map(o => `${o.name} ${o.len}/${o.max}字`).join(' / ');
 
 
+// ─── 生成後の構造強制 ───────────────────────────────────────────
+//
+// ⚠ **LLMに数えさせない。生成後にこちらが機械的に切る。**
+//
+// 経緯: REPORT_SYSTEM_PROMPT には最初から「1項目1文」「カテゴリは最大3つ」と書いてあるが、
+// 本番14号を実測したところ**13号で全セクションが予算超過**していた（2026-09-13）。
+//   今日のハイライト        中央値 2,067字 / 上限 1,100字
+//   急上昇トレンド              312字 /   150字
+//   カテゴリ別トピック         1,498字 /   250字  ← 6倍
+//   エンジニアへのインサイト       887字 /   300字
+// 中身を見ると、指定した構造そのものが守られていなかった（各行が2文・カテゴリが4つ・
+// 1カテゴリに2項目・インサイトが4項目）。結果、直近21号のうち**20号が3分を超えていた**。
+// /about は「3分で読める朝刊」と名乗り、号のページには「9分26秒で読めます」と出ていた。
+//
+// 字数を突きつけて書き直させる案は既に試して失敗している（455字→486字と悪化・2026-09-10）。
+// LLMは字数も項目数も安定して数えられないので、**約束は生成側でなく検査側で守る**。
+// → [[pattern-llm-cannot-count]]
+//
+// 切るのは「プロンプトが元から指定していた数」までであって、新しい制約ではない。
+// ハイライトの**本数（5本）だけは絶対に触らない**＝商品の約束そのものなので、
+// 足りない場合の再生成（countHighlights）とここは責務を分けてある。
+
+/** 先頭から n 文だけ残す。句点で切り、句点の無い末尾の断片は落とす。 */
+export function firstSentences(s: string, n = 1): string {
+  const parts = s.match(/[^。]*。/g);
+  if (!parts || parts.length === 0) return s.trim();
+  return parts.slice(0, n).join('').trim();
+}
+
+/** 箇条書き1行を「印＋ラベル」と本文に割る。ラベル（**何が起きたか**:）は残す。 */
+const BULLET_RE = /^(\s*[*-]\s+(?:\*\*[^*]+\*\*\s*[:：]\s*)?)([\s\S]*)$/;
+
+function trimBullet(line: string, sentences: number): string {
+  const m = line.match(BULLET_RE);
+  if (!m) return line;
+  const body = firstSentences(m[2], sentences);
+  return body ? `${m[1]}${body}` : line;
+}
+
+/** セクションごとの上限。すべて REPORT_SYSTEM_PROMPT に既に書いてある数と同じ。 */
+const STRUCTURE = {
+  '🔥': { bulletSentences: 1 },                                   // 各行1文（本数は触らない）
+  '🚀': { paragraphSentences: 2 },                                // 2文
+  '📊': { maxBlocks: 3, maxItemsPerBlock: 1, bulletSentences: 1 },// 最大3カテゴリ・1項目1文
+  '💡': { maxItems: 3, bulletSentences: 1 },                      // 3項目以内・1項目1文
+} as const;
+
+const isBullet = (l: string) => /^\s*[*-]\s+/.test(l);
+
+/**
+ * プロンプトで指定済みの構造を、生成結果に対して決定論的に強制する。
+ * 入力がどんな形でも例外を投げず、判定できない行はそのまま通す（欠落より冗長）。
+ */
+export function enforceStructure(text: string): string {
+  if (!text?.trim()) return text;
+  const out: string[] = [];
+  let mark: keyof typeof STRUCTURE | null = null;
+  let blocks = 0;          // 📊 の ### の数
+  let itemsInBlock = 0;    // 📊 の各 ### 内の項目数
+  let items = 0;           // 💡 の項目数
+  let dropBlock = false;   // 📊 で上限を超えた ### の中身を捨てる
+  let trendSeen = false;   // 🚀 の本文はひとかたまりだけ拾う
+
+  for (const line of text.split('\n')) {
+    const h2 = line.match(/^##\s+(\S)/);
+    if (h2) {
+      mark = (Object.keys(STRUCTURE) as (keyof typeof STRUCTURE)[]).find(k => line.includes(k)) ?? null;
+      blocks = 0; itemsInBlock = 0; items = 0; dropBlock = false; trendSeen = false;
+      out.push(line);
+      continue;
+    }
+    if (!mark) { out.push(line); continue; }
+    const cfg = STRUCTURE[mark];
+
+    if (/^###\s+/.test(line)) {
+      if ('maxBlocks' in cfg) {
+        blocks++; itemsInBlock = 0;
+        dropBlock = blocks > cfg.maxBlocks;
+        if (dropBlock) continue;
+      }
+      out.push(line);
+      continue;
+    }
+    if (dropBlock) continue;
+
+    if (isBullet(line)) {
+      if ('maxItemsPerBlock' in cfg) {
+        itemsInBlock++;
+        if (itemsInBlock > cfg.maxItemsPerBlock) continue;
+      }
+      if ('maxItems' in cfg) {
+        items++;
+        if (items > cfg.maxItems) continue;
+      }
+      out.push('bulletSentences' in cfg ? trimBullet(line, cfg.bulletSentences) : line);
+      continue;
+    }
+
+    // 箇条書きでない本文（🚀 の段落）
+    if ('paragraphSentences' in cfg && line.trim()) {
+      if (trendSeen) continue;
+      trendSeen = true;
+      out.push(firstSentences(line, cfg.paragraphSentences));
+      continue;
+    }
+    out.push(line);
+  }
+  // 行を落とした結果できた3行以上の空行を詰める
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+/** `## <印>` で始まるセクションを丸ごと落とす。 */
+export function dropSection(text: string, mark: string): string {
+  const parts = text.split(/\n(?=##\s)/);
+  const kept = parts.filter(p => !p.trimStart().startsWith(`## ${mark}`));
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+/** `## <印>` セクションの箇条書きを先頭 n 項目までにする。 */
+export function limitBullets(text: string, mark: string, n: number): string {
+  const out: string[] = [];
+  let inSec = false, seen = 0;
+  for (const line of text.split('\n')) {
+    if (/^##\s/.test(line)) { inSec = line.trimStart().startsWith(`## ${mark}`); seen = 0; out.push(line); continue; }
+    if (inSec && isBullet(line)) { if (++seen > n) continue; }
+    out.push(line);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+}
+
+/**
+ * 3分の約束（TOTAL_BUDGET）に収まるまで、**価値の低い順に**構造を落とす。
+ *
+ * ⚠ ハイライト5本には絶対に触らない。それが商品の約束そのもの。
+ *
+ * 落とす順番は実測で決めてある（2026-09-13・直近21号）:
+ *  1. カテゴリ別トピック … **中央値100%がハイライトの言い直し**だった。
+ *     実際、ハイライトに「Agents API」「京セラ」が出た号で、カテゴリ別にも同じ2件が再掲されていた。
+ *     いちばん重複が大きいので最初に落とす。
+ *  2. 急上昇トレンドを1文に … 元から2文指定。1文でも役目（潮目の提示）は果たす。
+ *  3. インサイトを2項目に → 4. インサイトごと → 5. トレンドごと。
+ *
+ * ここまでやっても収まらない号は、短くする方をあきらめて出す（沈黙より露出）。
+ * ただし呼び出し側で必ずログに残す＝気づかないまま長い号が続くのを防ぐ。
+ */
+export function fitToBudget(text: string): { text: string; steps: string[] } {
+  let out = enforceStructure(text);
+  const steps: string[] = [];
+  const drops: [string, (s: string) => string][] = [
+    ['カテゴリ別トピックを落とした（ハイライトの言い直し）', s => dropSection(s, '📊')],
+    ['急上昇トレンドを1文にした', s => {
+      const lines = s.split('\n'); let inSec = false, done = false;
+      return lines.map(l => {
+        if (/^##\s/.test(l)) { inSec = l.trimStart().startsWith('## 🚀'); done = false; return l; }
+        if (inSec && !done && l.trim() && !isBullet(l)) { done = true; return firstSentences(l, 1); }
+        return l;
+      }).join('\n');
+    }],
+    ['インサイトを2項目にした', s => limitBullets(s, '💡', 2)],
+    ['インサイトを落とした', s => dropSection(s, '💡')],
+    ['急上昇トレンドを落とした', s => dropSection(s, '🚀')],
+  ];
+  for (const [name, fn] of drops) {
+    if (readableLength(out) <= TOTAL_BUDGET) break;
+    const next = fn(out);
+    if (readableLength(next) < readableLength(out)) { out = next; steps.push(name); }
+  }
+  return { text: out, steps };
+}
+
+
 /**
  * レポート生成のsystemプロンプト。
  *
@@ -115,6 +293,21 @@ const fmtOver = (over: { name: string; len: number; max: number }[]): string =>
  *   **落としてほしくない構造は明示的に required と書く**必要がある。
  *
  * 上限の数字（SECTION_BUDGET）はプロンプトには出さず、生成後の checkBudget() の監視にだけ使う。
+ *
+ * ⚠ 2026-09-13、直近21号の実測で **20/21号が3分を超えていた**（最長 2026-09-04 の9分26秒）。
+ *   fitToBudget で機械的に削れば3分には収まるが、その内訳を見ると 12/21号でインサイト節が
+ *   丸ごと消えていた＝毎日生成しては捨てていた。長さの原因を構成そのものから取り除く:
+ *
+ *   1. **「## 📊 カテゴリ別トピック」を廃止**。ハイライトの見出しと語を共有している割合が
+ *      中央値100%＝毎号ハイライトの言い直しだった。
+ *   2. **ハイライトの「実務への影響」を廃止**（5本で350字/号）。これを外すと
+ *      **21/21号が3分以内、かつトレンドもインサイトも全号残る**（1段も削らずに済む）。
+ *      中身は「開発者は〜すべきです」という見出しから導ける定型で、5本中4本が
+ *      💡インサイト節と1対1で対応していた（2026-09-12号で目視確認）。
+ *      ※ bigramの重なり率では 実務26% / なぜ重要か21% / 何が起きたか19% と**分離できなかった**。
+ *        この判断の根拠は指標ではなく、対応する行を並べて読んだ結果である。
+ *
+ *   残した「なぜ重要か」は商品の核（cernere＝選り分ける＋その理由を添える）なので削らない。
  */
 export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナリストです。収集データを元に、AIエンジニア・研究者向けのデイリーレポートをMarkdown形式で作成してください。
 
@@ -125,15 +318,11 @@ export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナ�
 ### 1. （記事の見出しを1行で）
 *   **何が起きたか**: 1文
 *   **なぜ重要か**: 1文
-*   **実務への影響**: 1文
 
 ### 2.（以下同じ形で、### 5. まで必ず書く）
 
 ## 🚀 急上昇トレンド
-2文で書く。
-
-## 📊 カテゴリ別トピック
-カテゴリは最大3つ。各カテゴリは ### 見出しで区切る。1カテゴリにつき1項目、1項目1文。
+2文で書く。ハイライトで挙げた個別の出来事をなぞらず、それらに共通する潮目だけを書く。
 
 ## 💡 エンジニアへの実践的インサイト
 3項目以内。1項目1文。
@@ -144,6 +333,7 @@ export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナ�
 - ハイライトの各項目には必ず ### の見出し（その記事のタイトル）を付ける。見出しの無い箇条書きだけの項目は不可
 - **ハイライトの ### 見出しは 1. から 5. まで、5つとも必ず出す。**材料が足りないと感じても、関連の薄い記事を5本目に回さず、収集データの中から最も読む価値のあるものを選んで5本にする
 - 収集データは前回レポート以降の新着のみ。**前回レポートで既に扱った話題は、新しい進展がある場合だけ「続報」として扱い、単なる繰り返し・焼き直しは禁止**
+- **同じ号の中で同じ話を2回書かない。**ハイライトで挙げた出来事を、トレンドやインサイトで言い換えて再掲しない
 - 主観でなく客観的な事実ベースで記述
 - 絵文字・箇条書きを活用`;
 
@@ -237,6 +427,9 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     //    1泊2日観光モデルルート」★9 がこの候補プールに入っていた（2026-09-12 実測）。
     //    収集側にもゲートを置いたが、それ以前に集めた記事が残っているのでここでも落とす。
     //    NULL（未判定・本文が取れずLLMに通せなかったHN記事）は落とさない。→ src/lib/ai-relevance.ts
+    // ⚠ 落とすのは **0（AIと無関係と明示判定されたもの）だけ**。判定はぶれるので 4 で切ってはいけない
+    //    （スコア3にNVIDIA Cosmosや Claude Code が入っていた／実測の詳細は ai-relevance.ts）。
+    //    ここは公開面と違い、外しても記事はサイトに残り検索にも出る＝回復可能なので掛けてよい。
     db.select().from(collectedData)
       .where(and(gte(collectedData.createdAt, since), MIN_IMPORTANCE_SQL, AI_RELEVANT_SQL))
       .orderBy(
@@ -350,6 +543,28 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     );
   }
 
+  // ── 3分の約束を機械的に守らせる ──
+  // プロンプトの構造指定（1項目1文・インサイト3項目以内）は守られないので、生成後にこちらで切る。
+  // APIは叩かない＝コスト増ゼロ。詳細は enforceStructure / fitToBudget のコメント。
+  // ⚠ ハイライトの本数には触らない（上の再生成が担当）。
+  if (text?.trim()) {
+    const before = readableLength(text);
+    const { text: shaped, steps } = fitToBudget(text);
+    const after = readableLength(shaped);
+    // 短くなった場合だけ採用する。万一の解析ミスで中身が増えたり消えたりしたらそのまま出す。
+    if (shaped.trim() && after > 0 && after <= before && countHighlights(shaped) === highlights) {
+      if (after < before) {
+        console.log(
+          `[Report] 3分に収める: ${before}字 → ${after}字`
+          + (steps.length ? `（${steps.join(' / ')}）` : ''),
+        );
+      }
+      text = shaped;
+    } else {
+      console.warn(`[Report] 構造の強制を見送った（${before}字 → ${after}字 / ハイライト ${countHighlights(shaped)}本）`);
+    }
+  }
+
   // 長さは REPORT_SYSTEM_PROMPT の構造指定で抑える。ここでは**測るだけ**で書き直させない。
   //
   // ⚠ 一度は「超過したら実測値を渡して書き直させる」を実装したが、本番データで測ったら
@@ -359,9 +574,11 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
   if (text?.trim()) {
     const total = readableLength(text);
     const over = checkBudget(text);
-    if (over.length > 0) {
+    // 読者への約束は**全文3分**なので、セクション別が全部収まっていても合計が超えたら警告する。
+    // fitToBudget が落とせるものを全部落としてもなお超える＝ハイライト5本だけで3分を食っている状態。
+    if (total > TOTAL_BUDGET || over.length > 0) {
       console.warn(
-        `[Report] 読了時間が予算超過: ${fmtOver(over)}`
+        `[Report] 読了時間が予算超過: ${over.length ? fmtOver(over) : '全文'}`
         + `（全文 ${total}字 ≒ ${(total / CHARS_PER_MINUTE).toFixed(1)}分 / 上限 ${TOTAL_BUDGET}字 = ${TOTAL_BUDGET / CHARS_PER_MINUTE}分）。`
         + 'プロンプトの構造指定が効かなくなっている可能性があります。',
       );

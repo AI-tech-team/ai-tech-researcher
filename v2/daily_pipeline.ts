@@ -216,11 +216,21 @@ function clampSummary(s: string | null | undefined): string {
 // （字数を「◯◯字以内」で指示しても効かず、文と項目の数＝構造で縛って直したのと同じ。
 //   → [[pattern-llm-cannot-count]]）
 // 判定は同じ1回の呼び出しの出力に整数が1つ増えるだけ＝API呼び出し回数もコストも増えない。
-// 閾値6は**実測ではなく下のルーブリックからの逆算**（この数字だけは実データで振っていない。
-// 振るにはLLMを全件に流す＝API消費が要るため）。7=「AIを主題に含む周辺（資金調達・規制）」は通し、
-// 3=「少し触れる程度」は落とす、その間が6。ビジネス応用カテゴリを巻き込まない位置に置いてある。
-// 運用後、除外ログ（`[RSS] AI関連度…` / `[HN] AI関連度…`）に本物のAI記事が出ていないかを見て調整する。
-const AI_RELEVANCE_MIN = 6;
+// ⚠ **閾値は 1。ここは収集＝落とした記事はDBに入らず、後から復旧する手段が無い。**
+//
+// 2026-09-12 に置いたときの閾値は 6 で、コメントにも「実測ではなくルーブリックからの逆算」と
+// 書いてあった。翌 2026-09-13 に全23,351件をバックフィルして実測したら、6 は**明確に誤り**だった:
+//   - スコア3 は「少し触れる程度」のはずが、実際には
+//     ★10「Nvidia closing in on US$100B credit guarantee deal for OpenAI」
+//     ★8 「CoWoS, wafer-scale and CoWoP: Why AI packaging bottleneck …」
+//     NVIDIA Cosmos-H-Dreams / LG×Nvidia humanoid / Claude Code の利用上限 が入っていた。
+//     無作為20件のうち8件（40%）が本物のAI記事。
+//   - スコア0 は概ね妥当（観光モデルルート・ソロ航海・1993風FPS）。固有名詞を含む取りこぼしの
+//     密度はスコア3の 1/5。例の「新潟駅徒歩圏…観光モデルルート」★9 は実測で rel=0 だった。
+//   - 閾値6 のままなら収集の 24.4%（約56本/日）を永久に捨て、その相当数が本物だった。
+// → **0（AIと無関係と明示判定されたもの）だけを落とす。** 詳細は src/lib/ai-relevance.ts。
+// 除外ログ（`[RSS] AI関連度…` / `[HN] AI関連度…`）に本物のAI記事が出ていないか運用後も見る。
+const AI_RELEVANCE_MIN = 1;
 
 const ArticleEvalSchema = z.object({
   items: z.array(z.object({
