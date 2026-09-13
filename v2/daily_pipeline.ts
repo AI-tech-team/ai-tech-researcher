@@ -14,6 +14,7 @@ import { isSafeFetchUrl } from './src/lib/safeUrl';
 import { politeFetch } from './src/lib/robots';
 import { decodeHtmlEntities } from './src/lib/html-entities';
 import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
+import { evalAt, INDEX_RULE, describeAlignment } from './src/lib/eval-align';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
@@ -235,6 +236,16 @@ const AI_RELEVANCE_MIN = 1;
 
 const ArticleEvalSchema = z.object({
   items: z.array(z.object({
+    // ⚠ **プロンプトで振った [番号] をそのまま返させる。**これが無かった間、
+    //   候補とLLMの返り値は「配列の位置」だけで突き合わせていた（2026-09-13 に本番で発覚）。
+    //   LLMは順序を保つとは限らない。実物:
+    //     題「ActReview：…ピアレビュー生成」 ↔ 要約「ROS 2のDDSバックプレッシャーを解決するAdaptive Bridge」
+    //     題「多言語の架け橋を築く」        ↔ 要約「行動指向のピアレビュー生成タスクを定義し…」
+    //     題「Adaptive Bridge：ROS 2…」   ↔ 要約「数理論理ソルバーに依存する…」
+    //   ＝きれいに1つずつ回転していた。**6件中3件が別記事の要約を持って公開されていた。**
+    //   件数の一致チェック（evaluations.length !== candidates.length）は**これを検出できない**。
+    //   件数が合っていても中身が入れ替わるため。番号で突き合わせる → evalAt()
+    index: z.number().int().min(0),
     aiRelevance: z.number().int().min(0).max(10),
     importance: z.number().int().min(0).max(10),
     category: z.enum(CATS),
@@ -242,8 +253,11 @@ const ArticleEvalSchema = z.object({
   })),
 });
 
+// evalAt / INDEX_RULE の本体と、この不具合の経緯は src/lib/eval-align.ts（テスト付き）。
+
 const HnEvalSchema = z.object({
   items: z.array(z.object({
+    index: z.number().int().min(0),   // ArticleEvalSchema と同じ理由。位置で突き合わせない。
     aiRelevance: z.number().int().min(0).max(10),
     summary: z.string().max(600),
     category: z.enum(CATS),
@@ -369,19 +383,21 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   const { object } = await withRetry(() => generateObject({
     model: google('gemini-2.5-flash-lite'),
     schema: ArticleEvalSchema,
-    prompt: `以下の記事を評価してください。\n\n${AI_RELEVANCE_RULE}\n\nそのうえで importance(0-10) は「AI技術の記事として、読者にとってどれだけ重要か」を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+    prompt: `以下の記事を評価してください。\n\n${AI_RELEVANCE_RULE}\n\nそのうえで importance(0-10) は「AI技術の記事として、読者にとってどれだけ重要か」を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
   }));
   const evaluations = object.items;
   if (evaluations.length !== fresh.length) {
     console.warn(`  [RSS] 評価数不一致: LLM=${evaluations.length}件 / 取得=${fresh.length}件`);
   }
+  // 件数が合っていても中身は入れ替わりうる。突き合わせが番号で効いたかを毎回出す。
+  console.log(`  [RSS] 対応づけ: ${describeAlignment(evaluations, fresh.length)}`);
   const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < fresh.length; i++) {
     const item = fresh[i];
-    const ev = evaluations[i];
+    const ev = evalAt(evaluations, i);
     if (!ev || ev.importance < 4) continue;
     // AI無関係は重要度に関わらず落とす。importance だけで見ていた頃は
     // 「新潟駅徒歩圏で完結する1泊2日観光モデルルート」が★9で本紙の候補に入っていた。
@@ -474,9 +490,12 @@ ${AI_RELEVANCE_RULE}
 - 買収・提訴・不正など、実在の企業や人物に関わる事実は、本文に明記がなければ書かない。
 - 「議論を呼んでいます」「注目されています」のような、本文に根拠のない反応の記述をしない。
 
-${batchText}`,
+${batchText}${INDEX_RULE}`,
     }));
-    hnObject.items.forEach((ev, i) => {
+    // ⚠ forEach の i（返り値の並び）ではなく ev.index（プロンプトで振った番号）で引く。
+    //   位置対応だと別記事の要約が付く（ArticleEvalSchema のコメント参照）。
+    withBody.forEach((_, i) => {
+      const ev = evalAt(hnObject.items, i);
       const key = withBody[i]?.item.url;
       if (key && ev) evaluations.set(key, ev);
     });
@@ -568,19 +587,21 @@ async function collectFromArXiv(source: typeof schema.sources.$inferSelect): Pro
     schema: ArticleEvalSchema,
     prompt: `${AI_RELEVANCE_RULE}
 
-以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+以下のArXiv論文（cs.AI/cs.LG/cs.CL）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
   }));
   const evaluations = arxivObject.items;
   if (evaluations.length !== fresh.length) {
     console.warn(`  [ArXiv] 評価数不一致: LLM=${evaluations.length}件 / 取得=${fresh.length}件`);
   }
+  // 件数が合っていても中身は入れ替わりうる。突き合わせが番号で効いたかを毎回出す。
+  console.log(`  [ArXiv] 対応づけ: ${describeAlignment(evaluations, fresh.length)}`);
   const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < fresh.length; i++) {
     const item = fresh[i];
-    const ev = evaluations[i];
+    const ev = evalAt(evaluations, i);
     if (!ev || ev.importance < 5) continue;
     if (isNearDuplicate(item.title, titleCache)) continue;
     const r = await db.insert(schema.collectedData).values({
@@ -645,18 +666,20 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
     schema: ArticleEvalSchema,
     prompt: `${AI_RELEVANCE_RULE}
 
-以下のGitHubトレンドリポジトリ（AI/ML分野）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
+以下のGitHubトレンドリポジトリ（AI/ML分野）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
   }));
   const evaluations = ghObject.items;
   if (evaluations.length !== candidates.length) {
     console.warn(`  [GitHub] 評価数不一致: LLM=${evaluations.length}件 / 取得=${candidates.length}件`);
   }
+  // 件数が合っていても中身は入れ替わりうる。突き合わせが番号で効いたかを毎回出す。
+  console.log(`  [GitHub] 対応づけ: ${describeAlignment(evaluations, candidates.length)}`);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < candidates.length; i++) {
     const item = candidates[i];
-    const ev = evaluations[i];
+    const ev = evalAt(evaluations, i);
     if (!ev || ev.importance < 5) continue;
     // トピック絞り込みを通っていても「AIと無関係」と判定されるものは入る
     // （実測: ⭐3,040 の "One-ink editorial print image skill" 等）。他経路と同じ基準で落とす。
@@ -719,18 +742,20 @@ async function collectFromHuggingFaceModels(source: typeof schema.sources.$infer
     schema: ArticleEvalSchema,
     prompt: `${AI_RELEVANCE_RULE}
 
-以下は Hugging Face で伸びている公開モデルです。importance(0-10) は「AI技術のニュースとして、読者にとってどれだけ重要か」（誰が出した何のモデルで、既存とどう違うか）を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
+以下は Hugging Face で伸びている公開モデルです。importance(0-10) は「AI技術のニュースとして、読者にとってどれだけ重要か」（誰が出した何のモデルで、既存とどう違うか）を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
   }));
   const evaluations = object.items;
   if (evaluations.length !== candidates.length) {
     console.warn(`  [HF models] 評価数不一致: LLM=${evaluations.length}件 / 取得=${candidates.length}件`);
   }
+  // 件数が合っていても中身は入れ替わりうる。突き合わせが番号で効いたかを毎回出す。
+  console.log(`  [HF models] 対応づけ: ${describeAlignment(evaluations, candidates.length)}`);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < candidates.length; i++) {
     const m = candidates[i];
-    const ev = evaluations[i];
+    const ev = evalAt(evaluations, i);
     if (!ev || ev.importance < 5) continue;
     if (ev.aiRelevance < AI_RELEVANCE_MIN) continue;
     const title = `[モデル公開] ${m.id}`;
@@ -788,18 +813,20 @@ async function collectFromHuggingFacePapers(source: typeof schema.sources.$infer
     schema: ArticleEvalSchema,
     prompt: `${AI_RELEVANCE_RULE}
 
-以下は Hugging Face Daily Papers で票を集めている論文です。importance(0-10) は「AI技術のニュースとして、読者にとってどれだけ重要か」を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
+以下は Hugging Face Daily Papers で票を集めている論文です。importance(0-10) は「AI技術のニュースとして、読者にとってどれだけ重要か」を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
   }));
   const evaluations = object.items;
   if (evaluations.length !== candidates.length) {
     console.warn(`  [HF papers] 評価数不一致: LLM=${evaluations.length}件 / 取得=${candidates.length}件`);
   }
+  // 件数が合っていても中身は入れ替わりうる。突き合わせが番号で効いたかを毎回出す。
+  console.log(`  [HF papers] 対応づけ: ${describeAlignment(evaluations, candidates.length)}`);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < candidates.length; i++) {
     const p = candidates[i];
-    const ev = evaluations[i];
+    const ev = evalAt(evaluations, i);
     if (!ev || ev.importance < 5) continue;
     if (ev.aiRelevance < AI_RELEVANCE_MIN) continue;
     if (isNearDuplicate(p.title, titleCache)) continue;
@@ -848,19 +875,21 @@ async function collectFromPapersWithCode(source: typeof schema.sources.$inferSel
     schema: ArticleEvalSchema,
     prompt: `${AI_RELEVANCE_RULE}
 
-以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}`,
+以下のPapers with Codeの論文（コード実装あり）の技術的重要度(0-10)、category、日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）を評価してください。必ず${fresh.length}件分のitemsを返してください。\n\n${batchText}${INDEX_RULE}`,
   }));
   const evaluations = pwcObject.items;
   if (evaluations.length !== fresh.length) {
     console.warn(`  [PwC] 評価数不一致: LLM=${evaluations.length}件 / 取得=${fresh.length}件`);
   }
+  // 件数が合っていても中身は入れ替わりうる。突き合わせが番号で効いたかを毎回出す。
+  console.log(`  [PwC] 対応づけ: ${describeAlignment(evaluations, fresh.length)}`);
   const authorityBonus = getAuthorityBonus(source);
 
   const titleCache = await getRecentTitleCache();
   let inserted = 0;
   for (let i = 0; i < fresh.length; i++) {
     const item = fresh[i];
-    const ev = evaluations[i];
+    const ev = evalAt(evaluations, i);
     if (!ev || ev.importance < 5) continue;
     if (isNearDuplicate(item.title, titleCache)) continue;
     const paperUrl = item.paper_url ?? (item.arxiv_id ? `https://arxiv.org/abs/${item.arxiv_id}` : null);
