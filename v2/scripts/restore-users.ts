@@ -30,7 +30,6 @@ const ORDER: Array<[string, any]> = [
   ['users', schema.users],
   ['userProfiles', schema.userProfiles],
   ['userArticleState', schema.userArticleState],
-  ['readingEvents', schema.readingEvents],
   ['userTopicWeights', schema.userTopicWeights],
   ['chatMemory', schema.chatMemory],
   ['pushSubscriptions', schema.pushSubscriptions],

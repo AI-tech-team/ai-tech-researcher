@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { SITE_NAME, CONTACT_EMAIL, RSS_ALTERNATE_TYPES } from '@/lib/site';
+import { SITE_NAME, SITE_HOST, CONTACT_EMAIL, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
@@ -22,7 +22,7 @@ export default function PrivacyPage() {
 
       <main className="max-w-2xl mx-auto px-5 py-8 sm:py-10">
         <h1 className="text-2xl font-bold text-white font-outfit">プライバシーポリシー</h1>
-        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年6月7日</p>
+        <p className="text-[11px] font-mono text-slate-500 mt-2">最終更新日: 2026年9月14日</p>
 
         <p className="text-sm text-slate-300 leading-relaxed mt-6">
           {SITE_NAME}（以下「本サービス」）における、利用者の情報の取り扱いについて定めます。
@@ -45,6 +45,51 @@ export default function PrivacyPage() {
             IPアドレスとブラウザ情報から一時的なハッシュ値が生成されますが、これは個人を識別する形では保存されず、
             運営者がIPアドレスそのものを参照・保管することはありません。</li>
           <li>広告目的のトラッキング、および取得した情報の第三者への販売は行いません。</li>
+        </ul>
+
+        {/* 「方針を宣言する」だけのポリシーは、読む側から真偽を確かめられない。
+            2026-09-13、あるAIアシスタントに本サイトについて尋ねた人へ「有料プランがある」
+            「クレジットカードを入力させられる」「実態不明なので登録を控えるべき」という
+            事実無根の回答が返っていた（実在しない決済の話を含む）。宣言しか無く、
+            参照できる事実がサイト上に無かったことが原因。
+            そこで**読む側がその場で確かめられる形**に書き換えたのがこの節。
+            ⚠ ここに書く項目は、必ず実測してから足すこと（2026-09-13 実測値で作成）。
+               1つでも事実と違うと、ポリシー全体の信頼が消える。 */}
+        <H>持っていないもの（その場で確かめられます）</H>
+        <ul className="text-sm text-slate-400 leading-relaxed list-disc pl-5 space-y-2.5">
+          <li>
+            <span className="text-slate-200">料金・決済のしくみがありません。</span>
+            本サービスは無料で、カード情報を入力する画面はサイト内に一つも存在しません。
+            <span className="block text-slate-500 mt-0.5">確かめ方 — ページのソースに決済事業者（Stripe等）のスクリプトが一つも含まれていません。</span>
+          </li>
+          <li>
+            <span className="text-slate-200">外部の追跡スクリプトを読み込みません。</span>
+            ページが読み込むスクリプトは、すべて {SITE_HOST} 自身から配信されるものです。
+            <span className="block text-slate-500 mt-0.5">
+              確かめ方 — ブラウザの開発者ツール「ネットワーク」タブで、接続先ドメインを一覧できます。
+              なお上記のアクセス解析（Vercel Web Analytics）も同じドメイン配下で動くため、
+              別ドメインとしては現れません。解析そのものを無いとは言っていません。
+            </span>
+          </li>
+          <li>
+            <span className="text-slate-200">サイトを読むだけならCookieを一つも発行しません。</span>
+            Cookieが発行されるのは、あなたがGoogleでログインしたときのセッション用の1つだけです。
+            <span className="block text-slate-500 mt-0.5">確かめ方 — 開発者ツールの「アプリケーション &gt; Cookie」で確認できます。</span>
+          </li>
+          <li>
+            <span className="text-slate-200">閲覧履歴を保存しません。</span>
+            どの記事をいつ開いたかの行動ログは、2026年9月14日に、
+            過去に残っていた分を<strong className="text-slate-200">テーブルごと削除</strong>しました。
+            現在は記録する仕組み自体がありません。
+          </li>
+          <li>
+            <span className="text-slate-200">パスワードを預かりません。</span>
+            ログインはGoogleアカウントによる認証のみで、本サービスがあなたのパスワードを受け取ることはありません。
+          </li>
+          <li>
+            <span className="text-slate-200">広告を掲載しません。</span>
+            記事の選び方が広告主の都合に左右されることがないようにするためです。
+          </li>
         </ul>
 
         <H>利用目的</H>

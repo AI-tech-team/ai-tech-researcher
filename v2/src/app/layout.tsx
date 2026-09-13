@@ -14,7 +14,17 @@ import { SITE_URL, SITE_NAME, SITE_DESC, SITE_TAGLINE, RSS_ALTERNATE_TYPES } fro
 const siteJsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
-    { '@type': 'WebSite', '@id': `${SITE_URL}/#website`, url: SITE_URL, name: SITE_NAME, description: SITE_DESC, inLanguage: 'ja' },
+    // ⚠ isAccessibleForFree は飾りではない。2026-09-13、あるAIアシスタントが本サイトについて
+    //   「有料プランがある」「クレジットカードを入力させられる」と事実無根の回答を返し、
+    //   そのうえで「実態不明なので登録を控えるべき」と結論していた。決済のしくみは存在しない。
+    //   サイトが機械可読な事実を何も出していなかったことが原因なので、ここで明示する。
+    //   → 人間向けの同じ事実は /privacy の「持っていないもの」に、確かめ方つきで書いてある。
+    {
+      '@type': 'WebSite', '@id': `${SITE_URL}/#website`, url: SITE_URL, name: SITE_NAME,
+      description: SITE_DESC, inLanguage: 'ja', isAccessibleForFree: true,
+      publisher: { '@id': `${SITE_URL}/#org` },
+      privacyPolicy: `${SITE_URL}/privacy`,
+    },
     { '@type': 'Organization', '@id': `${SITE_URL}/#org`, name: SITE_NAME, url: SITE_URL, logo: `${SITE_URL}/icon-512.png` },
   ],
 };

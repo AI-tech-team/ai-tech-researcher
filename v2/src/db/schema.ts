@@ -171,16 +171,10 @@ export const researchQuestions = sqliteTable("research_questions", {
   investigatedAt: text("investigated_at"),
 });
 
-// v3.1 読書DNA: ユーザーの記事行動ログ（4軸プロファイル算出の元データ）
-export const readingEvents = sqliteTable("reading_events", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  userId: integer("user_id"), // v6: マルチユーザー（null=旧データ/オーナー）
-  articleId: integer("article_id").references(() => collectedData.id),
-  action: text("action").notNull(), // 'open' | 'favorite' | 'readlater' | 'read'
-  weight: real("weight").default(1),
-  category: text("category"),
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-});
+// ⚠ かつてここに reading_events（誰がどの記事をいつ開いたかの行動ログ）があった。
+// 2026-09-12 に書込を停止し、2026-09-14 に**テーブルごと削除**した（本番68行/4人分）。
+// 読書DNAと「あなた向け」推薦を撤去した時点で、書くだけで誰も読まない個人データになっていた。
+// 復活させないこと。行動ログが要る機能を作るなら、個人に紐づけない集計から始める。
 
 // v6: ユーザープロフィール（1ユーザー1行）。表示名・興味・目標・メール購読
 export const userProfiles = sqliteTable("user_profiles", {
