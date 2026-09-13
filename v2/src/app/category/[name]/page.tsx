@@ -31,7 +31,7 @@ export async function generateMetadata(
       robots: { index: false, follow: true },
     };
   }
-  const desc = `「${decoded}」カテゴリのAI・技術ニュース。${SITE_NAME} が自動収集・日本語要約。`;
+  const desc = `「${decoded}」カテゴリのAI・技術ニュース。${SITE_NAME} が読むべきものを選り分け、日本語で要点を添えています。`;
   return {
     title: `${decoded} のニュース`,
     description: desc,

@@ -1,7 +1,7 @@
 'use server';
 
 import { db, client } from '@/db';
-import { sources, collectedData, reports, adoptionLogs, claims, userTopicWeights, benchmarks, relations, entities, userArticleState, userProfiles, users, chatMemory, pushSubscriptions } from '@/db/schema';
+import { sources, collectedData, reports, adoptionLogs, claims, benchmarks, relations, entities, userArticleState, userProfiles, users, chatMemory, pushSubscriptions } from '@/db/schema';
 import { desc, asc, eq, count, gte, lte, sql, or, and, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { auth } from '@/auth';
@@ -98,10 +98,10 @@ async function overlayUserState<T extends { id: number; isFavorited?: number | n
 // どちらも「あなた向け」推薦と読書DNAの材料で、その2つを撤去した時点で**書くだけで誰も読まない
 // 個人の行動データ**になる。集めない（第三条・PII最小化）。
 //
-// 2026-09-13: reading_events は**テーブルごと削除した**（本番68行/4人分・2026-05-17〜07-31）。
-// 書込を止めても既存行は残り続け、退会しない限り消えない＝価値ゼロのまま責任だけが残る。
-// 持たないことが唯一確実な保護なので消した（scripts/migrate_2026_09_13_drop_reading_events.ts）。
-// ⚠ user_topic_weights も同じ状態（31行・最終 2026-07-31・読み出し無し）。こちらは未処理。
+// 2026-09-13: reading_events と user_topic_weights を**どちらもテーブルごと削除した**
+// （それぞれ本番68行/4人分・31行/3人分）。書込を止めても既存行は残り続け、退会しない限り
+// 消えない＝価値ゼロのまま責任だけが残る。持たないことが唯一確実な保護なので消した。
+// → scripts/migrate_2026_09_13_drop_reading_events.ts / _drop_topic_weights.ts
 
 // ─── データ取得 ───────────────────────────────────────────────────
 
@@ -715,7 +715,6 @@ export async function deleteMyAccount(): Promise<{ success: boolean; needLogin?:
     // プライバシーポリシーの「サーバーから削除します」が事実と食い違う。
     await db.delete(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
     await db.delete(userArticleState).where(eq(userArticleState.userId, userId));
-    await db.delete(userTopicWeights).where(eq(userTopicWeights.userId, userId));
     await db.delete(userProfiles).where(eq(userProfiles.userId, userId));
     await db.delete(users).where(eq(users.id, userId));
     return { success: true };

@@ -291,7 +291,8 @@ const AUTHORITY_SOURCE_VALUES = new Set([
 
 function getAuthorityBonus(source: typeof schema.sources.$inferSelect): number {
   if (AUTHORITY_SOURCE_VALUES.has(source.value)) return 1;
-  if (source.type === 'arxiv' || source.type === 'pwc') return 1;
+  // arXiv / HF（モデル公開・Daily Papers）は出どころが本人＝一次情報なので加点する
+  if (['arxiv', 'pwc', 'hf-models', 'hf-papers'].includes(source.type ?? '')) return 1;
   return 0;
 }
 
@@ -681,6 +682,143 @@ async function collectFromGitHubTrending(source: typeof schema.sources.$inferSel
   return inserted;
 }
 
+// ── Hugging Face: 伸びているモデル ──────────────────────────────────
+//
+// **モデルが公開されたこと自体が、AI朝刊にとって最も一次の出来事**なのに、これまで一件も
+// 取っていなかった（2026-09-13 に気づく）。実測でこういうものが並ぶ:
+//   deepseek-ai/DeepSeek-V4.1-Flash  DL140,636 ♥2,022
+//   Qwen/Qwen3.8-27B                 DL7,726,687 ♥14,870
+//
+// ⚠ `sort=createdAt`（新着順）は使わない。実測すると DL0 のテストリポジトリばかりだった
+//   （tttoola/MyAwesomeModel-TestRepo など）。伸びを見る `trendingScore` を使う。
+async function collectFromHuggingFaceModels(source: typeof schema.sources.$inferSelect): Promise<number> {
+  const url = 'https://huggingface.co/api/models?sort=trendingScore&direction=-1&limit=30&full=false';
+  const res = await fetch(url, { headers: { 'User-Agent': 'Cernoval/1.0' }, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`HuggingFace models API error: ${res.status}`);
+  const raw = (await res.json()) as Array<{ id?: string; modelId?: string; downloads?: number; likes?: number; pipeline_tag?: string; createdAt?: string }>;
+
+  // 話題になっていないものは朝刊の素材にならない。DLまたはLikeがある程度あるものだけ見る。
+  const hot = (raw ?? []).filter(m => (m.downloads ?? 0) >= 1000 || (m.likes ?? 0) >= 100);
+  const items = hot.map(m => {
+    const id = m.modelId ?? m.id ?? '';
+    return { id, url: `https://huggingface.co/${id}`, downloads: m.downloads ?? 0, likes: m.likes ?? 0, task: m.pipeline_tag ?? '', createdAt: m.createdAt };
+  }).filter(m => m.id);
+
+  const unseen = await filterUnseenUrls(items, m => m.url);
+  const candidates = unseen.slice(0, 10);
+  // ⚠ 0件でも件数を出す。github-trending はこの沈黙で77日気づけなかった。
+  console.log(`  [HF models] 取得${(raw ?? []).length}件 → 話題${hot.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件`);
+  if (candidates.length === 0) return 0;
+
+  const batchText = candidates.map((m, i) =>
+    `[${i}] ${m.id}  (DL ${m.downloads.toLocaleString()} / ♥${m.likes} / ${m.task || 'タスク不明'})`
+  ).join('\n');
+
+  const { object } = await withRetry(() => generateObject({
+    model: google('gemini-2.5-flash-lite'),
+    schema: ArticleEvalSchema,
+    prompt: `${AI_RELEVANCE_RULE}
+
+以下は Hugging Face で伸びている公開モデルです。importance(0-10) は「AI技術のニュースとして、読者にとってどれだけ重要か」（誰が出した何のモデルで、既存とどう違うか）を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
+  }));
+  const evaluations = object.items;
+  if (evaluations.length !== candidates.length) {
+    console.warn(`  [HF models] 評価数不一致: LLM=${evaluations.length}件 / 取得=${candidates.length}件`);
+  }
+
+  const titleCache = await getRecentTitleCache();
+  let inserted = 0;
+  for (let i = 0; i < candidates.length; i++) {
+    const m = candidates[i];
+    const ev = evaluations[i];
+    if (!ev || ev.importance < 5) continue;
+    if (ev.aiRelevance < AI_RELEVANCE_MIN) continue;
+    const title = `[モデル公開] ${m.id}`;
+    if (isNearDuplicate(title, titleCache)) continue;
+    const r = await db.insert(schema.collectedData).values({
+      sourceId: source.id,
+      title,
+      url: m.url,
+      summary: clampSummary(ev.summary),
+      category: ev.category ?? 'LLM推論',
+      aiRelevance: ev.aiRelevance,
+      importanceScore: ev.importance,
+      tags: JSON.stringify(['huggingface', `DL${m.downloads}`, `♥${m.likes}`].concat(m.task ? [m.task] : [])),
+      publishedAt: m.createdAt ?? new Date().toISOString(),
+    }).onConflictDoNothing();
+    if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(title); }
+  }
+  return inserted;
+}
+
+// ── Hugging Face: Daily Papers（コミュニティが選り分けた論文）─────────────
+//
+// arXiv の生流しは1日7本入ってくるが、選り分けは全部こちら側でやっている。
+// Daily Papers は**投票で既に選り分けられている**ので、Cernoval の趣旨（cernere＝選り分ける）と合う。
+async function collectFromHuggingFacePapers(source: typeof schema.sources.$inferSelect): Promise<number> {
+  const res = await fetch('https://huggingface.co/api/daily_papers?limit=30', {
+    headers: { 'User-Agent': 'Cernoval/1.0' }, signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`HuggingFace papers API error: ${res.status}`);
+  const raw = (await res.json()) as Array<{ paper?: { id?: string; title?: string; summary?: string; upvotes?: number }; title?: string; publishedAt?: string }>;
+
+  const items = (raw ?? []).map(x => {
+    const id = x.paper?.id ?? '';
+    return {
+      id,
+      title: x.paper?.title ?? x.title ?? '',
+      abstract: (x.paper?.summary ?? '').slice(0, 700),
+      upvotes: x.paper?.upvotes ?? 0,
+      url: id ? `https://arxiv.org/abs/${id}` : '',
+      publishedAt: x.publishedAt,
+    };
+  }).filter(p => p.id && p.title);
+
+  // 投票がほとんど無いものはコミュニティも選んでいない＝選り分け済みの利点が無い。
+  const picked = items.filter(p => p.upvotes >= 5);
+  const unseen = await filterUnseenUrls(picked, p => p.url);
+  const candidates = unseen.slice(0, 8);
+  console.log(`  [HF papers] 取得${items.length}件 → 5票以上${picked.length}件 → 未収集${unseen.length}件 → 評価${candidates.length}件`);
+  if (candidates.length === 0) return 0;
+
+  const batchText = candidates.map((p, i) => `[${i}] (👍${p.upvotes}) ${p.title}\n${p.abstract}`).join('\n\n');
+
+  const { object } = await withRetry(() => generateObject({
+    model: google('gemini-2.5-flash-lite'),
+    schema: ArticleEvalSchema,
+    prompt: `${AI_RELEVANCE_RULE}
+
+以下は Hugging Face Daily Papers で票を集めている論文です。importance(0-10) は「AI技術のニュースとして、読者にとってどれだけ重要か」を答えてください。category と日本語summary（6行以内・約150字で、文の途中で切らず必ず言い切る）も生成してください。必ず${candidates.length}件分のitemsを返してください。\n\n${batchText}`,
+  }));
+  const evaluations = object.items;
+  if (evaluations.length !== candidates.length) {
+    console.warn(`  [HF papers] 評価数不一致: LLM=${evaluations.length}件 / 取得=${candidates.length}件`);
+  }
+
+  const titleCache = await getRecentTitleCache();
+  let inserted = 0;
+  for (let i = 0; i < candidates.length; i++) {
+    const p = candidates[i];
+    const ev = evaluations[i];
+    if (!ev || ev.importance < 5) continue;
+    if (ev.aiRelevance < AI_RELEVANCE_MIN) continue;
+    if (isNearDuplicate(p.title, titleCache)) continue;
+    const r = await db.insert(schema.collectedData).values({
+      sourceId: source.id,
+      title: p.title,
+      url: p.url,
+      summary: clampSummary(ev.summary),
+      category: ev.category ?? '研究/論文',
+      aiRelevance: ev.aiRelevance,
+      importanceScore: ev.importance,
+      tags: JSON.stringify(['hf-daily-papers', `👍${p.upvotes}`]),
+      publishedAt: p.publishedAt ?? new Date().toISOString(),
+    }).onConflictDoNothing();
+    if (r.rowsAffected > 0) { inserted++; _recentTitleCache?.push(p.title); }
+  }
+  return inserted;
+}
+
 // ── Papers with Code収集（コード実装付き論文）────────────────────────
 async function collectFromPapersWithCode(source: typeof schema.sources.$inferSelect): Promise<number> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
@@ -890,7 +1028,27 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
     }
   }
 
-  // Papers with Code型ソース
+  // Hugging Face型ソース（モデル公開 / Daily Papers）。JSON APIなのでRSS経路に載らない。
+  for (const [type, label, fn] of [
+    ['hf-models', 'HF models', collectFromHuggingFaceModels],
+    ['hf-papers', 'HF papers', collectFromHuggingFacePapers],
+  ] as const) {
+    const targets = await db.select().from(schema.sources)
+      .where(and(eq(schema.sources.type, type as any), eq(schema.sources.status, 'active')));
+    for (const target of targets) {
+      try {
+        const inserted = await fn(target);
+        collected += inserted;
+        await db.update(schema.sources).set({ lastHitAt: new Date().toISOString() }).where(eq(schema.sources.id, target.id));
+        console.log(`  [${label}] ${inserted}件追加`);
+      } catch (e: any) {
+        console.error(`  ${label}収集失敗: ${e.message}`);
+        failed++;
+      }
+    }
+  }
+
+  // Papers with Code型ソース（API廃止済み。ソースは status='stopped' なので実質ここは回らない）
   const pwcSources = await db.select().from(schema.sources)
     .where(and(eq(schema.sources.type, 'pwc' as any), eq(schema.sources.status, 'active')));
   for (const target of pwcSources) {
@@ -2084,8 +2242,8 @@ async function evolveSources() {
   const updates: Array<{ id: number; status: string; score: number }> = [];
 
   for (const source of allSources) {
-    // RSS/HN/ArXiv/GitHubTrending/PwC型は常にactiveを維持（自動停止しない）
-    if (['rss', 'hn', 'arxiv', 'github-trending', 'pwc'].includes(source.type ?? '')) continue;
+    // RSS/HN/ArXiv/GitHubTrending/PwC/HF型は常にactiveを維持（自動停止しない）
+    if (['rss', 'hn', 'arxiv', 'github-trending', 'pwc', 'hf-models', 'hf-papers'].includes(source.type ?? '')) continue;
 
     const daysSinceCreated = (now.getTime() - new Date(source.createdAt ?? now).getTime()) / 86400000;
     const hitCount14d = hitCountMap.get(source.id) ?? 0;
@@ -3360,6 +3518,51 @@ async function ensureSources() {
     { type: 'rss', value: 'https://www.publickey1.jp/atom.xml',                      score: 7 },
     { type: 'rss', value: 'https://ascii.jp/rss.xml',                                score: 6 },
     { type: 'rss', value: 'https://feeds.japan.cnet.com/rss/cnet/all.rdf',           score: 6 },
+
+    // ── 2026-09-13 追加。候補82本をHTTPで叩き、**生存48本のうち中身を見て選んだ25本**。
+    //
+    // 選別の基準は「一次情報かどうか」ではなく**中身が出来事かどうか**。実測で、
+    // 一次情報でも中身が販促・広報のものが多かったので落とした:
+    //   AWS ML(20本/月) 「Build MCP Apps using Bedrock AgentCore」＝SageMaker販促のハウツー
+    //   Google (AI) blog 「3 ways to prep for your next big race with Search」＝消費者向け宣伝
+    //   LangChain(84本/月) 「How Credit Genie keeps codebase docs fresh」＝顧客事例
+    //   MIT News AI 「Walter Torous named executive director of Real Estate」＝人事広報
+    //   Nature(75本/月)・CNBC・NIST・Impress Watch＝AI以外が大半
+    // フィード自体が無かったもの: Anthropic / Meta AI / Cohere / DeepSeek / Groq / Cerebras ほか34本。
+    //
+    // ⚠ 業界人のニュースレター（Import AI・Interconnects 等）は**意図的に入れていない**。
+    //   書き手は一次情報源と競合・敵対しうる立場で、その見解を「何が起きたか」として
+    //   出すと出来事と論評が混ざる。分ける仕組みを作るまで保留（本人の指摘・2026-09-13）。
+    //   既に入っている simonwillison / sebastianraschka / jack-clark は当時の判断のまま残す。
+
+    // AI特化の報道（一次情報を伝える層）
+    { type: 'rss', value: 'https://siliconangle.com/category/ai/feed/',                            score: 6 }, // 30本/月
+    { type: 'rss', value: 'https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss',     score: 7 }, // 15本/月
+    { type: 'rss', value: 'https://www.theregister.com/software/ai_ml/headlines.atom',            score: 6 }, // 14本/月
+    { type: 'rss', value: 'https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml', score: 6 }, // 9本/月
+    { type: 'rss', value: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',                         score: 7 }, // ITmedia AI+ 専用。20本/月
+    // ベンダーの技術ブログ（実装の一次情報）
+    { type: 'rss', value: 'https://blogs.nvidia.com/feed/',                                       score: 8 }, // 18本/月
+    { type: 'rss', value: 'https://pytorch.org/blog/feed.xml',                                    score: 8 }, // 10本/月
+    { type: 'rss', value: 'https://blog.cloudflare.com/tag/ai/rss/',                              score: 7 }, // 2本/月
+    // ラボ
+    { type: 'rss', value: 'https://mistral.ai/news/rss',                                          score: 9 }, // 隠れフィード。/news/feed.xml は404
+    { type: 'rss', value: 'https://blog.eleuther.ai/index.xml',                                   score: 8 }, // 1本/月
+    // 企業のML工学ブログ
+    { type: 'rss', value: 'https://netflixtechblog.com/feed',                                     score: 7 }, // 2本/月
+    { type: 'rss', value: 'https://engineering.atspotify.com/feed',                               score: 7 }, // 2本/月
+    // GitHub のリリース（どのリポジトリにも releases.atom がある＝既存のRSS経路でそのまま取れる）
+    // ⚠ セマンティックversionを出すものだけ。llama.cpp(b10936) と pytorch(trunk/ハッシュ) は
+    //   ビルドタグを毎日出すので入れない。
+    { type: 'rss', value: 'https://github.com/ollama/ollama/releases.atom',                       score: 8 },
+    { type: 'rss', value: 'https://github.com/vllm-project/vllm/releases.atom',                   score: 8 },
+    { type: 'rss', value: 'https://github.com/huggingface/transformers/releases.atom',            score: 8 },
+    { type: 'rss', value: 'https://github.com/comfyanonymous/ComfyUI/releases.atom',              score: 7 },
+    { type: 'rss', value: 'https://github.com/unslothai/unsloth/releases.atom',                   score: 7 },
+    { type: 'rss', value: 'https://github.com/sgl-project/sglang/releases.atom',                  score: 7 },
+    // Hugging Face（JSON API。専用の収集経路を持つ）
+    { type: 'hf-models', value: 'https://huggingface.co/api/models',       score: 9 },
+    { type: 'hf-papers', value: 'https://huggingface.co/api/daily_papers', score: 8 },
   ];
   for (const src of required) {
     // Tursoの一過性エラー(コールドスタート/接続ブリップ)で1件失敗しても全体を落とさない。

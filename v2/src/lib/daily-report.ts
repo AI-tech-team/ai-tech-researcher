@@ -10,7 +10,7 @@ import { withRetry } from '@/lib/llm';
 import { CHARS_PER_MINUTE, readableLength } from '@/lib/reading-time';
 import { extractHighlightSection } from '@/lib/digest-highlights';
 import { logError } from '@/lib/logError';
-import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from '@/lib/primary-sources';
+import { PRIMARY_SOURCE_HOSTS, DIGEST_EXCLUDED_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from '@/lib/primary-sources';
 import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
@@ -32,6 +32,16 @@ const MIN_IMPORTANCE_SQL = sql`(
     sql` OR `,
   )}))
 )`;
+
+/**
+ * 朝刊の候補から外すホスト（サイトには出る）。理由は src/lib/primary-sources.ts。
+ * ⚠ 「朝刊＝出来事 / サイト＝読み物」の線引き。個人の体験談や連載チュートリアルが
+ *    ★9を取って OpenAI の発表と同じ5枠を争っていた（実測29.3%）。
+ */
+const NOT_DIGEST_EXCLUDED_SQL = sql`(${sql.join(
+  DIGEST_EXCLUDED_HOSTS.map(h => sql`LOWER(COALESCE(${collectedData.url}, '')) NOT LIKE ${'%' + h + '%'}`),
+  sql` AND `,
+)})`;
 
 /** 候補として引く件数。ここからドメイン上限を掛けて TOP_N まで絞る。 */
 const CANDIDATE_LIMIT = 120;
@@ -431,7 +441,7 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     //    （スコア3にNVIDIA Cosmosや Claude Code が入っていた／実測の詳細は ai-relevance.ts）。
     //    ここは公開面と違い、外しても記事はサイトに残り検索にも出る＝回復可能なので掛けてよい。
     db.select().from(collectedData)
-      .where(and(gte(collectedData.createdAt, since), MIN_IMPORTANCE_SQL, AI_RELEVANT_SQL))
+      .where(and(gte(collectedData.createdAt, since), MIN_IMPORTANCE_SQL, AI_RELEVANT_SQL, NOT_DIGEST_EXCLUDED_SQL))
       .orderBy(
         desc(collectedData.importanceScore),
         desc(sql`COALESCE(${collectedData.storyCount}, 1)`),

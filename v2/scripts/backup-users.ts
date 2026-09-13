@@ -38,7 +38,6 @@ const TABLES: Record<string, any> = {
   users: schema.users,
   userProfiles: schema.userProfiles,
   userArticleState: schema.userArticleState,
-  userTopicWeights: schema.userTopicWeights,
   chatMemory: schema.chatMemory,
   pushSubscriptions: schema.pushSubscriptions,
 };

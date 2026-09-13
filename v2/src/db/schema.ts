@@ -149,13 +149,10 @@ export const relations = sqliteTable("relations", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const userTopicWeights = sqliteTable("user_topic_weights", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  userId: integer("user_id").notNull(),
-  keyword: text("keyword").notNull(),
-  weight: real("weight").default(0),
-  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
-}, (t) => [unique().on(t.userId, t.keyword)]);
+// ⚠ かつてここに user_topic_weights（ユーザーごとの興味キーワードの重み）があった。
+// 2026-09-12 に書込を停止し、2026-09-13 に**テーブルごと削除**した（本番31行/3人分）。
+// 「あなた向け」推薦を撤去した時点で、書くだけで誰も読まない個人データになっていた。
+// 復活させないこと。興味の学習が要る機能を作るなら、個人に紐づけない集計から始める。
 
 // v3: 夜間自律リサーチが自動生成した「問い」とその調査結果
 export const researchQuestions = sqliteTable("research_questions", {

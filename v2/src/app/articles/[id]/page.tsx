@@ -22,7 +22,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const article = await getArticle(Number(id));
   if (!article) return { title: '記事が見つかりません' };
   const title = article.titleJa || article.title || '無題';
-  const description = article.summary ?? `${SITE_NAME} が収集・要約したAI・技術ニュース。`;
+  const description = article.summary ?? `${SITE_NAME} が選り分けたAI・技術ニュース。`;
   return {
     title,
     description,
