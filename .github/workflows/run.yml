@@ -192,5 +192,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add v2/backups/ || true
-          git diff --staged --quiet || git commit -m "chore: weekly DB backup $(date +%Y-%m-%d)"
+          # ⚠ [skip ci] を必ず付ける。Vercel を GitHub 連携すると push ごとに本番ビルドが走るため、
+          #   これが無いと**毎週日曜、中身が1行も変わっていない本番デプロイ**が1回走る（2026-09-13）。
+          #   Vercel は [skip ci] / [skip cd] / [skip vercel] を見てデプロイを飛ばす。
+          git diff --staged --quiet || git commit -m "chore: weekly DB backup $(date +%Y-%m-%d) [skip ci]"
           git push origin main || true
