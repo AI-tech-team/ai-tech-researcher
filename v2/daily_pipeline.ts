@@ -13,6 +13,7 @@ import { discoverFeedUrl, fetchArticleText, fetchArticleTextDetailed } from './s
 import { isSafeFetchUrl } from './src/lib/safeUrl';
 import { politeFetch } from './src/lib/robots';
 import { decodeHtmlEntities } from './src/lib/html-entities';
+import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
@@ -351,40 +352,12 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const xml = await res.text();
 
-  // Atom (<entry>) と RSS (<item>) の両フォーマットに対応
-  const isAtom = /<entry[\s>]/i.test(xml);
-  const itemTag = isAtom ? 'entry' : 'item';
-  const items: Array<{ title: string; link: string; description: string; pubDate: string }> = [];
-  const itemRegex = new RegExp(`<${itemTag}>[\\s\\S]*?<\\/${itemTag}>`, 'gi');
-  let m: RegExpExecArray | null;
-  while ((m = itemRegex.exec(xml)) !== null) {
-    const chunk = m[0];
-    // ここでデコードすると title と description の両方に効く。素通しだと `Apple&#039;s` が
-    // そのままメール本文に出て、`GPT&#45;5.6 Sol` は固有名が割れる（2026-09-10 監査・本番1,483件）。
-    const get = (tag: string) =>
-      decodeHtmlEntities(
-        (chunk.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, 'i'))?.[1] ?? '').trim(),
-      );
-    const title = get('title');
-    // Atom は <link href="url"/> 形式を使う
-    const link = isAtom
-      ? (chunk.match(/<link[^>]+href="([^"]+)"/i)?.[1] ?? get('link'))
-      : get('link');
-    const description = isAtom
-      ? (get('summary') || get('content')).replace(/<[^>]*>/g, '').slice(0, 500)
-      : get('description').replace(/<[^>]*>/g, '').slice(0, 500);
-    const pubDate = isAtom
-      ? (get('updated') || get('published'))
-      : get('pubDate');
-    if (title && link) items.push({ title, link, description, pubDate });
-  }
-
-  const sevenDaysAgoMs = new Date(sevenDaysAgo).getTime();
-  const recent = items.filter(item => {
-    if (!item.pubDate) return true;
-    const d = new Date(item.pubDate).getTime();
-    return isNaN(d) || d >= sevenDaysAgoMs;
-  }).slice(0, 20);
+  // 解析は src/lib/feed-parse.ts（形式ごとの実物でテスト済み）。ここに直書きしていた頃、
+  // RDF の `<item rdf:about="...">` を1件も拾えないバグが数か月見つからなかった
+  // ＝フィードは200を返し、収集は「0件成功」で終わり、last_hit_at も更新されるため
+  // どこにも異常が出ない。純粋関数はテストできる場所に置く。
+  const items = parseFeedItems(xml);
+  const recent = filterByDate(items, new Date(sevenDaysAgo).getTime()).slice(0, 20);
 
   if (recent.length === 0) return 0;
 
@@ -3337,6 +3310,11 @@ const OFF_TOPIC_SOURCE_VALUES = [
   'https://futurumgroup.com/feed/',          // 調査会社のプレス配信
   'https://feeds.businessinsider.com/custom/all', // 全ジャンル配信。AI以外が大半
   'https://www.digitimes.com/rss/daily.xml', // 半導体業界日報。AI以外も全部入る
+  // 以下は 2026-09-13、RDFパーサを直した結果**初めて中身が見えた**もの。
+  // 直すまで通算0件だったので「無害な死んだソース」に見えていた。
+  'https://anond.hatelabo.jp/rss',   // はてな匿名ダイアリー全投稿。実測のtitleが "anond:20260913113956" "■"
+  'https://openai.com/news/rss.xml', // openai.com/blog/rss.xml と同一内容（どちらも1,192件）。
+                                     // blog側が通算202件で稼働中。news側は重複除去で必ず0件になる
 ];
 
 async function ensureSources() {
