@@ -12,6 +12,7 @@ import { extractHighlightSection } from '@/lib/digest-highlights';
 import { logError } from '@/lib/logError';
 import { PRIMARY_SOURCE_HOSTS, DIGEST_EXCLUDED_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY, isPrimarySource } from '@/lib/primary-sources';
 import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
+import { assessWhy, formatWhyReport } from './why-specificity';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
 // 比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日がズレる）。
@@ -626,6 +627,14 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     } else {
       console.warn(`[Report] 構造の強制を見送った（${before}字 → ${after}字 / ハイライト ${countHighlights(shaped)}本）`);
     }
+  }
+
+  // 「なぜ重要か」が具体か一般論かを**測るだけ**。出力は変えない（2026-09-13・Aだけ先に）。
+  // プロンプトは「何が起きたか」にだけ具体を要求していて、「なぜ重要か」には長さの指定しか無い。
+  // まず毎日数えて、直す前と後を比べられるようにする → src/lib/why-specificity.ts
+  if (text?.trim()) {
+    try { console.log(formatWhyReport(assessWhy(text))); }
+    catch { /* 測定は非致命。朝刊を止めない */ }
   }
 
   // 長さは REPORT_SYSTEM_PROMPT の構造指定で抑える。ここでは**測るだけ**で書き直させない。

@@ -1,0 +1,92 @@
+import { parseHighlights } from './digest-highlights';
+
+/**
+ * ハイライトの「なぜ重要か」が具体か、一般論かを**測るだけ**の道具。書き直させない。
+ *
+ * なぜ要るか: プロンプトを読むと「何が起きたか」には
+ * 「2文目は数字・製品名・組織名といった具体を出すために使う」と書いてあるのに、
+ * **「なぜ重要か」には「1文」という長さの指定しかない**。中身の指示がゼロなので
+ * LLMは一般論を書く。2026-09-13 の本番の号を読むと 5本中3本が
+ * 「〜が求められます」「〜が重要です」型だった（cernoval.com の実物で確認）。
+ *
+ * ここは商品の核（cernere＝選り分けて、その理由を添える）なので、
+ * **まず毎日数える**。直すのはそのあと → [[prove-it]]
+ *
+ * ## 基準線（直すより先に測った・2026-09-13）
+ * `backups/backup_2026-09-06.json` の daily 114号のうち、この形式で取り出せた74号・357項目:
+ * **具体 36.4% / 定型句 44.8%**。直近21号だけに絞ると **100項目中35件＝35.0%**、
+ * さらに **21号中2号は具体が1本も無い**。つまり**3本に2本が一般論**が今の実力。
+ * 直したあとはこの数字と比べる。1日の値では動いたか分からない。
+ *
+ * ⚠ これは**代理指標**であって「良い理由か」を測るものではない。
+ *   固有名や数字が入っていても中身が薄いことはある。逆もある。
+ *   毎日の推移と、直したときの前後比較に使う。1日の値で結論を出さないこと。
+ */
+
+/** 毎回出るので固有名の証拠にならないラテン語。ここに無いラテン語を「固有名らしきもの」と数える。 */
+const GENERIC_LATIN = new Set([
+  'AI', 'AIS', 'LLM', 'LLMS', 'AGI', 'API', 'APIS', 'RAG', 'GPU', 'GPUS', 'CPU', 'ML', 'DL',
+  'IT', 'UI', 'UX', 'SDK', 'OSS', 'SNS', 'PC', 'OS', 'KV', 'B2B', 'B2C', 'SAAS', 'IA', 'AR', 'VR',
+]);
+
+/** ラテン文字で始まる語（GPT-5 / Nvidia / Qwen3.8 / llama.cpp を1語として拾う） */
+const LATIN_TOKEN = /[A-Za-z][A-Za-z0-9]*(?:[.\-+][A-Za-z0-9]+)*/g;
+
+/** 数字（半角・全角）。「いつ・いくつ・いくら」は具体の一番強い印なので、根拠の先頭に置く。 */
+const DIGIT = /[0-9０-９]/;
+
+/** 固有名に混ざって拾われる英語の機能語。根拠の語としては数えない。 */
+const STOP_WORDS = new Set(['and', 'the', 'of', 'for', 'in', 'on', 'to', 'a', 'an', 'is', 'are', 'with', 'by', 'or']);
+
+/** 中身を言わずに文を閉じる言い回し。「何が変わるか」を書いていない印。 */
+const HEDGE = /(求められ|重要です|重要になり|必要があります|必要となり|期待され|考えられます|示しています|示唆|不可欠|注力|課題となり|可能性があります|注目され)/;
+
+export interface WhyItem {
+  /** ハイライトの番号（1始まり） */
+  index: number;
+  /** 固有名らしきもの または 数字を含む */
+  concrete: boolean;
+  /** 具体の根拠として拾った語（ログ用・先頭3件） */
+  signals: string[];
+  /** 中身を言わずに閉じる言い回しを含む */
+  hedged: boolean;
+}
+
+export interface WhyReport {
+  total: number;
+  concrete: number;
+  hedged: number;
+  items: WhyItem[];
+}
+
+export function assessWhy(markdown: string): WhyReport {
+  const items: WhyItem[] = [];
+  parseHighlights(markdown).forEach((h, i) => {
+    const why = h.points.find(p => p.label === 'なぜ重要か')?.text;
+    if (why === undefined) return;
+    const signals = (why.match(LATIN_TOKEN) ?? [])
+      .filter(t => !GENERIC_LATIN.has(t.toUpperCase()) && !STOP_WORDS.has(t.toLowerCase()));
+    if (DIGIT.test(why)) signals.unshift('数字');
+    items.push({
+      index: i + 1,
+      concrete: signals.length > 0,
+      signals: signals.slice(0, 3),
+      hedged: HEDGE.test(why),
+    });
+  });
+  return {
+    total: items.length,
+    concrete: items.filter(x => x.concrete).length,
+    hedged: items.filter(x => x.hedged).length,
+    items,
+  };
+}
+
+/** ログ1行にする。中身（文そのもの）は出さず、判定と根拠の語だけ出す。 */
+export function formatWhyReport(r: WhyReport): string {
+  if (r.total === 0) return '[Report] なぜ重要か: 項目を検出できず（形式が変わった可能性）';
+  const detail = r.items
+    .map(x => `${x.index}:${x.concrete ? `具体(${x.signals.join(',')})` : '一般論'}${x.hedged ? '+定型句' : ''}`)
+    .join(' ');
+  return `[Report] なぜ重要か ${r.total}本: 具体${r.concrete}本 / 定型句${r.hedged}本 — ${detail}`;
+}
