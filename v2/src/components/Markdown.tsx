@@ -2,6 +2,7 @@
 
 import React, { Fragment } from 'react';
 import { safeHttpUrl } from '@/lib/safeUrl';
+import { BULLET_LINE, bulletContent } from '@/lib/markdown-lines';
 
 type ArticleRef = ((id: number) => void) | undefined;
 
@@ -95,12 +96,22 @@ export function renderMarkdown(content: string, onArticleRef?: ArticleRef): Reac
     } else if (line.startsWith('# ')) {
       flushList();
       nodes.push(<h2 key={i} id={`sec-${i}`} className="text-xl font-bold text-emerald-400 mt-8 mb-4 scroll-mt-20">{parseInline(line.slice(2), onArticleRef)}</h2>);
-    } else if (/^[-*] /.test(line)) {
+    // ⚠ 行判定は markdown-lines.ts に集約する。ここは長らく `/^[-*] /` と `line.slice(2)` だったため、
+    //   **字下げされた箇条書き**（`    *   **新登場**: …`）を箇条書きと認識できなかった。
+    //   ただの「印が出ない」では済まない: 行頭に残った `*` が parseInline の
+    //   `\*[^*]+\*`（斜体）と対になり、**その行の強調が全部1つずつズレる**。
+    //   実測（backup_2026-09-13・公開142号）: 該当 1,138行 / 68号（48%）。直近14日でも
+    //   09-13 weekly・09-08・09-05・09-04・09-03・09-01 monthly が該当＝過去形式の残骸ではない。
+    //   本番描画の実例（id=321）: 太字にしたい語が普通の字になり、本文が丸ごとイタリックになって
+    //   「可能性*が浮上しました」のように `*` が文中に残っていた。→ [[pattern-positional-pairing]]
+    //   （対にするものを位置で決めている以上、片方が余ると以降が全部ズレる）
+    //   メール(mail-markdown.ts)とRSS(feed.xml)は同じ理由で集約済みで、ここが3つ目の最後のコピー。
+    } else if (BULLET_LINE.test(line)) {
       listType = 'ul';
       listItems.push(
         <li key={i} className="flex gap-2 text-slate-300 text-sm">
           <span className="text-sky-400/60 flex-shrink-0 mt-0.5 select-none">•</span>
-          <span>{parseInline(line.slice(2), onArticleRef)}</span>
+          <span>{parseInline(bulletContent(line) ?? '', onArticleRef)}</span>
         </li>
       );
     } else if (/^\d+\. /.test(line)) {
