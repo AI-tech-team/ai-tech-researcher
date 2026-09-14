@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isGenericEntity, looksLikeSentence, isPublishableEntity, classifyEntityType } from './entity-quality';
+import { isGenericEntity, looksLikeSentence, isPublishableEntity, classifyEntityType, hasRepeatedWord } from './entity-quality';
 
 // ケースは 2026-09-09 / 09-10 の本番実測（entities 1,620件）から取っている。
 // 「落ちてほしいもの」と「絶対に落ちてはいけないもの」を対で書き、フィルタの誤爆を検知する。
@@ -98,5 +98,18 @@ test('isGenericEntity: 索引対象に紛れていた一般名詞（2026-09-15 �
 test('isGenericEntity: 概念語・技術名は落とさない（過去の判断を守る）', () => {
   for (const n of ['Generative AI', 'agentic AI', 'RAG', 'Transformer', 'Reinforcement Learning', 'Speculative decoding']) {
     assert.equal(isGenericEntity(n), false, `${n} を一般名詞にしてはいけない`);
+  }
+});
+
+test('hasRepeatedWord: 同じ語の連続は抽出事故として落とす', () => {
+  assert.equal(hasRepeatedWord('Speculative Speculative Decoding (SSD)'), true);
+  assert.equal(isPublishableEntity('Speculative Speculative Decoding (SSD)', 5), false);
+});
+
+// 誤爆の歯止め。前方一致で「同じもの」と決めつけると別物を潰す（49組中ほとんどが別物だった）。
+// ここで落としてよいのは「同じ語の連続」だけで、版違い・派生・親子ブランドは落とさない。
+test('hasRepeatedWord: 正当な名前を落とさない', () => {
+  for (const n of ['Speculative Decoding (SD)', 'GPT-5.6 Sol', 'Muse Glimmer-30B', 'Claude Code', 'Qwen 3.6 27B', 'OpenAI Codex']) {
+    assert.equal(hasRepeatedWord(n), false, `${n} を落としてはいけない`);
   }
 });

@@ -1772,3 +1772,31 @@ vLLM/MCP/QLoRA 等の技術で、大半が妥当。
 `Speculative decoding` / `Speculative Decoding (SD)` / `Speculative Speculative Decoding (SSD)`。
 3つ目は語の重複＝抽出の事故。エンティティ統合（`ENTITY_ALIAS_KEYS`）の話なので
 [[pattern-embedding-cannot-separate]] の方針どおり決定論の別名表で扱う。
+
+## ㉙ エンティティの前方一致による統合は**使えない**（測って捨てた・2026-09-15）
+
+㉘で見つけた表記ゆれ（`Speculative decoding` / `Speculative Decoding (SD)` /
+`Speculative Speculative Decoding (SSD)`）を一般化しようとして、公開可298件に
+「正規化キーの前方一致（付け足し6文字以内）」を当てた。**49組が引っかかったが、大半は別物だった**:
+
+```
+「OpenAI」(71) ⊂ 「OpenAI Codex」(6)      ← 会社とCLIツール
+「Google」(22) ⊂ 「Google Cloud」(9)      ← 会社とクラウド事業
+「Claude」(15) ⊂ 「Claude Code」(25)      ← モデルと開発ツール
+「Microsoft」(19) ⊂ 「Microsoft Paint」(2) ← 会社とアプリ
+「Claude Fable 5」(13) ⊂ 「Claude Fable 5.1」(3) ← 版違い
+```
+
+**決定: 前方一致による統合は入れない。** 親ブランドと製品、版違い、派生モデルが全部
+同じ形をしており、文字列では分離できない。[[pattern-embedding-cannot-separate]] の
+「距離では表記ゆれと別物を分離できない」は**埋め込みに限らず、文字列の前方一致でも同じ**だった。
+
+**代わりに入れたもの**: 「同じ語が連続している」だけを落とす `hasRepeatedWord`。
+`Speculative Speculative Decoding` のような形は**必ず抽出の事故**で、判断の余地が無い。
+実測での該当は1件だが、1件を消すためではなく**この形の再発ごと止める**ために入れた。
+3文字以上のラテン語の連続に限定し、`Qwen 3.6 27B` `GPT-5.6 Sol` のような正当な名前を
+落とさないことをテストで固定。公開可 298件 → 297件。
+
+**やらなかったこと**: `ENTITY_ALIAS_KEYS` の拡充。現在の4件は `gpt-4o` `claude 3.5 sonnet`
+`gemini 1.5` など**旧世代のモデル名だけ**で、現行データ（GPT-5.6 / Claude Opus 5 / Gemini 3.x）を
+1件もカバーしていない。ただし何を別名とみなすかは中身を見る判断なので、機械的には足せない。
