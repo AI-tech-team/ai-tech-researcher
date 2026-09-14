@@ -16,12 +16,16 @@ import { safeHttpUrl } from '@/lib/safeUrl';
 // 第2引数 true = 匿名取得。これが無いと currentUserId()→auth()→cookies() を読んでしまい、
 // 下の revalidate が無効化される（= ISRに乗らない。理由は revalidate のコメント）。
 const getArticle = cache((id: number) => getArticleById(id, true));
+// 到達性もリクエスト内で1回だけ。generateMetadata と本体の両方から見るため。
+const dbUp = cache(() => isDbReachable());
 
 // 記事ごとの全画面ページ。共有/直リンク/検索インデックス向けに、サーバーで本文を取得してSSRする。
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const article = await getArticle(Number(id));
-  if (!article) return { title: '記事が見つかりません' };
+  // タイトルも嘘をつかせない。共有カードやブックマークに残る場所なので、
+  // 障害中に「記事が見つかりません」と焼き付けると後から取り消せない。
+  if (!article) return { title: (await dbUp()) ? '記事が見つかりません' : 'いま記事をお見せできません' };
   const title = article.titleJa || article.title || '無題';
   const description = article.summary ?? `${SITE_NAME} が選り分けたAI・技術ニュース。`;
   return {
@@ -59,7 +63,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
   // ここで notFound() を投げると、revalidate=3600 のせいで**復旧後も最大1時間**
   // 「見つかりません」を配り続ける。→ src/components/OutageNotice.tsx
   if (!article) {
-    if (!(await isDbReachable())) return <OutageNotice what="記事" />;
+    if (!(await dbUp())) return <OutageNotice what="記事" />;
     notFound();
   }
 

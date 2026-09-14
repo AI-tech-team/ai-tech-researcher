@@ -19,7 +19,8 @@ const TYPE_LABEL: Record<string, string> = { daily: '朝刊', weekly: '週次の
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const report = await getReportById(Number(id));
-  if (!report) return { title: 'レポートが見つかりません' };
+  // タイトルも嘘をつかせない（共有カード・ブックマークに残る）
+  if (!report) return { title: (await isDbReachable()) ? 'レポートが見つかりません' : 'いまレポートをお見せできません' };
   const label = TYPE_LABEL[report.type] ?? 'レポート';
   const title = `${label} ${report.reportDate}`;
   const description = `${SITE_NAME} の${label}（${report.reportDate}）。`;
