@@ -12,6 +12,7 @@ import {
   getMyReadLater,
   toggleFavorite, toggleReadLater,
   getMyProfile, subscribeEmailDigest,
+  isDbReachable,
 } from '@/app/actions';
 import { BrandNav } from '@/components/digest/BrandChrome';
 import s from '@/styles/brand.module.css';
@@ -130,6 +131,9 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
   // initialData は第1波(先頭ABOVE_FOLD件)なので常に続きがある前提でtrue。第2波/loadMoreで実値に補正する。
   const [hasMore, setHasMore] = useState(() => pubSnapshot?.hasMore ?? true);
   const [loadingMore, setLoadingMore] = useState(false);
+  // 「記事が無い」のか「DBに繋がらない」のか。actions は失敗時も [] を返す（fail-open）ので、
+  // 0件のときだけ1回だけ確かめる。トップ `/` と同じ趣旨＝**障害を休刊に見せない**。
+  const [dbDown, setDbDown] = useState(false);
   // 第2波(フィード残りの後追い取得)の実行中フラグ。上から順に埋まる様子をスケルトンで示す＋
   // 途中状態をスナップショットに焼き付けない（戻り時に先頭12件で固定化するのを防ぐ）。
   const [belowFoldPending, setBelowFoldPending] = useState(false);
@@ -195,6 +199,8 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
             setOffset(first.length);
             setTotalArticles((counts as { total: number }).total);
             setIsLoading(false);
+            // 0件で返ってきたときだけ、空なのか落ちているのかを確かめる（正常時は走らない）
+            if (first.length === 0) isDbReachable().then(ok => { if (!cancelled) setDbDown(!ok); }).catch(() => {});
             break;
           } catch {
             if (cancelled) return;
@@ -449,7 +455,11 @@ export function PublicApp({ initialData }: { initialData?: PublicInitial | null 
               ) : null}
             </>
           ) : (
-            <p className="text-sm text-slate-500">記事がまだありません。</p>
+            <p className="text-sm text-slate-500">
+              {dbDown
+                ? 'いま記事をお見せできません。こちらの不具合です。復旧しだい、いつもどおりお届けします。'
+                : '記事がまだありません。'}
+            </p>
           )}
         </section>
 
