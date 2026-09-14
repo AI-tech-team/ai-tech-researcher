@@ -3773,8 +3773,15 @@ async function ensureSources() {
     { type: 'rss', value: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',                         score: 7 }, // ITmedia AI+ 専用。20本/月
     // ベンダーの技術ブログ（実装の一次情報）
     { type: 'rss', value: 'https://blogs.nvidia.com/feed/',                                       score: 8 }, // 18本/月
-    { type: 'rss', value: 'https://pytorch.org/blog/feed.xml',                                    score: 8 }, // 10本/月
-    { type: 'rss', value: 'https://blog.cloudflare.com/tag/ai/rss/',                              score: 7 }, // 2本/月
+    // ⚠ 2026-09-13 に足したこの2本は、**本番DBに既にある別URLの重複**だった（2026-09-14 実測）。
+    //   pytorch.org/blog/feed.xml は pytorch.org/feed/ と**中身が完全に同一**（件名もリンクも一致）。
+    //   既存の pytorch.org/feed/ は記事47本を産んでいるので、重複側は filterUnseenUrls で
+    //   必ず0件になる＝ソース一覧に「産出0件」のノイズを増やすだけ。実績のある方を種にする。
+    //   cloudflare も同じ: tag/ai/rss/ は**最新が31日前**で7日窓に何も入らない。
+    //   一般フィード blog.cloudflare.com/rss/ は7日以内に4本あり実績6本。AI関連度は
+    //   下流の aiRelevance ゲートで絞れるので、鮮度のある一般フィードの方が強い。
+    { type: 'rss', value: 'https://pytorch.org/feed/',                                            score: 8 }, // 10本/月
+    { type: 'rss', value: 'https://blog.cloudflare.com/rss/',                                     score: 7 }, // 7日以内4本
     // ラボ
     { type: 'rss', value: 'https://mistral.ai/news/rss',                                          score: 9 }, // 隠れフィード。/news/feed.xml は404
     { type: 'rss', value: 'https://blog.eleuther.ai/index.xml',                                   score: 8 }, // 1本/月
