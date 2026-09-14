@@ -376,7 +376,20 @@ async function collectFromRSS(source: typeof schema.sources.$inferSelect, sevenD
   // SSRF対策＋robots.txt 遵守。politeFetch が拒否（robots禁止／内部宛）なら 0 件として静かに終える。
   // 旧実装はここが素通りで、`Disallow: /` の Reddit を毎日叩いていた（2026-09-10 監査）。
   const res = await politeFetch(source.value, { signal: AbortSignal.timeout(15000) });
-  if (!res) { console.warn(`  スキップ (${source.value}): robots.txt で許可されていない`); return 0; }
+  if (!res) {
+    // ⚠ ここは「今日は取れなかった」ではなく**永久に取れない**。politeFetch が null を返すのは
+    //   ①robots.txt が実際に禁じている ②URL が安全でない、の2つだけで、robots.txt の取得失敗は
+    //   EMPTY_RULES＝許可に倒れる（src/lib/robots.ts）。つまり一時的な不調は null にならない。
+    //   旧実装は warn を出して 0 件で終わるだけだったので、死んだフィードが 'active' のまま
+    //   毎日の重み付き抽選の枠を食い続けていた（2026-09-14 に7本を手で種リストから外したのが対症療法）。
+    //   → 種リストからの削除は新規DBにしか効かない。既存行はここで止める。
+    //   'stopped' は UPDATE 1本で戻せる＝回復可能な対象なので、この判定はここに掛けてよい
+    //   （[[pattern-filter-by-recoverability]]）。相手の robots.txt が緩んだら手で戻す。
+    console.warn(`  停止 (${source.value}): robots.txt で許可されていない → status=stopped`);
+    await db.update(schema.sources).set({ status: 'stopped', updatedAt: new Date().toISOString() })
+      .where(eq(schema.sources.id, source.id));
+    return 0;
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const xml = await res.text();
 
