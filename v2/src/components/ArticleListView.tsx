@@ -27,7 +27,11 @@ export function ArticleListView({ kicker, title, articles, topSlot, emptyText, p
         <section className={s.listHead}>
           <p className={s.listEyebrow}>{kicker}</p>
           <h1 className={s.listTitle}>{title}</h1>
-          <p className={s.listLead}>{articles.length}件</p>
+          {/* 0件のときは件数を出さない。すぐ下の emptyText と矛盾するため:
+              障害中の検索は「記事が無いわけではありません」と言いながら「0件」と断言していた
+              （2026-09-14 実機スクショで発見）。本当に0件の時も「0件」＋「見つかりませんでした」は
+              同じことを二度言っているだけなので、外して困らない。 */}
+          {articles.length > 0 && <p className={s.listLead}>{articles.length}件</p>}
         </section>
 
         {topSlot && <div className={s.listSection}>{topSlot}</div>}
