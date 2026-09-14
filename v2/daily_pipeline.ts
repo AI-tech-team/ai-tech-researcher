@@ -19,7 +19,7 @@ import { topByScore, spreadByDay } from './src/lib/collect-select';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
-import { SITE_NAME, SITE_URL, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
+import { SITE_NAME, SITE_URL, SERVER_SITE_URL, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
 
 /**
  * 配信メールの共通フッター。特定電子メール法4条が求める
@@ -1363,7 +1363,7 @@ async function revalidateSite(reportId: number | null): Promise<void> {
   const secret = process.env.REVALIDATE_SECRET;
   if (!secret) { console.log('[Revalidate] REVALIDATE_SECRET未設定のためスキップ'); return; }
   // ベースURLの決定は site.ts に一本化してある（パイプラインは NEXT_PUBLIC_ が無い環境でも動く）。
-  const base = (process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? SITE_URL).replace(/\/+$/, '');
+  const base = SERVER_SITE_URL;
   const res = await fetch(`${base}/api/revalidate`, {
     method: 'POST',
     headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
@@ -1398,7 +1398,7 @@ async function sendDigestPush(reportId: number | null): Promise<void> {
   const subject = process.env.VAPID_SUBJECT || 'mailto:noreply@example.com';
   webpush.default.setVapidDetails(subject, pub, priv);
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || 'https://ai-tech-researcher.vercel.app';
+  const siteUrl = SERVER_SITE_URL;
   const payload = JSON.stringify({
     title: 'Cernoval',
     body: '今日のダイジェストができました。最新のAI動向をチェック。',
@@ -1650,7 +1650,10 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
 
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
   const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? 'https://ai-tech-researcher.vercel.app';
+  // ⚠ ここで `??` を使うと、GitHub Actions が未設定secretを空文字で渡したときに空文字が通り、
+  //   下の `new URL(siteUrl).hostname` が投げて**受信者全員の送信が失敗**する（try/catchに飲まれる）。
+  //   空文字を「未設定」として扱う解決は src/lib/site.ts の firstNonEmptyUrl に集約した。
+  const siteUrl = SERVER_SITE_URL;
 
   // 署名が作れるかを「ループの前に一度だけ」判定する。
   // 経緯: unsubscribeUrl() は AUTH_SECRET 未設定で例外を投げる。それが受信者ごとの try/catch に

@@ -1911,3 +1911,32 @@ vLLM/MCP/QLoRA 等の技術で、大半が妥当。
 
 **あわせて確認した健全な点**: カテゴリ名に `/` を含む `ツール/フレームワーク`(2,731件) と
 `研究/論文`(1,086件) は、`encodeURIComponent` で `%2F` になり**本番で200を返す**＝壊れていない。
+
+## ㉞ 朝刊メールが「全員分失敗しても 0/N件 と出るだけ」になる経路を塞ぐ（2026-09-15）
+
+**見つけたもの**: `sendDailyBrief` の基点URLが
+`process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? 'https://ai-tech-researcher.vercel.app'`。
+ここに2つ問題がある。
+
+**① `??` は空文字を通す。** GitHub Actions は `SITE_URL: ${{ secrets.SITE_URL }}` の形で
+**未設定の secret を空文字として環境に入れる**。`??` は空文字を「値あり」と見なすので既定値に落ちない。
+その空文字は `new URL(siteUrl).hostname`（List-Id ヘッダ）に渡って **TypeError を投げる**。
+例外は受信者ごとの try/catch に飲まれるので、**全員分の送信が失敗しても**
+**`[Brief] 朝刊配信: 0/N件` と出るだけ**になる。同じ形の事故（例外が受信者ループに飲まれて
+成功扱いになる）は 2026-09-10 の `AUTH_SECRET` 未設定でも起きており、そのときの対策コメントが
+すぐ上の行に書いてある。**対策した本人の隣で、同じ型がもう1つ残っていた。**
+
+**② 既定値が旧Vercelプロジェクト** `ai-tech-researcher.vercel.app`。オーナーは削除予定。
+消えたあとに環境変数が欠けると、配信停止リンクが**存在しないホスト**を指す
+（特定電子メール法4条の表示義務・RFC8058のワンクリック解除が実質機能しない）。
+
+**決定**: `src/lib/site.ts` に `firstNonEmptyUrl()`（空文字を「未設定」として扱う）と
+`SERVER_SITE_URL` を置き、`daily_pipeline.ts` の**3箇所の重複を全部それに置き換えた**。
+既定値は `https://cernoval.com`。旧プロジェクトのURLはコード中から消えた。
+
+**確認した健全な点**: 本番サイトの canonical / og:url / sitemap / feed はすべて `cernoval.com`
+＝ Vercel 側の `NEXT_PUBLIC_SITE_URL` は設定済みで、**サイト側に実害は出ていない**。
+危ないのは環境変数の揃い方が違うパイプライン側だけ。
+
+**テスト**: `??` との違い（空文字・空白のみ）、末尾スラッシュ、全部空ならnull、
+そして**既定値に旧プロジェクトのURLが戻らないこと**を固定した。
