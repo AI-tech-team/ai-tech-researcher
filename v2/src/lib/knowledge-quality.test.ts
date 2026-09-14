@@ -160,3 +160,26 @@ test('isValidBenchmarkName: エンティティ名と同じなら自己参照の�
   assert.equal(isValidBenchmarkName('MMBench2'), true);   // 従来の呼び方は挙動を変えない
   assert.equal(isValidBenchmarkName('MMLU', 'Claude Opus 5'), true); // 別物なら落とさない
 });
+
+// 2026-09-15: 公開面に出る主張1,168件を読んで見つけた2形。
+test('isValidClaim: 程度だけで中身が無い値は落とす（実測14件）', () => {
+  for (const v of ['向上', '改善', '高い', '大幅に', 'これにより', '多数']) {
+    assert.equal(isValidClaim('Claude Opus 4.8', 'コーディング性能', v), false, `= ${v} は中身が無い`);
+  }
+});
+
+test('isValidClaim: 述語が動詞の活用で終わる＝文（実測51件）', () => {
+  assert.equal(isValidClaim('Speculative decoding', 'LLM推論を高速化する', 'ドラフトモデルを使う'), false);
+  assert.equal(isValidClaim('OpenAI', 'AIモデルが顧客資産にアクセスした', 'GPT-5.6 Sol'), false);
+});
+
+// ⚠ 誤爆の歯止め。サ変名詞（提供/貢献/削減/実現/回避）で終わる述語は正当な指標名。
+//   最初これらも落とす規則で測り、`TTFT（Time-To-First-Token）を最大削減 = 3.51倍` のような
+//   良い主張が消えることが分かって外した。この歯止めを固定する。
+test('isValidClaim: サ変名詞で終わる指標名は落とさない', () => {
+  assert.equal(isValidClaim('KVCodec', 'TTFT（Time-To-First-Token）を最大削減', '3.51倍'), true);
+  assert.equal(isValidClaim('Micron', '米国メモリ増強計画への貢献', '2000億ドル規模の一部'), true);
+  assert.equal(isValidClaim('Google', '情報エージェントの提供', 'Ultraサブスクライバー向け'), true);
+  assert.equal(isValidClaim('GitHub Copilot', 'シェア', '67%から51%に低下'), true);
+  assert.equal(isValidClaim('Yi-Coder', 'コンテキスト長', '128K'), true);
+});

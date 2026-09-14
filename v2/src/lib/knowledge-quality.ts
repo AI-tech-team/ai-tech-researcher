@@ -264,7 +264,25 @@ export function normalizeBenchmarkScore(canonName: string, score: number, unit: 
 const SPECULATION_RE = /(かもしれ|可能性が|可能性を|だろう|と思われ|とみられ|見込み|噂|リーク|報じられ|期待され|示唆|likely|rumor|reportedly|allegedly|expected to|is said to)/i;
 
 // 値になっていない値。`= true` は「述語が文で、真偽だけ返した」壊れ方の典型。
-const NON_VALUE_RE = /^(true|false|null|none|n\/?a|yes|no|不明|なし|該当なし|はい|いいえ|目標|現在|-|—)$/i;
+// 値になっていない値。`= true` は「述語が文で、真偽だけ返した」壊れ方の典型。
+// 2026-09-15 追加: 程度だけを言って中身を言っていない値。公開1,168件中14件が該当し、
+// `Claude Opus 4.8 / コーディング能力 = 向上` `GPT-5.6 / 1ドルあたりの性能 = 向上` のように
+// **読んでも何も分からない行**だった（どれだけ向上したのかが無い）。
+const NON_VALUE_RE = /^(true|false|null|none|n\/?a|yes|no|不明|なし|該当なし|はい|いいえ|目標|現在|-|—|大幅に?|大きく|急速に|著しく|かなり|やや|多数|多く|少数|高い|低い|向上|改善|増加|減少|不明確|良好|順調|これにより)$/i;
+
+/**
+ * 述語が動詞の活用で終わる＝指標名ではなく**文**。
+ *
+ * 既に「40字超は文」で長いものは弾いているが、短い文はすり抜けていた。
+ * 実測（2026-09-15・公開1,168件中51件）— 全件目視して正当な指標は1件も無かった:
+ *   `LLM推論を高速化する = ドラフトモデルを使用して…`（値が手法の説明）
+ *   `AIモデルがModal Labsの顧客資産にアクセスした = GPT-5.6 Solと未公開モデル`（**値が主語**）
+ *   `バッチサイズとGPU利用率を効果的に増加させる = これにより`（値が接続語）
+ * ⚠ サ変名詞（提供・貢献・削減・実現・回避）は**含めない**。最初それらも入れて測ったところ、
+ *   `KVCodec / TTFT（Time-To-First-Token）を最大削減 = 3.51倍` のような**正当な指標が消えた**。
+ *   落としてよいのは活用した動詞で終わる形だけ。
+ */
+const PREDICATE_IS_SENTENCE_RE = /(する|した|される|された|している|されている|できる|させる|られる|わる|なる)$/;
 
 /**
  * claim として保存してよいか。
@@ -282,6 +300,7 @@ export function isValidClaim(subject: string, predicate: string, value: string):
   if (v.length > 150) return false;
   if (NON_VALUE_RE.test(v)) return false;
   if (entKey(p) && entKey(p) === entKey(v)) return false; // 述語と値が同じ＝情報がない
+  if (PREDICATE_IS_SENTENCE_RE.test(p)) return false;    // 指標名でなく文になっている
   if (SPECULATION_RE.test(p) || SPECULATION_RE.test(v)) return false;
   return true;
 }
