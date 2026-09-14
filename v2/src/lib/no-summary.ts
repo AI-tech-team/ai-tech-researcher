@@ -25,7 +25,15 @@
  *  （列を積んでいない検索経路などから呼ばれたとき、本文があるのに「読んでいません」と書くと嘘になる）。 */
 export type NoSummaryKind = 'pending' | 'robots' | 'unsupported' | 'not_read' | 'unknown';
 
-export type NoSummaryReason = { kind: NoSummaryKind; text: string };
+/**
+ * ⚠ `text`（詳細版）と `short`（一覧版）は**同じ分岐で決める**。
+ *   以前は分類する switch と短文を作る switch が別々にあり、片方だけ古いままだった:
+ *   取得に失敗した記事（http_403 / http_404 / http_429 / timeout / fetch_error / too_short）にも
+ *   「元サイトが本文を配信していません」と出していた＝**こちらの失敗を相手のせいにしていた**。
+ *   実測（backup_2026-09-13）: 要約なし1,718件のうち **86件**がこれに当たる。
+ *   404の本文が「共有リンクの記事が古い場合もあります」と読者のリンクのせいにしていたのと同じ型。
+ */
+export type NoSummaryReason = { kind: NoSummaryKind; text: string; short: string };
 
 export type NoSummaryInput = {
   summary?: string | null;
@@ -51,6 +59,7 @@ export function noSummaryReason(item: NoSummaryInput): NoSummaryReason | null {
     return {
       kind: 'robots',
       text: '元サイトの方針により、本紙は本文を取得していません。見出しと元記事へのリンクのみをお伝えします。',
+      short: '本紙未読 — 元サイトの方針により本文を取得していません',
     };
   }
 
@@ -61,6 +70,7 @@ export function noSummaryReason(item: NoSummaryInput): NoSummaryReason | null {
     return {
       kind: 'pending',
       text: '本紙が書いた要約がまだありません。他サイトの要約をそのまま載せることはしません。',
+      short: '本紙の要約はまだありません',
     };
   }
 
@@ -69,6 +79,7 @@ export function noSummaryReason(item: NoSummaryInput): NoSummaryReason | null {
     return {
       kind: 'unsupported',
       text: '元サイトが本文をテキストで配信していないため、本紙は内容を読んでいません。',
+      short: '本紙未読 — 本文がテキストで配信されていません',
     };
   }
 
@@ -78,6 +89,9 @@ export function noSummaryReason(item: NoSummaryInput): NoSummaryReason | null {
     return {
       kind: 'not_read',
       text: '本紙はこの記事を読んでいません。元サイトから本文を取得できなかったため、見出しだけで要約を書くことはしません。',
+      // ⚠ ここで『元サイトが配信していません』と書かない。403やタイムアウトは**こちらが取れなかった**だけで、
+      //    相手は配信している。分からないことを相手の落ち度として書かない。
+      short: '本紙未読 — 本文を取得できませんでした',
     };
   }
 
@@ -86,6 +100,7 @@ export function noSummaryReason(item: NoSummaryInput): NoSummaryReason | null {
     return {
       kind: 'not_read',
       text: '本紙はこの記事を読んでいません。元サイトが本文を配信していないため、見出しだけで要約を書くことはしません。',
+      short: '本紙未読 — 元サイトが本文を配信していません',
     };
   }
 
@@ -94,18 +109,11 @@ export function noSummaryReason(item: NoSummaryInput): NoSummaryReason | null {
   return {
     kind: 'unknown',
     text: '本紙が書いた要約はまだありません。他サイトの要約をそのまま載せることはしません。',
+    short: '本紙の要約はまだありません',
   };
 }
 
-/** 一覧・検索結果で1行に圧縮したいときの短い版。 */
+/** 一覧・検索結果で1行に圧縮したいときの短い版。分岐は noSummaryReason に1本化してある。 */
 export function noSummaryShort(item: NoSummaryInput): string | null {
-  const r = noSummaryReason(item);
-  if (!r) return null;
-  switch (r.kind) {
-    case 'pending': return '本紙の要約はまだありません';
-    case 'robots': return '本紙未読 — 元サイトの方針により本文を取得していません';
-    case 'unsupported': return '本紙未読 — 本文がテキストで配信されていません';
-    case 'not_read': return '本紙未読 — 元サイトが本文を配信していません';
-    case 'unknown': return '本紙の要約はまだありません';
-  }
+  return noSummaryReason(item)?.short ?? null;
 }

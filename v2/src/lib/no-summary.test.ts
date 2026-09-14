@@ -104,3 +104,37 @@ test('文言に謝罪や不具合を示す語を使わない（設計判断で�
     assert.doesNotMatch(t, /申し訳|すみません|エラー|失敗しました|生成できませんでした/);
   }
 });
+
+// 取得に失敗した記事を「元サイトが配信していない」と書かない（こちらの失敗を相手のせいにしない）。
+// 実測: 要約なし1,718件のうち86件が http_403/404/429・timeout・fetch_error・too_short。
+test('取得失敗は相手のせいにしない（短文と詳細が食い違わない）', () => {
+  for (const err of ['http_403', 'http_404', 'http_429', 'timeout', 'fetch_error', 'too_short']) {
+    const r = noSummaryReason({ summary: null, hasBody: false, extractError: err })!;
+    assert.equal(r.kind, 'not_read');
+    assert.ok(!r.short.includes('元サイトが本文を配信していません'), `${err}: ${r.short}`);
+    assert.ok(r.short.includes('取得できませんでした'), `${err}: ${r.short}`);
+    assert.ok(r.text.includes('取得できなかった'), `${err}: ${r.text}`);
+  }
+});
+
+test('本文が無いと分かっている場合だけ「元サイトが配信していません」と書く', () => {
+  const r = noSummaryReason({ summary: null, hasBody: false, extractError: null })!;
+  assert.equal(r.short, '本紙未読 — 元サイトが本文を配信していません');
+});
+
+test('短文と詳細は必ず同じ分岐から出る（片方だけ古くならない）', () => {
+  const cases = [
+    { summary: null, extractError: 'robots_disallow' },
+    { summary: null, hasBody: true },
+    { summary: null, hasBody: false, extractError: 'unsupported_domain' },
+    { summary: null, hasBody: false, extractError: 'http_403' },
+    { summary: null, hasBody: false },
+    { summary: null },
+  ];
+  for (const c of cases) {
+    const r = noSummaryReason(c)!;
+    assert.ok(r.short.length > 0, JSON.stringify(c));
+    assert.equal(noSummaryShort(c), r.short, JSON.stringify(c));
+  }
+  assert.equal(noSummaryShort({ summary: '要約あり' }), null);
+});
