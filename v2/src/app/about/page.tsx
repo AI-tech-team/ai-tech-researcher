@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getLandingDigest } from '@/app/actions';
+import { getLandingDigest, isDbReachable } from '@/app/actions';
 import { parseHighlights } from '@/lib/digest-highlights';
 import { digestReadingSeconds } from '@/lib/digest';
 import { formatReadingTime } from '@/lib/reading-time';
@@ -40,6 +40,15 @@ export default async function AboutPage() {
   const picked = highlights.length;
   const pool = digest?.collectedFrom ?? 0;
   const hasToday = picked > 0 && pool > 0;
+  // ⚠ 障害中であることをこのページだけが黙っていた（2026-09-15 実機スクショで発見）。
+  //   トップは「いま記事をお見せできません。こちらの不具合です。」と言い、検索も同じ扱いにした。
+  //   ところが紹介ページは、今朝の実物が引けなくても**一般論の文に静かに差し替わるだけ**で、
+  //   「毎朝6時に出ます」「明日の朝も、6時に出ます。」と平常どおり約束し、
+  //   CTAは `/`（＝「お見せできません」の画面）へ送っていた。
+  //   初見の読者が最初に踏むのはこのページなので（[[feedback-newcomer-first]]）、
+  //   ここで黙るのがいちばん不誠実になる。0件は「無い」とは限らない、を守る。
+  //   ⚠ 追加の問い合わせは digest が引けなかったときだけ＝平常時のコストはゼロ。
+  const dbDown = !digest && !(await isDbReachable());
 
   return (
     <div className={s.page}>
@@ -62,6 +71,13 @@ export default async function AboutPage() {
           <p className={s.lead} style={{ marginTop: 14 }}>
             それが朝刊です。毎朝6時に出ます。
           </p>
+
+          {dbDown && (
+            <p className={s.lead} style={{ marginTop: 14 }}>
+              <strong>ただいま、こちらの不具合で朝刊をお見せできません。</strong>休刊ではありません。
+              復旧しだい、いつもどおり毎朝6時に1号お届けします。
+            </p>
+          )}
 
           <div className={s.row}>
             <Link className={`${s.btn} ${s.btnSolid}`} href="/">今朝の朝刊を読む</Link>
