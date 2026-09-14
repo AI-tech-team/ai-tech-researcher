@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { SITE_URL } from '@/lib/site';
+import { SITE_URL, SITE_NOINDEX } from '@/lib/site';
 import { getSitemapArticles, getReportsData, getSitemapTopics } from '@/app/actions';
 
 // 記事のカテゴリ（固定セット）。/category/[name] ランディング用。
@@ -28,7 +28,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // ⚠ 上限は「何日分か」で考える。旧実装の200件は流入221件/日を下回り、**1日未満**しか載らなかった。
     // 2026-09-13 本人の判断で**全件**に。約22,000URL＝Googleの上限(1ファイル50,000URL/50MB)の内側。
     // cookies を読まない専用クエリなので sitemap は静的のまま（revalidate=3600 が効く）。
-    const items = await getSitemapArticles();
+    //
+    // ⚠ ただし **noindex のあいだは記事を列挙しない**（2026-09-14）。
+    //   noindex ＝ クロールさせない状態なので22,000URLを配る意味が無いのに、
+    //   revalidate=3600 で**毎時22,000行を読む**。2026-09-14 に本番Tursoが
+    //   `BLOCKED: reads are blocked` で読み取り拒否になった日、これが動いていた。
+    //   公開（SITE_NOINDEX=false）に戻せば自動で全件に戻る。
+    const items = SITE_NOINDEX ? [] : await getSitemapArticles();
     articles = items.map(i => {
       const d = i.date ? new Date(i.date) : now;
       return {
