@@ -22,6 +22,7 @@ import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './
 import { SITE_NAME, SITE_URL, SERVER_SITE_URL, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
 import { firstNonEmpty } from './src/lib/env';
 import { mailMarkdownToHtml } from './src/lib/mail-markdown';
+import { reportHeadline } from './src/lib/report-headline';
 
 /**
  * 配信メールの共通フッター。特定電子メール法4条が求める
@@ -1353,7 +1354,7 @@ async function runDailyReportAndDistribute(force = false): Promise<void> {
   catch (e: any) { console.warn('[Revalidate] 失敗(非クリティカル):', e.message); }
   await sendPersonalizedBriefs(result.text);
   // v10: Web Push通知（メール購読とは別経路・非クリティカル）。VAPID未設定なら黙ってスキップ。
-  try { await sendDigestPush(result.inserted?.id ?? null); }
+  try { await sendDigestPush(result.inserted?.id ?? null, result.text); }
   catch (e: any) { console.warn('[Push] 通知送信失敗(非クリティカル):', e.message); }
 }
 
@@ -1379,7 +1380,7 @@ async function revalidateSite(reportId: number | null): Promise<void> {
 // v10: 日次ダイジェストのWeb Push通知を全購読へ送る。LLM不使用。
 // VAPID鍵(VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY)が未設定なら何もしない＝鍵設定前でもパイプラインは無傷。
 // 送信で 404/410 が返った購読は失効なのでDBから掃除する（購読テーブルが死骸で膨れない）。
-async function sendDigestPush(reportId: number | null): Promise<void> {
+async function sendDigestPush(reportId: number | null, reportText?: string | null): Promise<void> {
   const pub = process.env.VAPID_PUBLIC_KEY, priv = process.env.VAPID_PRIVATE_KEY;
   if (!pub || !priv) { console.log('[Push] VAPID未設定のためスキップ'); return; }
 
@@ -1401,9 +1402,18 @@ async function sendDigestPush(reportId: number | null): Promise<void> {
   webpush.default.setVapidDetails(subject, pub, priv);
 
   const siteUrl = SERVER_SITE_URL;
+  // ⚠ 固定文にしない。「今日のダイジェストができました。最新のAI動向をチェック。」を
+  //   毎朝そのまま送っていたが、この文には**今日開く理由が1文字も入っていない**。
+  //   共有カードが毎回「🔥 今日のハイライト」だったのとまったく同じ型（決定㊶）で、
+  //   通知欄に並んだとき昨日のものと見分けがつかない。その号の1本目の見出しを載せる。
+  //   LLMは使わない（reportHeadline は本文から決定論的に抜くだけ＝追加コストゼロ）。
+  //   本文が渡らない経路（DBから拾い直した場合など）は従来の文に落ちる。
+  const headline = reportHeadline(reportText, '今日のダイジェストができました。最新のAI動向をチェック。');
   const payload = JSON.stringify({
     title: 'Cernoval',
-    body: '今日のダイジェストができました。最新のAI動向をチェック。',
+    // 通知本文は端末側で2行程度に切られる。実測の見出しは中央39字・最大89字なので
+    // 通常は収まるが、長い号のために上限だけ掛けておく。
+    body: headline.length > 120 ? headline.slice(0, 119) + '…' : headline,
     url: reportId ? `${siteUrl}/reports/${reportId}` : siteUrl,
     tag: 'kt-daily',
   });
