@@ -84,3 +84,19 @@ test('classifyEntityType: 判別できないものは unknown（model と断定�
   assert.equal(classifyEntityType('Jensen Huang'), 'unknown');
   assert.equal(classifyEntityType(''), 'unknown');
 });
+
+// 2026-09-15: backup_2026-09-13 で /topic の索引対象183件を全件目視して見つけた取りこぼし。
+test('isGenericEntity: 索引対象に紛れていた一般名詞（2026-09-15 実測）', () => {
+  for (const n of ['PC', 'pc', 'ITエンジニア', 'エンジニア', '研究者', '開発者']) {
+    assert.equal(isGenericEntity(n), true, `${n} は一般名詞であるべき`);
+  }
+});
+
+// ⚠ 概念語は**意図的に**残している（entity-quality.ts の GENERIC_KEYS 上のコメント）。
+//   「Generative AI のような概念語は、追跡対象として成立しうるので入れない」という過去の判断。
+//   一般名詞を足すときに、ここまで巻き込んで消さないための歯止め。
+test('isGenericEntity: 概念語・技術名は落とさない（過去の判断を守る）', () => {
+  for (const n of ['Generative AI', 'agentic AI', 'RAG', 'Transformer', 'Reinforcement Learning', 'Speculative decoding']) {
+    assert.equal(isGenericEntity(n), false, `${n} を一般名詞にしてはいけない`);
+  }
+});

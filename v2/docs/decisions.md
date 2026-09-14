@@ -1739,3 +1739,36 @@ candidate 40本は最古が08-31＝14日窓の正常な回転で、滞留では�
 **ついでに見つけた既存の穴（今回は触らない）**: 同じ `runEvolve` 内の
 `if (highQualityData.length === 0) { … return; }` は、14日間 importance>=6 が0件のときに
 上記2つの現役処理も道連れにする。実際には起きていないので放置。
+
+## ㉘ トピックページの品質を索引対象183件の全件目視で点検（2026-09-15）
+
+**やったこと**: `entities` 1,846件に、公開面と**同じゲート関数**（`isPublishableEntity` /
+`isValidBenchmarkName` / `isValidBenchmarkUnit` / `isValidClaim`）をバックアップ上で適用し、
+`/topic/[name]` に実際に何が出るかを数えた。
+
+| | 件数 |
+|---|---|
+| entities 全体 | 1,846 |
+| 公開可（`isPublishableEntity`） | 300 |
+| └ 中身ゼロ（ベンチ0・主張0・関連0） | 11 (3.7%) |
+| └ 薄い（合計1〜2） | 106 (35.3%) |
+| └ 十分（3以上＝索引に出る） | **183** |
+
+**結論: 設計は機能している。** 薄い・空のページは `shouldIndex` が `noindex` にしており、
+読者に見せる183件は Gemini/GPT/Claude の各モデル、OpenAI/Anthropic/Nvidia/TSMC 等の企業、
+vLLM/MCP/QLoRA 等の技術で、大半が妥当。
+
+**直したこと**: 183件を全件目視して、一般名詞の取りこぼしを2件発見して `GENERIC_KEYS` に追加。
+`PC`（`os`/`gpu`/`cpu` と同じ技術カテゴリの一般語）と `ITエンジニア`（`engineer`/`researcher` の
+日本語表記）。183件 → 181件になり、巻き込みは無し。
+
+**あえて直さなかったこと**: `Generative AI` `agentic AI` `RAG` `Transformer`
+`Reinforcement Learning` `Speculative decoding` は残した。`entity-quality.ts` の
+`GENERIC_KEYS` 上のコメントに **「`Generative AI` のような概念語は、追跡対象として成立しうるので**
+**入れない」** と過去の判断が明記されている。追跡対象として成立するという判断は妥当なので従う。
+この歯止めをテストに固定した（将来「一般名詞を足す」ときに巻き込んで消さないため）。
+
+**残っている課題（今回は触らない）**: 表記ゆれが索引対象に3つ並んでいる——
+`Speculative decoding` / `Speculative Decoding (SD)` / `Speculative Speculative Decoding (SSD)`。
+3つ目は語の重複＝抽出の事故。エンティティ統合（`ENTITY_ALIAS_KEYS`）の話なので
+[[pattern-embedding-cannot-separate]] の方針どおり決定論の別名表で扱う。
