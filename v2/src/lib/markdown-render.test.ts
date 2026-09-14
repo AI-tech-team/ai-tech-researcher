@@ -42,3 +42,22 @@ test('水平線は箇条書きに吸われない', () => {
   assert.deepEqual(tagsOf(renderMarkdown('---')), ['hr']);
   assert.deepEqual(tagsOf(renderMarkdown('***')), ['hr']);
 });
+
+test('#### 以下の見出しも記号を残さずタグになる', () => {
+  for (const md of ['# A', '## B', '### C', '#### D', '##### E', '###### F']) {
+    const t = textOf(renderMarkdown(md));
+    assert.ok(!t.includes('#'), `記号が残っている: ${md} -> ${t}`);
+  }
+  assert.deepEqual(tagsOf(renderMarkdown('#### LLM推論')), ['h5']);
+});
+
+test('空白8個の字下げ箇条書きも拾う', () => {
+  assert.deepEqual(tagsOf(renderMarkdown('        *   Claude Code の**チェックポイント機能**')), ['ul']);
+  assert.ok(!textOf(renderMarkdown('        *   Claude Code の**チェックポイント機能**')).includes('*'));
+});
+
+test('太字の中にコードやリンクがあっても記号を残さない', () => {
+  const t = textOf(renderMarkdown('    *   **`torch.compile` のリージョナルコンパイル**: 短縮。'));
+  assert.ok(!t.includes('`'), `バッククォートが残っている: ${t}`);
+  assert.ok(t.includes('torch.compile'), t);
+});

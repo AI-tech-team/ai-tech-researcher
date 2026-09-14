@@ -44,3 +44,32 @@ test('字下げした入れ子の箇条書きも拾う（5月の号の記法・1
   assert.ok(html.includes('<li'), html);
   assert.ok(!/>\s*\*/.test(html), `素の * が残っている: ${html}`);
 });
+
+// 見出しは1本の規則で全レベルを処理する。以前は ## と ### だけを別々に書いていたため、
+// `#`（週次/月次の表題）と `####` が素通りし、メール本文に記号のまま出ていた。
+test('見出しは # から #### まで全部タグになる（記号を残さない）', () => {
+  assert.match(mailMarkdownToHtml('# 週次サマリー'), /<h1[^>]*>週次サマリー<\/h1>/);
+  assert.match(mailMarkdownToHtml('## 今日のハイライト'), /<h2[^>]*>今日のハイライト<\/h2>/);
+  assert.match(mailMarkdownToHtml('### 見出し3'), /<h3[^>]*>見出し3<\/h3>/);
+  assert.match(mailMarkdownToHtml('#### LLM推論'), /<h4[^>]*>LLM推論<\/h4>/);
+  for (const md of ['# A', '## B', '### C', '#### D', '##### E', '###### F']) {
+    const text = mailMarkdownToHtml(md).replace(/<[^>]+>/g, '');
+    assert.ok(!text.includes('#'), `記号が残っている: ${md} -> ${text}`);
+  }
+});
+
+test('見出しの順序の罠: ## が「# 」に食われない', () => {
+  const text = mailMarkdownToHtml('## 今日のハイライト').replace(/<[^>]+>/g, '');
+  assert.equal(text.trim(), '今日のハイライト');
+});
+
+test('リンクはタグになり、危険なURLはラベルだけ残す', () => {
+  const ok = mailMarkdownToHtml('参考: [Mixtral 8x22B](https://www.itmedia.co.jp/news/a.html)');
+  assert.match(ok, /<a href="https:\/\/www\.itmedia\.co\.jp\/news\/a\.html"[^>]*>Mixtral 8x22B<\/a>/);
+  // safeHttpUrl が弾くもの（javascript: / グラウンディング中継URL）はラベルだけ出してリンクにしない
+  for (const bad of ['javascript:alert(1)', 'https://vertexaisearch.cloud.google.com/x']) {
+    const html = mailMarkdownToHtml(`[ラベル](${bad})`);
+    assert.ok(!html.includes('<a '), `リンクにしてはいけない: ${bad} -> ${html}`);
+    assert.ok(html.includes('ラベル'), html);
+  }
+});

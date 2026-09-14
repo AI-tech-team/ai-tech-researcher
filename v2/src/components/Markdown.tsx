@@ -39,7 +39,10 @@ function parseInline(text: string, onArticleRef?: ArticleRef): React.ReactNode {
         parts.push(label);
       }
     } else if (m.startsWith('**'))
-      parts.push(<strong key={key++} className="text-white font-semibold">{m.slice(2, -2)}</strong>);
+      // 太字の中身も解釈する。`**`torch.compile` のX**` のようにコードやリンクを内側に置かれると、
+      // 素通しでは記号がそのまま出ていた（実測1行/1号と小さいが、最後に残った漏れなので閉じる）。
+      // `[^*]+` の内側に `*` は入らないので再帰は必ず浅く終わる。
+      parts.push(<strong key={key++} className="text-white font-semibold">{parseInline(m.slice(2, -2), onArticleRef)}</strong>);
     else if (m.startsWith('*'))
       parts.push(<em key={key++} className="text-slate-300 italic">{m.slice(1, -1)}</em>);
     else if (m.startsWith('`'))
@@ -87,7 +90,14 @@ export function renderMarkdown(content: string, onArticleRef?: ArticleRef): Reac
   };
 
   lines.forEach((line, i) => {
-    if (line.startsWith('### ')) {
+    // ⚠ `####` 以下も受ける。ここが `### `/`## `/`# ` の3段だけだったため、
+    //   `#### LLM推論` が**記号のまま本文に出ていた**（公開142号で10行/2号・実測）。
+    //   `enforceStructure` は見出しレベルを正規化せず素通しするので、いつでも再発しうる。
+    //   h5/h6 はこの幅では細かすぎるので見た目は h4 相当に丸める（記号を出すよりよい）。
+    if (/^#{4,6} /.test(line)) {
+      flushList();
+      nodes.push(<h5 key={i} id={`sec-${i}`} className="text-sm font-bold text-slate-200 mt-4 mb-1.5 scroll-mt-20">{parseInline(line.replace(/^#{4,6} /, ''), onArticleRef)}</h5>);
+    } else if (line.startsWith('### ')) {
       flushList();
       nodes.push(<h4 key={i} id={`sec-${i}`} className="text-base font-bold text-white mt-5 mb-2 scroll-mt-20">{parseInline(line.slice(4), onArticleRef)}</h4>);
     } else if (line.startsWith('## ')) {

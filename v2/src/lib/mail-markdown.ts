@@ -19,6 +19,7 @@
  *   メールクライアントは `<style>` や外部CSSを落とすので、装飾はインラインstyleで書く。
  */
 
+import { safeHttpUrl } from './safeUrl';
 import { BULLET_LINE, HR_LINE } from './markdown-lines';
 
 // 行の判定は markdown-lines.ts に集約（同じ規則のコピーを増やさない）。
@@ -26,13 +27,40 @@ import { BULLET_LINE, HR_LINE } from './markdown-lines';
 const BULLET_RE = new RegExp(BULLET_LINE.source, 'gm');
 const HR_RE = new RegExp(HR_LINE.source, 'gm');
 
+/** メールクライアントは外部CSSを落とすので、見出しの装飾もレベルごとにインラインで持つ。 */
+const HEADING_STYLE: Record<number, string> = {
+  1: 'color:#0f172a;font-size:19px;font-weight:700;margin:18px 0 10px',
+  2: 'color:#0ea5e9;font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin:16px 0 8px',
+  3: 'color:#4f46e5;font-size:14px;margin:16px 0 4px',
+  4: 'color:#475569;font-size:13px;margin:12px 0 4px',
+};
+
+/** h5/h6 はメールでは細かすぎるので h4 の見た目に丸める（記号のまま出すよりはるかに良い）。 */
+function headingHtml(level: number, text: string): string {
+  const tag = Math.min(level, 4);
+  return `<h${tag} style="${HEADING_STYLE[tag]}">${text}</h${tag}>`;
+}
+
 export function mailMarkdownToHtml(md: string): string {
   let html = md
     .replace(HR_RE, '<hr style="border:0;border-top:1px solid #e2e8f0;margin:14px 0">')
-    .replace(/^## (.+)$/gm, '<h2 style="color:#0ea5e9;font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin:16px 0 8px">$1</h2>')
-    .replace(/^### (.+)$/gm, '<h3 style="color:#4f46e5;font-size:14px;margin:16px 0 4px">$1</h3>')
+    // ⚠ 見出しは**1本の規則**で処理する。以前は `##` と `###` だけを別々に書いていたため、
+    //   `#`（週次/月次の表題）と `####` が素通りし、メール本文に「# AIテック…」と記号のまま
+    //   出ていた（実測: daily 121号中 **24号**・最後は 2026-08-12）。
+    //   レベルごとに行を足す形は足し忘れが起きるうえ、順序の罠もある
+    //   （`^# ` を `^## ` より先に置くと `## X` が「# X」として食われる）。
+    //   なお `enforceStructure` は見出しレベルを正規化せず素通しするので、いつでも再発しうる。
+    .replace(/^(#{1,6}) +(.+)$/gm, (_m, h: string, text: string) => headingHtml(h.length, text))
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:2px 5px;border-radius:4px;font-family:monospace;font-size:0.9em">$1</code>')
+    // ⚠ リンクは素通しだった。実測では公開142号中1号（2026-05-18）にしか無いが、
+    //   出たときは `[タイトル](https://…)` が**記号とURLのまま**メールに載る。
+    //   href は必ず safeHttpUrl を通す（第一条・判定をここに書き写さない）。
+    //   属性を壊さないよう、通過後の `"` だけはパーセント表記に寄せる。
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label: string, url: string) => {
+      const href = safeHttpUrl(url);
+      return href ? `<a href="${href.replace(/"/g, '%22')}" style="color:#0ea5e9">${label}</a>` : label;
+    })
     .replace(BULLET_RE, '<li style="margin:3px 0;line-height:1.6">$1</li>')
     .replace(/\n\n+/g, '\n\n');
   html = html.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => `<ul style="padding-left:20px;margin:4px 0">${m}</ul>`);
@@ -40,8 +68,8 @@ export function mailMarkdownToHtml(md: string): string {
   html = html.replace(/\n/g, '<br>');
   // ブロック要素（見出し/リスト/水平線）の前後に残る<br>と空段落を除去して間延びを防ぐ
   html = html
-    .replace(/(?:<br>\s*)+(<(?:h2|h3|ul|li|hr))/g, '$1')
-    .replace(/(<\/(?:h2|h3|ul|li)>|<hr[^>]*>)(?:\s*<br>)+/g, '$1')
+    .replace(/(?:<br>\s*)+(<(?:h1|h2|h3|h4|ul|li|hr))/g, '$1')
+    .replace(/(<\/(?:h1|h2|h3|h4|ul|li)>|<hr[^>]*>)(?:\s*<br>)+/g, '$1')
     .replace(/<p[^>]*>(?:\s|<br>)*<\/p>/g, '');
   return `<p style="margin:5px 0;line-height:1.7;color:#334155">${html}</p>`;
 }
