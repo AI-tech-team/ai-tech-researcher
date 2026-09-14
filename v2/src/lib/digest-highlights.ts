@@ -17,7 +17,7 @@
  *   `**ラベル**:` の形だけを見て中身をそのまま持つ。
  */
 
-import { BULLET_LINE, bulletContent } from './markdown-lines';
+import { bulletContent } from './markdown-lines';
 
 export type HighlightPoint = { label: string; text: string };
 export type Highlight = { title: string; points: HighlightPoint[] };
@@ -66,6 +66,25 @@ export function extractHighlightSection(markdown: string): string | null {
 }
 
 /**
+ * 箇条書きでない「続きの行」を要点として読んでよいか。
+ *
+ * ⚠ これが要る理由（2026-09-15・公開142号で実測）: 見出しは出るのに**要点が1本も無い**号が3号あった。
+ *   紙面には見出しだけが並び、本文が丸ごと消えていた（失敗が部分的でなく全体的）。原因は生成側の形:
+ *     形1（2026-05-21 / 05-22）: `### 1. 見出し` の下に**箇条書き記号なし**の `**何が起きたか:** 本文`
+ *     形2（id=90・2026-06-11の再生成版）: `*   **見出し**` の下に**字下げした素の本文**
+ *   どちらも「箇条書き行だけを要点にする」規則から外れて落ちていた。記号の有無で本文を捨てない。
+ *   落とすのは見出し・区切り線・空行だけ。→ 33号を救った parseBulletHighlights と同じ話の続きで、
+ *   「1本見つけたら同型を全部当たる」の実践（pattern-positional-pairing と同じ教訓）。
+ */
+function isBodyLine(line: string): boolean {
+  const s = line.trim();
+  if (!s) return false;
+  if (/^#{1,6}\s/.test(s)) return false;        // 見出し
+  if (/^([-*_])\1{2,}$/.test(s)) return false;  // 区切り線（--- *** ___）
+  return true;
+}
+
+/**
  * 1項目の要点行を読む。ラベル付き（`**何が起きたか**: 本文`）とそうでない行の両方を扱う。
  * コロンを要求するのは、`**Show-Harness**は…` のような文中の強調をラベルと誤認しないため。
  * ラベル名は決め打ちにしない（生成側の文言が変わってもここが黙って空にならないように）。
@@ -95,7 +114,12 @@ function parseBulletHighlights(section: string): Highlight[] {
   let cur: Highlight | null = null;
   for (const line of section.split('\n').slice(1)) {
     const body = bulletContent(line);
-    if (body === null) continue;
+    if (body === null) {
+      // 記号を付けず字下げだけで続きを書く号があった（id=90）。字下げは「直前の項目の続き」の
+      // 意思表示なので本文として拾う。字下げの無い素の行は前書き等なので拾わない。
+      if (cur && /^[ \t]/.test(line) && isBodyLine(line)) cur.points.push(toPoint(line.trim()));
+      continue;
+    }
     if (/^[ \t]/.test(line)) { cur?.points.push(toPoint(body)); continue; }
     const title = cleanTitle(body);
     if (!title) { cur = null; continue; }
@@ -118,8 +142,10 @@ export function parseHighlights(markdown: string): Highlight[] {
     if (!title) continue;
     const points: HighlightPoint[] = [];
     for (const line of lines.slice(1)) {
-      if (!BULLET_LINE.test(line)) continue;
-      points.push(toPoint(bulletContent(line) ?? ''));
+      const body = bulletContent(line);
+      if (body !== null) { points.push(toPoint(body)); continue; }
+      // 記号を付けずに `**何が起きたか:** 本文` を並べる号があった（2026-05-21 / 05-22）。→ isBodyLine
+      if (isBodyLine(line)) points.push(toPoint(line.trim()));
     }
     out.push({ title, points });
   }

@@ -253,3 +253,72 @@ test('新レイアウト（### 見出し）は今までどおり', () => {
 test('🔥セクションが無ければ空（後方互換で拾いすぎない）', () => {
   assert.deepEqual(parseHighlights('## 📊 カテゴリ別\n\n*   **項目**\n'), []);
 });
+
+// ── 2026-09-15: 見出しは出るのに要点が1本も無い号が3号あった（公開142号で実測）──
+// 前回 33号を救った修正のあとも、別の2つの形が残っていた。「1本見つけたら同型を全部当たる」。
+
+test('### の下に箇条書き記号なしで **ラベル:** 本文 が並ぶ号（2026-05-21 / 05-22 の形）', () => {
+  const md = [
+    '## 🔥 今日のハイライト',
+    '',
+    '### 1. 🚀 Googleが新LLM「Gemini 3.5 Flash」を発表',
+    '**何が起きたか:** Googleが新しい大規模言語モデルをリリースしました。',
+    '**なぜ重要か:** 推論速度とコスト効率は極めて重要です。',
+    '',
+    '### 2. 🤖 Qwen3.7-Max が非幻覚率SOTA級',
+    '**何が起きたか:** エージェント前提のモデルとして発表されました。',
+  ].join('\n');
+  const hs = parseHighlights(md);
+  assert.equal(hs.length, 2);
+  assert.equal(hs[0].points.length, 2);
+  assert.equal(hs[0].points[0].label, '何が起きたか');
+  assert.match(hs[0].points[0].text, /Googleが新しい大規模言語モデル/);
+  assert.equal(hs[1].points.length, 1);
+});
+
+test('箇条書きの見出しの下に字下げだけの素の本文が続く号（id=90 の形）', () => {
+  const md = [
+    '## 🔥 今日のハイライト',
+    '',
+    '*   **AI開発の焦点が「展開とコスト」へシフト** 📈',
+    '    AIリーダーの議論により、最前線が実運用へ転換していることが明確になりました。',
+    '',
+    '*   **AppleとMicrosoftがローカルAIに本格注力** 📱',
+    '    AppleがオンデバイスAI推論エンジンを発表しました。',
+  ].join('\n');
+  const hs = parseHighlights(md);
+  assert.equal(hs.length, 2);
+  assert.equal(hs[0].points.length, 1);
+  assert.match(hs[0].points[0].text, /実運用へ転換/);
+  assert.equal(hs[1].points.length, 1);
+});
+
+test('見出し・区切り線・空行は要点にしない（本文だけ拾う）', () => {
+  const md = [
+    '## 🔥 今日のハイライト',
+    '',
+    '### 1. 見出し',
+    '本文の行。',
+    '---',
+    '',
+    '#### 小見出しは拾わない',
+  ].join('\n');
+  const hs = parseHighlights(md);
+  assert.equal(hs.length, 1);
+  assert.equal(hs[0].points.length, 1);
+  assert.equal(hs[0].points[0].text, '本文の行。');
+});
+
+test('字下げの無い素の行は、箇条書き経路では要点にしない（前書きを巻き込まないため）', () => {
+  const md = [
+    '## 🔥 今日のハイライト',
+    'このセクションの前書き。',
+    '*   **見出しA**',
+    '    Aの本文。',
+  ].join('\n');
+  const hs = parseHighlights(md);
+  assert.equal(hs.length, 1);
+  assert.equal(hs[0].title, '見出しA');
+  assert.equal(hs[0].points.length, 1);
+  assert.equal(hs[0].points[0].text, 'Aの本文。');
+});
