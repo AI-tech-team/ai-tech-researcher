@@ -8,9 +8,12 @@
 // 署名はDBに保存しない: AUTH_SECRET から userId ごとに導出するので、テーブルも失効管理も要らない。
 // AUTH_SECRET をローテートすると過去メールのリンクが無効になるが、それは望ましい挙動。
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { firstNonEmpty } from './env';
 
 function secret(): string {
-  const s = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+  // `??` だと AUTH_SECRET が**空文字**のときに NEXTAUTH_SECRET へ落ちない
+  // （GitHub Actions は未設定secretを空文字で渡す）。src/lib/env.ts の理由書きを参照。
+  const s = firstNonEmpty(process.env.AUTH_SECRET, process.env.NEXTAUTH_SECRET);
   if (!s) throw new Error('AUTH_SECRET is not set');
   return s;
 }

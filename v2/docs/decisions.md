@@ -1940,3 +1940,31 @@ vLLM/MCP/QLoRA 等の技術で、大半が妥当。
 
 **テスト**: `??` との違い（空文字・空白のみ）、末尾スラッシュ、全部空ならnull、
 そして**既定値に旧プロジェクトのURLが戻らないこと**を固定した。
+
+## ㉟ 空文字の環境変数が `??` をすり抜ける箇所を全部潰す（2026-09-15）
+
+㉞で1件直したあと、同じ形が他に無いか機械的に洗った。**危ないのは2種類**だった。
+
+**① `Number(process.env.X ?? 既定値)`** — 空文字なら `Number('')` は **0**。
+`runBatchSubmit` の `chunkSize` が0になると `for (let i = 0; i < n; i += chunkSize)` が
+**無限ループ**し、同じジョブを Gemini Batch API に投げ続ける（第二条・コスト）。
+値がゴミなら `NaN` で逆に**1周も回らず黙って0件**。どちらも静かに壊れる。
+
+**② `AUTH_SECRET ?? NEXTAUTH_SECRET`** — `AUTH_SECRET` が空文字だと `NEXTAUTH_SECRET` に落ちない。
+有効な鍵があるのにワンクリック配信停止が無効化される。
+
+**⚠ 自分の案を1つ取り下げた**: 最初 `envInt()` という新しいヘルパを書いたが、
+**`envLimit(name, fallback, max)` が既に daily_pipeline.ts にあった**（2026-09-10 の監査で
+「workflow_dispatch の打ち間違い1つで実行が青天井になる」ために作られたもの。上限で丸める機能つき）。
+道具はあるのに **4箇所が素の `Number()` のまま**だった＝[[pattern-wired-but-never-called]] の形。
+自作は捨てて既存に寄せた。
+
+**直した箇所**: `BATCH_MAX`(上限20000) / `BATCH_CHUNK`(上限500) / `KNOWLEDGE_LIMIT`(上限2000) /
+`BACKFILL_MAX`(上限5000) を `envLimit` へ。`AUTH_SECRET` の2箇所を `firstNonEmpty` へ。
+`src/lib/env.ts` に `firstNonEmpty` を置き、`site.ts` の `firstNonEmptyUrl` もそこへ委譲
+（実装を2つ持たない）。テストで `??` との差を固定した。
+
+**触らなかったもの**: `src/db/index.ts` の `TURSO_DATABASE_URL ?? 'libsql://localhost:8080'`。
+空文字だと `createClient` が投げるが、**それは正しい**。ここを既定値に落とすと、
+本番の接続先が抜けているのに黙ってローカルへ繋ぎにいく＝もっと悪い。
+`CONTACT_EMAIL` 等の `?? ''` も、空文字と既定値が同じなので害が無い。

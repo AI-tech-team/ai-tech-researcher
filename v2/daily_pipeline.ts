@@ -20,6 +20,7 @@ import { unsubscribeUrl } from './src/lib/unsubscribe-link';
 import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
 import { SITE_NAME, SITE_URL, SERVER_SITE_URL, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
+import { firstNonEmpty } from './src/lib/env';
 
 /**
  * 配信メールの共通フッター。特定電子メール法4条が求める
@@ -1659,7 +1660,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
   // 経緯: unsubscribeUrl() は AUTH_SECRET 未設定で例外を投げる。それが受信者ごとの try/catch に
   // 飲まれ、全員ぶん送信失敗しても「0/N件」と出るだけで成功扱いになっていた（2026-09-10）。
   // 配信を止めるより停止導線を退避させる方が被害が小さいので、送信は続け、代わりにここで声を出す。
-  const canSign = Boolean(process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET);
+  const canSign = Boolean(firstNonEmpty(process.env.AUTH_SECRET, process.env.NEXTAUTH_SECRET));
   if (!canSign) {
     console.error(
       '[Brief] ⚠ AUTH_SECRET が未設定です。ワンクリック配信停止(RFC8058)を出せないため、'
@@ -2201,8 +2202,12 @@ interface BatchState {
 }
 
 async function runBatchSubmit(
-  maxArticles = Number(process.env.BATCH_MAX ?? 3000),
-  chunkSize = Number(process.env.BATCH_CHUNK ?? 150),
+  // ⚠ 素の Number(env ?? 既定値) は使わない。空文字なら Number('') が **0** になり、
+  //   下の `i += chunkSize` が**無限ループ**して同じジョブを Batch API に投げ続ける。
+  //   ゴミなら NaN で逆に1周も回らず黙って0件。既にある envLimit が両方とも既定値に落とす
+  //   （2026-09-10 の監査で作られたのに、この2つだけ素の Number() のままだった）。
+  maxArticles = envLimit('BATCH_MAX', 3000, 20000),
+  chunkSize = envLimit('BATCH_CHUNK', 150, 500),
 ) {
   console.log(`[Batch] 再抽出ジョブ投入開始 (EXTRACTION_VERSION=${EXTRACTION_VERSION}, max=${maxArticles})`);
   const targets = await db.select({
@@ -4046,7 +4051,7 @@ async function main() {
 
     // v3: 知識抽出のみ実行（バックフィル・検証用）。未抽出の古い分を多めに消化する
     if (pipelineMode === 'knowledge') {
-      await runKnowledgeExtraction(Number(process.env.KNOWLEDGE_LIMIT ?? 200));
+      await runKnowledgeExtraction(envLimit('KNOWLEDGE_LIMIT', 200, 2000));
       console.log('=== Knowledge mode 完了 ===');
       process.exit(0);
     }
@@ -4169,7 +4174,7 @@ async function main() {
     // v7: 要点(key_points/why_matters)のバックフィル。重要度が高い順に埋める。
     // 既存記事は数千件あるので、上限を切って複数回まわす想定（BACKFILL_MAX で調整）。
     if (pipelineMode === 'keypoints') {
-      const max = Number(process.env.BACKFILL_MAX ?? 300);
+      const max = envLimit('BACKFILL_MAX', 300, 5000);
       let total = 0, n = 0;
       do { n = await enrichKeyPoints(60); total += n; } while (n > 0 && total < max);
       console.log(`=== KeyPoints mode 完了（計${total}件）===`);

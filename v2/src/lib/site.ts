@@ -1,3 +1,5 @@
+import { firstNonEmpty } from './env';
+
 /** サイト全体で共有する公開メタ情報。layout / page / OG画像 / sitemap などから参照する。
  *  - SITE_URL は末尾スラッシュを除去（OG/canonical/sitemap の基点がブレないように）。
  *  - CONTACT_EMAIL は環境変数で差し替え可能（個人アドレス直書きを避ける。未設定なら空）。
@@ -13,11 +15,8 @@
  *   `[Brief] 朝刊配信: 0/N件` と出るだけ**になる（同じ形の事故は2026-09-10 にも起きている）。
  */
 export function firstNonEmptyUrl(...values: (string | undefined | null)[]): string | null {
-  for (const v of values) {
-    const t = (v ?? '').trim();
-    if (t) return t.replace(/\/+$/, '');
-  }
-  return null;
+  const v = firstNonEmpty(...values);
+  return v === null ? null : v.replace(/\/+$/, '');
 }
 
 /** 既定のオリジン。旧Vercelプロジェクト(ai-tech-researcher)は削除予定なので使わない。 */
