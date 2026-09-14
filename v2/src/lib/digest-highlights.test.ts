@@ -207,3 +207,49 @@ test('紙面の整形は内部IDの除去を壊さない', () => {
   assert.equal(cleanText('本文（ID: 123）'), '本文');
   assert.equal(cleanText('本文 [ID:456]'), '本文');
 });
+
+// 2026-05-28〜2026-07-07 の33号は、各ハイライトを `### ` ではなく行頭の箇条書きで出していた。
+// `### ` でしか割っていなかったため 0本になり、トップも過去号ページも紙面の組みを失っていた。
+// 🔥 の構造ゲートは本数と文数しか見ず見出しレベルを強制しないので、生成側が戻れば再発する。
+const OLD_LAYOUT = `## 🔥 今日のハイライト
+
+*   **Anthropic、推論コスト削減へSamsungとチップ開発計画か** 💡
+    *   **何が起きたか**: Anthropicがチップ開発に乗り出す可能性が浮上しました。
+    *   **なぜ重要か**: 運用コストは大きな課題です。
+    *   **実務への影響**: 選択肢が増える可能性があります。
+
+*   **Nvidia、次世代AIラックが1年遅延** ⚙️
+    *   **何が起きたか**: 製造問題により遅延しました。
+    *   **なぜ重要か**: 競合に機会が生まれます。
+
+## 🚀 急上昇トレンド
+本文。`;
+
+test('`###` で割れない旧レイアウトも箇条書きとして読む', () => {
+  const hs = parseHighlights(OLD_LAYOUT);
+  assert.equal(hs.length, 2);
+  assert.equal(hs[0].title, 'Anthropic、推論コスト削減へSamsungとチップ開発計画か 💡');
+  assert.equal(hs[0].points.length, 3);
+  assert.deepEqual(hs[0].points[0], { label: '何が起きたか', text: 'Anthropicがチップ開発に乗り出す可能性が浮上しました。' });
+  assert.equal(hs[1].points.length, 2);
+  // 次のセクション(## 🚀)の本文を吸い込まない
+  assert.ok(!JSON.stringify(hs).includes('急上昇'), JSON.stringify(hs));
+});
+
+test('新レイアウト（### 見出し）は今までどおり', () => {
+  const md = `## 🔥 今日のハイライト
+
+### 1. 見出しA
+
+*   **何が起きたか**: 本文A。
+*   **なぜ重要か**: 理由A。
+`;
+  const hs = parseHighlights(md);
+  assert.equal(hs.length, 1);
+  assert.equal(hs[0].title, '見出しA');
+  assert.equal(hs[0].points.length, 2);
+});
+
+test('🔥セクションが無ければ空（後方互換で拾いすぎない）', () => {
+  assert.deepEqual(parseHighlights('## 📊 カテゴリ別\n\n*   **項目**\n'), []);
+});

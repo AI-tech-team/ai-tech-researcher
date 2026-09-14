@@ -17,6 +17,8 @@
  *   `**ラベル**:` の形だけを見て中身をそのまま持つ。
  */
 
+import { BULLET_LINE, bulletContent } from './markdown-lines';
+
 export type HighlightPoint = { label: string; text: string };
 export type Highlight = { title: string; points: HighlightPoint[] };
 
@@ -63,6 +65,46 @@ export function extractHighlightSection(markdown: string): string | null {
   return section ?? null;
 }
 
+/**
+ * 1項目の要点行を読む。ラベル付き（`**何が起きたか**: 本文`）とそうでない行の両方を扱う。
+ * コロンを要求するのは、`**Show-Harness**は…` のような文中の強調をラベルと誤認しないため。
+ * ラベル名は決め打ちにしない（生成側の文言が変わってもここが黙って空にならないように）。
+ */
+function toPoint(body: string): HighlightPoint {
+  //   新: "*   **何が起きたか**: 本文"（2026-09-10 のプロンプト改訂以降）
+  //   旧: "*   **何が起きたか:** 本文"（それ以前の全レポート＝バックナンバー）
+  //   旧形を落としていたため、過去の号は見出しだけが並んで本文が消えていた（2026-09-11 実機で発見）。
+  const lab = body.match(/^\*\*\s*(.+?)\s*[:：]\s*\*\*\s*(.+)$/)
+    ?? body.match(/^\*\*\s*(.+?)\s*\*\*\s*[:：]\s*(.+)$/);
+  return lab ? { label: cleanText(lab[1]), text: cleanText(lab[2]) } : { label: '', text: cleanText(body) };
+}
+
+/**
+ * `### ` で割れない号のための後方互換。行頭の箇条書きを1本、字下げした箇条書きをその要点として読む。
+ *
+ * ⚠ これが要る理由（2026-09-15 実測）: 🔥節は**あるのに 0本**になる daily が **33号 / 121号**あった
+ *   （2026-05-28〜2026-07-07）。当時の生成側は各ハイライトを `### ` ではなく
+ *   `*   **見出し**` の箇条書きで出していた。0本になるとトップも過去号ページも
+ *   紙面の組みを失い、生の塊に落ちる＝**失敗が部分的でなく全体的**。
+ *   しかも 🔥 の構造ゲート（daily-report.ts の STRUCTURE）は本数と文数しか見ておらず、
+ *   **見出しレベルを強制していない**ので、生成側が戻ればいつでも再発する。
+ *   行の判定は markdown-lines.ts に寄せる（同じ規則のコピーを増やさない）。
+ */
+function parseBulletHighlights(section: string): Highlight[] {
+  const out: Highlight[] = [];
+  let cur: Highlight | null = null;
+  for (const line of section.split('\n').slice(1)) {
+    const body = bulletContent(line);
+    if (body === null) continue;
+    if (/^[ \t]/.test(line)) { cur?.points.push(toPoint(body)); continue; }
+    const title = cleanTitle(body);
+    if (!title) { cur = null; continue; }
+    cur = { title, points: [] };
+    out.push(cur);
+  }
+  return out;
+}
+
 /** ハイライト5本を構造化して返す。形が崩れていれば取れた分だけ返す（空配列もありうる）。 */
 export function parseHighlights(markdown: string): Highlight[] {
   const section = extractHighlightSection(markdown);
@@ -74,25 +116,15 @@ export function parseHighlights(markdown: string): Highlight[] {
     const lines = block.split('\n');
     const title = cleanTitle(lines[0] ?? '');
     if (!title) continue;
-
     const points: HighlightPoint[] = [];
     for (const line of lines.slice(1)) {
-      const li = line.match(/^\s*[*\-+]\s+(.+)$/);
-      if (!li) continue;
-      const body = li[1];
-      // ラベル付き。コロンが**太字の内側**にある古い形にも合わせる。
-      //   新: "*   **何が起きたか**: 本文"（2026-09-10 のプロンプト改訂以降）
-      //   旧: "*   **何が起きたか:** 本文"（それ以前の全レポート＝バックナンバー）
-      // 旧形を落としていたため、過去の号は見出しだけが並んで本文が消えていた（2026-09-11 実機で発見）。
-      const lab = body.match(/^\*\*\s*(.+?)\s*[:：]\s*\*\*\s*(.+)$/)
-        ?? body.match(/^\*\*\s*(.+?)\s*\*\*\s*[:：]\s*(.+)$/);
-      // コロンを要求するのは、`**Show-Harness**は…` のような文中の強調をラベルと誤認しないため。
-      if (lab) points.push({ label: cleanText(lab[1]), text: cleanText(lab[2]) });
-      else points.push({ label: '', text: cleanText(body) });
+      if (!BULLET_LINE.test(line)) continue;
+      points.push(toPoint(bulletContent(line) ?? ''));
     }
     out.push({ title, points });
   }
-  return out;
+  // `### ` が1本も取れない号は、箇条書き形式の旧レイアウトとして読み直す。
+  return out.length > 0 ? out : parseBulletHighlights(section);
 }
 
 /**
