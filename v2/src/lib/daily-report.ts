@@ -12,7 +12,7 @@ import { extractHighlightSection } from '@/lib/digest-highlights';
 import { logError } from '@/lib/logError';
 import { PRIMARY_SOURCE_HOSTS, DIGEST_EXCLUDED_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY, isPrimarySource } from '@/lib/primary-sources';
 import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
-import { assessWhy, formatWhyReport } from './why-specificity';
+import { formatSpecificityReport } from './why-specificity';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
 // 比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日がズレる）。
@@ -630,10 +630,11 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
   }
 
   // 「なぜ重要か」が具体か一般論かを**測るだけ**。出力は変えない（2026-09-13・Aだけ先に）。
-  // プロンプトは「何が起きたか」にだけ具体を要求していて、「なぜ重要か」には長さの指定しか無い。
-  // まず毎日数えて、直す前と後を比べられるようにする → src/lib/why-specificity.ts
+  // 対照として「何が起きたか」も同じ物差しで出す（2026-09-14 追加）。こちらには最初から
+  // 具体の指示があり実測93.3%。本命だけ落ちた日は指示の問題、両方落ちた日はその日の材料の問題、
+  // と切り分けられる。片方しか測らないのは対照群を捨てているのと同じ → src/lib/why-specificity.ts
   if (text?.trim()) {
-    try { console.log(formatWhyReport(assessWhy(text))); }
+    try { console.log(formatSpecificityReport(text)); }
     catch { /* 測定は非致命。朝刊を止めない */ }
   }
 

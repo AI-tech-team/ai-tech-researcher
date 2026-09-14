@@ -66,10 +66,19 @@ export interface WhyReport {
   items: WhyItem[];
 }
 
-export function assessWhy(markdown: string): WhyReport {
+/**
+ * 指定したラベルの本文を同じ物差しで測る。
+ *
+ * ⚠ 「なぜ重要か」だけを見ていると、下がった日に**プロンプトのせいか、その日のニュースのせいか**が
+ *   分からない。対照が要る: 「何が起きたか」には最初から具体の指示があり、同じ号・同じモデルで
+ *   **93.3%が具体**（n=357・2026-09-13実測）。両方を毎日出しておけば、
+ *   ①なぜ重要かだけ落ちた＝指示の問題 ②両方落ちた＝その日の材料の問題、と切り分けられる。
+ *   片方しか測らないのは、対照群を捨てているのと同じ。
+ */
+export function assessLabel(markdown: string, label: string): WhyReport {
   const items: WhyItem[] = [];
   parseHighlights(markdown).forEach((h, i) => {
-    const why = h.points.find(p => p.label === 'なぜ重要か')?.text;
+    const why = h.points.find(p => p.label === label)?.text;
     if (why === undefined) return;
     const signals = (why.match(LATIN_TOKEN) ?? [])
       .filter(t => !GENERIC_LATIN.has(t.toUpperCase()) && !STOP_WORDS.has(t.toLowerCase()));
@@ -89,7 +98,32 @@ export function assessWhy(markdown: string): WhyReport {
   };
 }
 
+/** 「なぜ重要か」を測る（従来の入口）。中身は assessLabel と同じ。 */
+export function assessWhy(markdown: string): WhyReport {
+  return assessLabel(markdown, 'なぜ重要か');
+}
+
+/**
+ * 対照（何が起きたか）と本命（なぜ重要か）を2行で出す。
+ * 対照が落ちていない日に本命だけ低ければ、原因は材料でなく指示。
+ */
+export function formatSpecificityReport(markdown: string): string {
+  return [
+    formatLabelReport('なぜ重要か', assessLabel(markdown, 'なぜ重要か')),
+    formatLabelReport('何が起きたか（対照）', assessLabel(markdown, '何が起きたか')),
+  ].join('\n');
+}
+
 /** ログ1行にする。中身（文そのもの）は出さず、判定と根拠の語だけ出す。 */
+export function formatLabelReport(label: string, r: WhyReport): string {
+  if (r.total === 0) return `[Report] ${label}: 項目を検出できず（形式が変わった可能性）`;
+  const detail = r.items
+    .map(x => `${x.index}:${x.concrete ? `具体(${x.signals.join(',')})` : '一般論'}${x.hedged ? '+定型句' : ''}`)
+    .join(' ');
+  return `[Report] ${label} ${r.total}本: 具体${r.concrete}本 / 定型句${r.hedged}本 — ${detail}`;
+}
+
+/** 従来の1行版（「なぜ重要か」固定）。 */
 export function formatWhyReport(r: WhyReport): string {
   if (r.total === 0) return '[Report] なぜ重要か: 項目を検出できず（形式が変わった可能性）';
   const detail = r.items

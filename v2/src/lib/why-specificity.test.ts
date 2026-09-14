@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assessWhy, formatWhyReport } from './why-specificity';
+import { assessWhy, formatWhyReport, assessLabel, formatLabelReport, formatSpecificityReport } from './why-specificity';
 
 // 2026-09-07 の本番の号（backups/backup_2026-09-06.json）から「なぜ重要か」5本を実物のまま。
 // 作り物でなく実物で判定を固定する。
@@ -57,4 +57,42 @@ test('ログ1行には判定と根拠だけを出す（文そのものは出さ�
 test('「なぜ重要か」が無い形式でも落ちない', () => {
   assert.equal(assessWhy('## 🔥 今日のハイライト\n\n### 1. 題\n*   **何が起きたか**: 本文\n').total, 0);
   assert.match(formatWhyReport(assessWhy('')), /検出できず/);
+});
+
+// ── 対照つきの2行出力（2026-09-14 追加）──────────────────────────────
+// 「なぜ重要か」だけを見ると、下がった日に指示の問題か材料の問題か切り分けられない。
+const SAMPLE = `## 🔥 今日のハイライト
+
+### 1. OpenAIがGPT-5.2を公開
+*   **何が起きたか**: OpenAIがGPT-5.2を公開した。コンテキストは1Mトークン。
+*   **なぜ重要か**: 長文処理の前提が変わり、設計の見直しが必要になります。
+
+### 2. 推論基盤の整備が進む
+*   **何が起きたか**: Nvidiaなど各社が推論基盤の整備を進めている。
+*   **なぜ重要か**: 今後の競争力にとって重要になります。
+`;
+
+test('本命と対照の2行を返す', () => {
+  const out = formatSpecificityReport(SAMPLE);
+  const lines = out.split('\n');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /なぜ重要か 2本/);
+  assert.match(lines[1], /何が起きたか（対照） 2本/);
+});
+
+test('対照は具体が多く、本命は一般論を拾う（切り分けができる）', () => {
+  const why = assessLabel(SAMPLE, 'なぜ重要か');
+  const what = assessLabel(SAMPLE, '何が起きたか');
+  assert.equal(why.concrete, 0);   // 固有名も数字も無い
+  // ⚠ 1本しか拾わない。HEDGE は「必要となり」を持つが「必要になり」を持っていない＝実在する穴。
+  //   ただし**今は広げない**。案B（09-14投入）の効果を concrete で前後比較している最中で、
+  //   物差しを途中で変えると比べられなくなる。concrete は HEDGE の影響を受けないので本命は無事。
+  //   比較が済んだら「必要になり」を足し、hedged の基準線44.8%は取り直す → [[prove-it]]
+  assert.equal(why.hedged, 1);     // 「重要になります」だけ拾う
+  assert.equal(what.concrete, 2);  // GPT-5.2 / 1M
+});
+
+test('存在しないラベルは0本として扱う（落ちない）', () => {
+  assert.equal(assessLabel(SAMPLE, '実務への影響').total, 0);
+  assert.match(formatLabelReport('実務への影響', assessLabel(SAMPLE, '実務への影響')), /検出できず/);
 });
