@@ -8,7 +8,7 @@ import { collectedData, reports, claims, benchmarks, adoptionLogs } from '@/db/s
 import { desc, gte, and, lt, eq, count, sql } from 'drizzle-orm';
 import { withRetry } from '@/lib/llm';
 import { CHARS_PER_MINUTE, readableLength } from '@/lib/reading-time';
-import { extractHighlightSection } from '@/lib/digest-highlights';
+import { extractHighlightSection, buildRehashGuard } from '@/lib/digest-highlights';
 import { logError } from '@/lib/logError';
 import { PRIMARY_SOURCE_HOSTS, DIGEST_EXCLUDED_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY, isPrimarySource } from '@/lib/primary-sources';
 import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
@@ -385,7 +385,7 @@ export const REPORT_SYSTEM_PROMPT = `あなたはAI技術動向の専門アナ�
 - **ハイライトの ### 見出しは 1. から 5. まで、5つとも必ず出す。**材料が足りないと感じても、関連の薄い記事を5本目に回さず、収集データの中から最も読む価値のあるものを選んで5本にする
 - **ハイライト5本のうち、[一次情報] が付いた記事を最低2本入れる。**開発元・研究機関が自分で出した発表は、それを報じた記事より優先する。[一次情報] が2本未満しか無い日は、あるだけ入れる
 - **[一次情報] と [報道] を混ぜて1つの項目にしない。**発表そのものと、それを報じた記事の評価・論評は別の出来事として扱う
-- 収集データは前回レポート以降の新着のみ。**前回レポートで既に扱った話題は、新しい進展がある場合だけ「続報」として扱い、単なる繰り返し・焼き直しは禁止**
+- 収集データは前回レポート以降の新着のみ。**直近のレポートで既に扱った見出しの話題は、新しい進展がある場合だけ「続報」として扱い、単なる繰り返し・焼き直しは禁止**
 - **同じ号の中で同じ話を2回書かない。**ハイライトで挙げた出来事を、トレンドやインサイトで言い換えて再掲しない
 - 主観でなく客観的な事実ベースで記述
 - 絵文字・箇条書きを活用`;
@@ -428,14 +428,17 @@ export interface DailyReportResult {
 export async function buildDailyReport(): Promise<DailyReportResult | null> {
   const now = Date.now();
 
-  // 前回のdailyレポート（新着期間の起点＋「繰り返し禁止」の比較対象）
-  const [prevDaily] = await db.select({
+  // 直近のdailyレポート。先頭1件が新着期間の起点で、全件が「焼き直し禁止」の比較対象。
+  // 1号だけでは足りない: 同じ話が 09-09 → 09-12 → 09-13 と3号に出ていた（間が空くと前号比較では捕まらない）。
+  const REHASH_LOOKBACK = 5;
+  const prevDailies = await db.select({
     content: reports.content, createdAt: reports.createdAt, reportDate: reports.reportDate,
   })
     .from(reports)
     .where(and(eq(reports.type, 'daily'), sql`length(${reports.content}) > 0`))
     .orderBy(desc(reports.createdAt))
-    .limit(1);
+    .limit(REHASH_LOOKBACK);
+  const prevDaily = prevDailies[0];
 
   // 新着期間 = 前回daily生成時刻以降。ただし 20〜48時間に収める:
   // - 下限20h: 手動再生成の直後でも直近1日分は対象に残す
@@ -566,10 +569,10 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
     .map(r => `${r.cat}: 今週${r.now}件/先週${r.prev}件${r.ratio >= 2 ? ' 🚀急上昇' : r.ratio >= 1.3 ? ' ↑上昇' : r.ratio <= 0.7 ? ' ↓減少' : ''}`);
   const trendText = trendLines.length > 0 ? '\n\n【カテゴリ別週次トレンド（参考データ）】\n' + trendLines.join('\n') : '';
 
-  // 前回レポート: 「既報の焼き直し禁止」の判定材料として渡す
-  const prevSection = prevDaily?.content
-    ? `\n\n【前回のレポート（${prevDaily.reportDate}・重複回避用）】\n${prevDaily.content.slice(0, 1200)}`
-    : '';
+  // 既報の焼き直し禁止の判定材料。本文を先頭から切るのをやめ、直近数号の**見出しだけ**を渡す。
+  // 旧実装（本文の先頭1,200字）では 401本中169本（42.1%）が最初から見えていなかった＝
+  // 禁止の指示は書いてあるのに、判定材料が届いていなかった（実測の経緯は digest-highlights.ts）。
+  const prevSection = buildRehashGuard(prevDailies);
 
   const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Tokyo' });
 

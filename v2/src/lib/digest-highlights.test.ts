@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHighlights, extractHighlightSection } from './digest-highlights';
+import { parseHighlights, extractHighlightSection, buildRehashGuard } from './digest-highlights';
 
 // 本番 2026-09-10 配信分の抜粋（形はそのまま）。
 const REAL = `AIエンジニア・研究者の皆様へ
@@ -153,4 +153,41 @@ test('出典の [一次情報] / [報道] の別が本文として取り出せ�
   const tiers = hi.map(h => h.points.find(p => p.label === '出典')?.text ?? '');
   assert.equal(tiers.filter(t => t.includes('[一次情報]')).length, 1);
   assert.equal(tiers.filter(t => t.includes('[報道]')).length, 1);
+});
+
+// buildRehashGuard: 既報の焼き直し禁止に渡す材料
+// 旧実装は本文の先頭1,200字を渡していたため、5本目の見出しが上限の外に落ちていた。
+// 実際に 09-12 の5本目が消え、翌09-13 に1本目として返り咲いている（実測）。
+const ed = (date: string, titles: string[]) => ({
+  reportDate: date,
+  content: '## 🔥 今日のハイライト\n\n' + titles.map((t, i) => `### ${i + 1}. ${t}\n- **何が起きたか**: ${'あ'.repeat(300)}\n`).join('\n'),
+});
+
+test('焼き直し防止: 本文が長くても、見出しは1本も落とさない', () => {
+  const titles = ['A社が新モデル', 'B社が買収', 'C社が値下げ', 'D社が提携', 'E社が撤退'];
+  const out = buildRehashGuard([ed('2026-09-12', titles)]);
+  for (const t of titles) assert.ok(out.includes(t), `${t} が渡っていない`);
+});
+
+test('焼き直し防止: 複数号ぶん渡す（前号だけでは間の空いた再掲を捕まえられない）', () => {
+  const out = buildRehashGuard([
+    ed('2026-09-13', ['最新の話']),
+    ed('2026-09-12', ['3日前の話']),
+    ed('2026-09-09', ['5日前の話']),
+  ]);
+  assert.ok(out.includes('最新の話') && out.includes('3日前の話') && out.includes('5日前の話'));
+});
+
+test('焼き直し防止: 字数上限では古い号を丸ごと落とす（新しい号は途中で切らない）', () => {
+  const many = Array.from({ length: 5 }, (_, i) => `見出し${i}が${'長'.repeat(40)}`);
+  // 上限100字に対し新しい号だけで約250字。それでも新しい号は丸ごと残り、古い号は落ちるのが仕様。
+  const out = buildRehashGuard([ed('2026-09-13', many), ed('2026-09-12', ['古い号の話'])], 100);
+  for (const t of many) assert.ok(out.includes(t), `新しい号の ${t} が落ちている`);
+  assert.ok(!out.includes('古い号の話'), '上限を超えているのに古い号が残っている');
+});
+
+test('焼き直し防止: ハイライトが取れない号は飛ばし、全部取れなければ空文字', () => {
+  assert.equal(buildRehashGuard([{ reportDate: '2026-09-13', content: '見出しの無い本文' }]), '');
+  assert.equal(buildRehashGuard([{ reportDate: null, content: null }]), '');
+  assert.equal(buildRehashGuard([]), '');
 });

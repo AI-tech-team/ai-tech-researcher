@@ -87,3 +87,38 @@ export function parseHighlights(markdown: string): Highlight[] {
   }
   return out;
 }
+
+/**
+ * 「既報の焼き直し禁止」をLLMに判定させるための材料を作る。
+ *
+ * ⚠ なぜ見出しだけを渡すか（2026-09-15・backup_2026-09-13 で実測）:
+ *   それまでは前回レポートの**本文を先頭から1,200字**切って渡していた。だが本文は
+ *   **中央値5,690字**あるので、**全83号401本のうち169本（42.1%）が最初から見えていなかった**。
+ *   実害も確認できた: 09-12 の5本目「OpenAIのナビエ・ストークス方程式解決に不正疑惑」は
+ *   1,200字の外側にあり、翌09-13 に「OpenAIの数学ブレークスルーが未発表データ利用で論争に」として
+ *   **1本目に返り咲いた**（同じ話が 09-09 → 09-12 → 09-13 と3号に出ている）。
+ *   見出しだけなら1号あたり約200字＝**全部見えて、しかも字数は減る**。
+ *
+ * ⚠ 直近1号では足りない: 上の例は 09-09 と 09-12 が3日離れており、
+ *   「前の号」しか見ない限り構造的に検出できない。数号ぶん渡す。
+ *
+ * 字数上限に当たったら**古い号から丸ごと落とす**。途中で切ると、そこだけ見出しが欠けて
+ * 「見えていたのに見落とした」のか「そもそも渡していない」のかが後から分けられなくなる。
+ */
+export function buildRehashGuard(
+  editions: { reportDate: string | null; content: string | null }[],
+  maxChars = 1200,
+): string {
+  const blocks: string[] = [];
+  let used = 0;
+  for (const e of editions) {
+    const titles = parseHighlights(e.content ?? '').map(h => h.title).filter(t => t.length > 0);
+    if (titles.length === 0) continue;
+    const block = `${e.reportDate ?? '（日付不明）'}:\n${titles.map(t => `- ${t}`).join('\n')}`;
+    if (used > 0 && used + block.length + 1 > maxChars) break; // 新しい号は必ず丸ごと残す
+    blocks.push(block);
+    used += block.length + 1;
+  }
+  if (blocks.length === 0) return '';
+  return `\n\n【直近のレポートで既に扱った見出し（重複回避用・新しい順）】\n${blocks.join('\n')}`;
+}
