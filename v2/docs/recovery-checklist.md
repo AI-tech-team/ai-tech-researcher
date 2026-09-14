@@ -71,6 +71,9 @@
     （`/topic` にあった `revalidate` は `generateStaticParams` が無く無効だったため撤去済み）
 
 - [ ] **RSSの503が正しく出るか**（㊱で入れたガード）
+  - ✅ 障害側は検証済み（2026-09-15 本番実測）: `/feed.xml` は
+    **HTTP 503 / `Cache-Control: no-store` / 28バイト**。嘘の空フィードは配られていない。
+  - 残りは復旧側だけ:
   - `curl -sD - https://cernoval.com/feed.xml -o /dev/null` で **200 かつ `<item>` が入っている**こと。
   - 復旧直後は `stale-while-revalidate=86400` のせいで**障害中の空フィードが最大24時間残る**。
     `/api/revalidate` では消せない（route handlerのCDNキャッシュ）ので、
@@ -83,20 +86,38 @@
   - 本番DB変更なのでオーナーのGOを得てから `--apply`。
   - 衝突（解いた結果が既存行と重複）が出たら、それは「同じ記事が2行」ある状態。統合はオーナー判断。
 
-- [ ] **サイト側の箇条書き判定を `markdown-lines.ts` に寄せる**（㊵・2026-09-15に意図的に残した）
-  - メール（`mail-markdown.ts`）とRSS（`feed.xml/route.ts`）は共通定義に寄せ済み。
-    残っているのは `src/components/Markdown.tsx:98` の `/^[-*] /` + `line.slice(2)` だけ。
-  - 今やらなかった理由: **UI変更はPlaywrightスクショで実機検証する**決まりで、DB停止中は
-    記事もレポートも描画できず撮れない（[[feedback-visual-verification]]）。
-  - 影響は小さい（配信50件で字下げ箇条書きは6行・全部8月以前の号）。急がない。
-  - やること: `bulletContent(line)` を使う形に直し、`/reports/[id]` を実機で撮って
-    箇条書きが今までどおり出ていることを画像で示す。
+- [x] **サイト側の箇条書き判定を `markdown-lines.ts` に寄せる**（㊵）→ ✅ **既に完了していた**
+  - 2026-09-15 に確認: `src/components/Markdown.tsx` は既に `BULLET_LINE`（119行）と
+    `bulletContent`（124行）を使っている。**同じ日に直したのにこの項目を消し忘れていた**だけ。
+  - ⚠ 教訓: 繰り越し表が古いと、同じ調査を二度やる（実際にこの項目で一度やり直した）。
+    直した項目はその場で消すか ✅ にする。
 
 - [ ] **構造化データの `image` が実機で1200×630を指しているか**（㊷・2026-09-15）
   - `curl -s https://cernoval.com/articles/<実在id> | grep -A2 '"image"'` で
     `/articles/<id>/opengraph-image` と `width: 1200` が出ること。レポート側も同様。
   - Google Search Console のリッチリザルトテストに1本かけて、エラーが無いことを見る。
   - 障害中は記事ページが障害画面になるため確認できない（この項目はそのため残している）。
+
+- [ ] **公開に戻した直後に障害が起きると、sitemap が「もうこの13件しかない」と申告する**（2026-09-15 発見・未修正）
+  - いまは無害: `SITE_NOINDEX = true` のあいだ sitemap は **DBを1つも引かず**固定13URLだけ返す
+    （2026-09-14 の止血・意図どおり）。本番実測でも 200 / 13URL で、これは正しい姿。
+  - 問題は `SITE_NOINDEX = false`（公開）にした後。`sitemap.ts` の3つの取得は
+    `try { … } catch { /* 入口ページのみ */ }` で囲まれているが、**3つの取得関数はどれも内部で
+    catch して `[]` を返す fail-open なので、この catch は一度も走らない**。
+    実際に起きるのは「例外」ではなく「空で返る」で、そのまま固定13URLの sitemap が
+    **`lastmod = 今` つきで 200** で出る＝検索エンジンに「もうこの13件しかありません」と
+    新鮮な判子つきで申告することになる。欠落ではなく積極的な嘘で、約22,000URLが落とされうる。
+  - RSS では既に同じ判断をして 503 を返している（㊱）。**同型の枝が1本だけ直っている状態**。
+  - ⚠ **素直な修正（throw）は試して却下した**（2026-09-15 実測）: `sitemap.ts` は配列を返す規約で
+    ステータスを選べないので throw するしかないが、sitemap はビルド時にプリレンダされるため
+    **`next build` が終了コード1で落ちる**（ローカルで `SITE_NOINDEX=false` + 枠切れDBで実測）。
+    障害中こそ修正をデプロイしたいのに、デプロイ自体ができなくなる＝代償が大きすぎる。
+  - **提案（GOがあれば実装）**: `app/sitemap.ts` を **`app/sitemap.xml/route.ts`（route handler）に
+    移す**。feed.xml と同じ形になり、0件のときに `503 + Retry-After + no-store` を返せる。
+    ビルドは落ちない（feed.xml は現に503を返しながらビルドも本番も通っている）。
+    代償: `MetadataRoute.Sitemap` の型と `generateSitemaps()` を手放し、XMLを手で組む（約50行）。
+  - 急がない理由: 公開前は発火しない。**ただし公開は `SITE_NOINDEX` を false にするだけ**なので、
+    そのとき誰も sitemap を見直さない。公開作業とセットで判断すること。
 
 ## 5. オーナー判断（こちらでは触らない）
 
