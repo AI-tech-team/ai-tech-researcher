@@ -1,7 +1,6 @@
 import { SITE_URL, SITE_NAME, SITE_DESC } from '@/lib/site';
 import { getReportsData } from '@/app/actions';
-import { safeHttpUrl } from '@/lib/safeUrl';
-import { BULLET_LINE, HR_LINE, bulletContent } from '@/lib/markdown-lines';
+import { esc, markdownToFeedHtml, excerpt } from '@/lib/feed-markdown';
 
 // 公開レポート(daily/weekly/monthly)の全文RSS 2.0フィード。メール配信と同じ中身を一本化。
 // 配信ホットパスなのでCDNでサイドキャッシュ（getReportsData自体も60秒キャッシュ）。
@@ -10,97 +9,12 @@ import { BULLET_LINE, HR_LINE, bulletContent } from '@/lib/markdown-lines';
 const TYPE_LABEL: Record<string, string> = { daily: 'デイリーレポート', weekly: '週次レポート', monthly: '月次レポート' };
 const MAX_ITEMS = 50;
 
-// XML/HTMLエスケープ（CDATA外のテキスト＝title等に使う）
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
 
 // CDATAに安全に埋め込む（"]]>" を割ってフィードを壊さない）
 function cdata(s: string): string {
   return `<![CDATA[${s.replace(/]]>/g, ']]&gt;')}]]>`;
 }
 
-// インラインMarkdown → HTML文字列（Markdown.tsx の parseInline と同じトークン規則）。
-// [ID:N] は記事ページへのリンクに、本文テキストは必ずエスケープしてから組み立てる。
-function inlineHtml(text: string): string {
-  const regex = /(\[ID:\d+\]|\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
-  let out = '';
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = regex.exec(text)) !== null) {
-    if (m.index > last) out += esc(text.slice(last, m.index));
-    const t = m[0];
-    const idRef = t.match(/^\[ID:(\d+)\]$/);
-    const link = t.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if (idRef) {
-      out += `<a href="${SITE_URL}/articles/${idRef[1]}">[#${idRef[1]}]</a>`;
-    } else if (link) {
-      const [, label, url] = link;
-      // ⚠ 判定をここに書き写さない（第四条 DRY）。同じ規則が3箇所にコピーされていて、
-      //   safeHttpUrl に入れたエンティティ解除（2026-09-15）がここだけ効かなかった。
-      const href = safeHttpUrl(url);
-      if (href) {
-        out += `<a href="${esc(href)}">${esc(label)}</a>`;
-      } else {
-        out += esc(label);
-      }
-    } else if (t.startsWith('**')) out += `<strong>${esc(t.slice(2, -2))}</strong>`;
-    else if (t.startsWith('*')) out += `<em>${esc(t.slice(1, -1))}</em>`;
-    else if (t.startsWith('`')) out += `<code>${esc(t.slice(1, -1))}</code>`;
-    else out += esc(t);
-    last = m.index + t.length;
-  }
-  if (last < text.length) out += esc(text.slice(last));
-  return out;
-}
-
-// レポートMarkdown → RSS向けの軽量セマンティックHTML断片。
-// メール用 markdownToHtml(api/report/route.ts) は暗色のフルHTML文書なのでフィードには使わない
-// （RSSリーダは白背景でレンダリングするため、インライン暗色スタイルは付けない）。
-function markdownToFeedHtml(md: string): string {
-  const lines = md.split('\n');
-  const out: string[] = [];
-  let list: 'ul' | 'ol' | null = null;
-  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
-  for (const line of lines) {
-    if (line.startsWith('### ')) { closeList(); out.push(`<h3>${inlineHtml(line.slice(4))}</h3>`); }
-    else if (line.startsWith('## ')) { closeList(); out.push(`<h2>${inlineHtml(line.slice(3))}</h2>`); }
-    else if (line.startsWith('# ')) { closeList(); out.push(`<h2>${inlineHtml(line.slice(2))}</h2>`); }
-    else if (BULLET_LINE.test(line)) {
-      // 判定は markdown-lines.ts に集約。`^[-*] ` を書き写していた頃は字下げした入れ子を落としていた。
-      if (list !== 'ul') { closeList(); out.push('<ul>'); list = 'ul'; }
-      out.push(`<li>${inlineHtml(bulletContent(line) ?? '')}</li>`);
-    } else if (/^\d+\. /.test(line)) {
-      if (list !== 'ol') { closeList(); out.push('<ol>'); list = 'ol'; }
-      out.push(`<li>${inlineHtml(line.replace(/^\d+\.\s/, ''))}</li>`);
-    } else if (line.startsWith('> ')) { closeList(); out.push(`<blockquote>${inlineHtml(line.slice(2))}</blockquote>`); }
-    else if (HR_LINE.test(line)) { closeList(); out.push('<hr>'); }
-    else if (!line.trim()) { closeList(); }
-    else { closeList(); out.push(`<p>${inlineHtml(line)}</p>`); }
-  }
-  closeList();
-  return out.join('\n');
-}
-
-// 本文先頭を素テキスト化した抜粋（<description>用）
-function excerpt(md: string, max = 180): string {
-  const text = md
-    .replace(/^#{1,6}\s+/gm, '')
-    // ⚠ 水平線を先に落とす。`^[-*]\s+` は記号の後に空白を要求するので `---` が生き残り、
-    //   RSSリーダの一覧に出る <description> に素の「---」が混ざっていた
-    //   （2026-09-15 実測: 実際に配信される50件のうち **23件＝46%**）。
-    .replace(new RegExp(HR_LINE.source, 'gm'), '')
-    .replace(/^[-*]\s+/gm, '')
-    .replace(/^\d+\.\s+/gm, '')
-    .replace(/\[ID:\d+\]/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[*`>]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return text.length > max ? text.slice(0, max) + '…' : text;
-}
 
 // createdAt('YYYY-MM-DD HH:MM:SS'・UTC・空白区切り)→ RFC-822。無ければreportDate(JST日付)。
 function rfc822(createdAt: string | null, reportDate: string): string {
@@ -176,3 +90,4 @@ ${items}
     },
   });
 }
+
