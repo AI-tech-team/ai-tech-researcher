@@ -1683,3 +1683,33 @@ HTTP 500 を返す（`X-Matched-Path: /500`・`X-Vercel-Cache: MISS` で再現�
 
 **オーナー判断待ち（こちらでは触らない）**: `alerts`(1,722行) と `research_questions`(326行) の扱い。
 テーブル削除は本番への破壊操作、`research_questions` は将来のリサーチ機能の受け皿として残す選択もある。
+
+## ㉖ フィードの降格を「片道切符」でなくする（2026-09-15）
+
+**構造**: `monitorFeedHealth` は「21日そのフィードから収量0」で active → low-priority に落とす。
+ところが低優先に落ちると、`collectFromRSS` が `status='active'` しか見ないので**収量は永遠に0**になり、
+`runEvolve` は rss型を `continue` で飛ばし、`monitorFeedHealth` 自身も active しか見ない。
+**＝一度落ちたRSSには復帰経路が1本も無い**（シードリスト掲載のものだけが `[Init]` で復帰する）。
+
+**実測（降格済み14本を実際に巡回）**: **5本は今も記事を出している**。
+`pc.watch.impress.co.jp`(30日20件) `trullion.com`(10件) `openlm.ai`(3件) `libertas.software`(2件)
+`deepmind.com/blog/feed/`(9件)。残り9本は本当に死んでいた（最新46〜1369日前・benzingaは404）。
+
+**⚠ 自分の見立ての訂正**: 一度「DeepMindという一次情報の本丸が4か月欠けている」と書いたが**誤り**。
+`deepmind.com/blog/feed/` は古いURLで、`deepmind.google/blog/rss.xml`(score 7) と
+`blog.google/technology/google-deepmind/rss/`(score 9) が両方 active・09-13 にヒットしている。
+DeepMindは欠けていない。
+
+**決定①（直した）**: 降格する前にフィード自身を見る（`feedAliveness`）。
+直近30日に記事があれば**降格しない**——収量0の原因がこちら側（robots拒否・取得失敗・パース不能）
+だった場合に、自分の不具合で収集源を1本失うのを止める。このコードのコメント自身が
+「CDATAバグのような気づかず収量0」を想定していた。判定できないときも降格しない。
+失敗の非対称: 降格は静かで取り返しがつかない／降格しそこねは巡回が1本増えるだけで見える。
+
+**決定②（直さない）**: 既に降格済みの14本を機械的に復帰させることは**しない**。
+生きている5本の多くは一般PCニュースや会計ソフトのブログで、戻すと流入だけ増えて
+処理の上限を食う（[[pattern-throughput-starvation]]）。中身を見る判断なのでオーナーに委ねる。
+代わりに `[FeedHealth] 降格中 n本` を毎回出して、存在が見えないまま放置される状態を終わらせた。
+
+**あわせて確認できた健全な点**: active 63本は1本(venturebeat・10日)を除き全て直近ヒットあり。
+candidate 40本は最古が08-31＝14日窓の正常な回転で、滞留ではない。

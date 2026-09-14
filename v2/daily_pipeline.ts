@@ -3403,6 +3403,25 @@ async function runDeepExtraction(maxArticles = 300): Promise<void> {
 
 // ── v4: フィード自己監視（沈黙した自動発見フィードを降格し巡回/評価の無駄を防ぐ）──
 // CDATAバグのような「気づかず収量0」を防ぐ安全網。必須/高価値(score>3)は対象外。
+/**
+ * 降格してよいかをフィード自身に確かめる。収量0の原因はフィードの沈黙とは限らないため。
+ *
+ * 返り値: 'silent'=本当に更新が止まっている / 'dead'=取得できない（404等）/
+ *         'alive'=直近30日に記事がある＝収量0はこちら側の問題 / 'unknown'=判定できない
+ */
+async function feedAliveness(url: string): Promise<'silent' | 'dead' | 'alive' | 'unknown'> {
+  try {
+    const res = await politeFetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res) return 'dead';          // robots.txt で許可されていない＝そもそも巡回できない
+    if (!res.ok) return 'dead';       // 404/410 等
+    const items = parseFeedItems(await res.text());
+    if (items.length === 0) return 'unknown'; // パースできないのは我々側の可能性がある
+    return filterByDate(items, Date.now() - 30 * 86_400_000).length > 0 ? 'alive' : 'silent';
+  } catch {
+    return 'unknown';                 // 一過性の失敗で収集源を落とさない
+  }
+}
+
 async function monitorFeedHealth(): Promise<void> {
   const now = Date.now();
   const cutoff = sqlTs(new Date(now - 21 * 24 * 60 * 60 * 1000));
@@ -3423,11 +3442,36 @@ async function monitorFeedHealth(): Promise<void> {
     if (now - created < 21 * 24 * 60 * 60 * 1000) continue; // 登録21日未満は猶予
     const last = lastMap.get(f.id);
     if (last && last >= cutoff) continue; // 直近21日に収量あり
+
+    // ⚠ 収量0＝フィードの沈黙、とは限らない。robots拒否・取得失敗・パースの不具合でも0になる。
+    //   （このコードのコメント自身が「CDATAバグのような気づかず収量0」を想定している）
+    //   ここで降格すると **こちら側の不具合で収集源を1本失い、しかも二度と戻らない**:
+    //   low-priority は collectFromRSS の対象外（status='active' のみ）なので収量は永遠に0になり、
+    //   runEvolve は rss型を continue で飛ばし、この関数自身も active しか見ない＝復帰経路がゼロ。
+    //   実測（2026-09-15・backup_2026-09-13 の14本を実際に巡回）: **5本は今も記事を出している**。
+    //   降格は「静かで取り返しがつかない」側なので、落とす前にフィード自身に確かめる。
+    const aliveness = await feedAliveness(f.value);
+    if (aliveness === 'alive') {
+      console.warn(`[FeedHealth] ⚠ 降格しない: ${f.value} は直近30日に記事を出している＝収量0はこちら側の問題`);
+      continue;
+    }
+    if (aliveness === 'unknown') {
+      console.warn(`[FeedHealth] 判定できないので降格しない: ${f.value}`);
+      continue;
+    }
     await db.update(schema.sources).set({ status: 'low-priority' }).where(eq(schema.sources.id, f.id));
     demoted++;
     console.log(`[FeedHealth] 沈黙フィードを降格: ${f.value}`);
   }
   if (demoted > 0) console.log(`[FeedHealth] ${demoted}件降格(自動発見・21日収量0)`);
+
+  // 既に降格済みのフィードには自動の復帰経路が無い（上と同じ理由）。黙って外れたままだったので
+  // 件数だけ毎回出す。実測では14本中5本が今も記事を出していたが、多くは一般PCニュースや
+  // 会計ソフトのブログで、機械的に戻すと流入だけ増えて処理の上限を食う（[[pattern-throughput-starvation]]）。
+  // どれを戻すかは中身を見る判断なのでオーナーに委ねる。
+  const dormant = await db.select({ v: schema.sources.value }).from(schema.sources)
+    .where(and(eq(schema.sources.status, 'low-priority'), eq(schema.sources.type, 'rss' as any)));
+  if (dormant.length > 0) console.log(`[FeedHealth] 降格中 ${dormant.length}本（自動復帰はしない・戻すかはオーナー判断）`);
 }
 
 // ── v3.2: 既存データのクリーンアップ（断片関係削除・無効ベンチ削除・ベンチ名正規化）──
