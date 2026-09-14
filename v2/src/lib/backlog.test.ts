@@ -46,9 +46,12 @@ test('実測値（60日の最大）でどう出るか', () => {
   assert.match(formatBacklog([{ name: 'TOP_N', got: 53, cap: 40 }]), /⚠上限に到達/);
 });
 
-// ── 「決めたのに入っていない」を機械で防ぐ ──
-// この関数自体が、記録には残っていたのに**リポジトリのどこにも無かった**ものなので、
-// 今度は接続されていること自体をテストで固定する。grep -c で足りる検査は人に任せない。
+// ── 「作ったのに繋いでいない」を機械で防ぐ ──
+// ❌ ここには「この関数は記録に残っていたのにリポジトリのどこにも無かった」と書いていたが、
+//    **誤りだった**（2026-09-15 訂正）。同名の `reportBacklog()` は `v2/daily_pipeline.ts:2742` に
+//    実在し5箇所から呼ばれている。`src/` と `scripts/` しか grep せず、src配下でもscripts配下でも
+//    ない `v2/daily_pipeline.ts` を範囲から外していた＝**探し方の誤り**。→ src/lib/backlog.ts の訂正
+// それでも接続をテストで固定する意味はある（新しく足したこちらは本当に1箇所からしか呼ばれない）。
 test('日次パイプラインから実際に呼ばれている', () => {
   const src = readFileSync(new URL('./daily-report.ts', import.meta.url), 'utf-8');
   assert.ok(/formatBacklog\(/.test(src), 'daily-report.ts が formatBacklog() を呼んでいない');
