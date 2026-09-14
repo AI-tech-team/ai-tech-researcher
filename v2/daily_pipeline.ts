@@ -2227,6 +2227,9 @@ async function runBatchSubmit(
     const slice = targets.slice(i, i + chunkSize);
     const src = slice.map(a => ({
       contents: [{ role: 'user', parts: [{ text: buildExtractionPrompt(a) }] }],
+      // 返却を添字でなく**このidで**対応づけるための鍵。InlinedRequest.metadata は
+      // InlinedResponse.metadata としてそのまま返る（@google/genai の型で確認）。
+      metadata: { articleId: String(a.id) },
       config: { responseMimeType: 'application/json', responseSchema: EXTRACTION_RESPONSE_SCHEMA },
     }));
     const job: any = await genai.batches.create({
@@ -2310,12 +2313,34 @@ async function runBatchFetch() {
     const artMap = new Map(arts.map(a => [a.id, a]));
 
     const responses: any[] = job?.dest?.inlinedResponses ?? [];
+    // ⚠ 位置で突き合わせない（[[pattern-positional-pairing]]）。投入時に metadata.articleId を
+    //   持たせてあるので、**返ってきた側のid**で対応づける。1件でも欠落や並べ替えが起きると、
+    //   記事Aから抽出した知識を記事Bに `replace: true` で書き込む＝記事Bの既存の知識を消す。
+    //   知識グラフは公開面（関係・ベンチ・主張）に直結するので、ずれは静かに嘘になる。
+    //   metadata が1件も返らない旧ジョブのときだけ、件数一致を条件に添字へ退避する。
+    const keyed = responses.filter(r => r?.metadata?.articleId !== undefined);
+    const submitted = new Set(j.articleIds);
+    const byId = new Map<number, any>();
+    for (const r of keyed) {
+      const id = Number(r.metadata.articleId);
+      if (!Number.isFinite(id) || !submitted.has(id)) continue;
+      if (byId.has(id)) { byId.set(id, null); continue; } // 同じidが2回来たら両方捨てる（どちらが本物か決められない）
+      byId.set(id, r);
+    }
+    const useIndex = keyed.length === 0;
+    if (useIndex && responses.length !== j.articleIds.length) {
+      console.warn(`[Batch] ${j.name} 取り込み中止: 応答${responses.length}件 ≠ 投入${j.articleIds.length}件。対応づけの手がかりが無い`);
+      continue;
+    }
+    if (useIndex) console.warn(`[Batch] ${j.name}: metadataの無い旧ジョブ。件数一致(${responses.length}件)だけを根拠に添字で対応づける`);
+    else if (keyed.length !== responses.length) console.warn(`[Batch] ${j.name}: ${responses.length - keyed.length}件がmetadataを持たず破棄`);
     for (let i = 0; i < j.articleIds.length; i++) {
       const articleId = j.articleIds[i];
       const art = artMap.get(articleId);
       if (!art) continue;
       if ((art.ver ?? 0) >= EXTRACTION_VERSION) continue; // 既に取り込み済み（再実行の冪等性）
-      const resp = responses[i];
+      const resp = useIndex ? responses[i] : byId.get(articleId);
+      if (!resp) { failed++; continue; }
       if (resp?.error) { failed++; continue; }
       const text = batchResponseText(resp);
       if (!text) { failed++; continue; }
