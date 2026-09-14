@@ -815,14 +815,30 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
       // （すぐ下の claims/benchmarks では同じ罠を直したのに、この2本だけ直っていなかった）。
       // しかも重複除去は表示側(relatedNames)なので、20枠が同じ相手の繰り返しで埋まると
       // 「関連トピック」が数件しか出ない。→ SQLで先に畳み、新しい関係から取る。
-      db.select({ type: relations.relationType, other: relations.objectName })
-        .from(relations).where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`))
+      // ⚠ 相手の名前は relations の**自由文字列**で、そのまま /topic/<名前> のリンクになる。
+      // middleware は entities に無い名前を404にするので、エンティティ化されていない相手は
+      // **押すと404になるリンク**として並んでいた。2026-09-15 実測: 関連に出うる938種のうち
+      // **50種(5.3%)が404**、**658種(70.1%)が公開に耐えない名前**＝薄いページ行きで、
+      // 無事なのは230種(24.5%)だけだった（`サムスン` `川崎重工業` `F#` `本書` が404側）。
+      // → entities と内部結合して「存在する相手」だけにし、mention数も持ち帰って公開判定に使う。
+      // 結合は **名前でなく entity_id** で行う。LOWER(名前)=LOWER(名前) は索引が効かず、
+      // 関係1行ごとに entities を走査しかねない（読み取り枠が切れている最中に増やすのは論外）。
+      // id で等価になることは実測で確認済み: 非stale 888件のうち、
+      // 「idありだが名前がentitiesに無い」0件 / 「idはnullだが名前はentitiesに在る」0件。
+      // 上限は 24→60 に広げる。先に24で切ると枠が公開に耐えない名前で埋まり、
+      // 絞ったあとに数件しか残らない（[[pattern-throughput-starvation]]: 広く取る→絞るの順）。
+      db.select({ type: relations.relationType, other: relations.objectName, mentions: entities.mentionCount })
+        .from(relations)
+        .innerJoin(entities, eq(relations.objectEntityId, entities.id))
+        .where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`))
         .groupBy(relations.relationType, relations.objectName)
-        .orderBy(desc(sql`MAX(${relations.id})`)).limit(24),
-      db.select({ type: relations.relationType, other: relations.subjectName })
-        .from(relations).where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`))
+        .orderBy(desc(sql`MAX(${relations.id})`)).limit(60),
+      db.select({ type: relations.relationType, other: relations.subjectName, mentions: entities.mentionCount })
+        .from(relations)
+        .innerJoin(entities, eq(relations.subjectEntityId, entities.id))
+        .where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`))
         .groupBy(relations.relationType, relations.subjectName)
-        .orderBy(desc(sql`MAX(${relations.id})`)).limit(24),
+        .orderBy(desc(sql`MAX(${relations.id})`)).limit(60),
       db.select({ predicate: claims.predicate, value: claims.value })
         .from(claims).where(and(claimMatch, eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(30),
       // ⚠ この2本の LIMIT 40 には **ORDER BY を必ず付ける**。付けないとSQLiteは rowid 順＝
@@ -868,8 +884,11 @@ export async function getEntityKnowledgePage(name: string): Promise<EntityPage |
       mentionCount,
       benchmarks: bench.map(b => ({ benchmark: b.benchmark, score: b.score, unit: b.unit, date: b.date })),
       relations: [
-        ...relsOut.map(r => ({ dir: 'out' as const, type: r.type, other: r.other })),
-        ...relsIn.map(r => ({ dir: 'in' as const, type: r.type, other: r.other })),
+        // 公開に耐えない相手（一般名詞・文・言及1回）はリンクにしない。押しても薄いページしか出ない。
+        ...relsOut.filter(r => isPublishableEntity(r.other ?? '', Number(r.mentions ?? 0)))
+          .map(r => ({ dir: 'out' as const, type: r.type, other: r.other })),
+        ...relsIn.filter(r => isPublishableEntity(r.other ?? '', Number(r.mentions ?? 0)))
+          .map(r => ({ dir: 'in' as const, type: r.type, other: r.other })),
       ],
       claims: clm.map(c => ({ predicate: c.predicate, value: c.value })),
       articles,
