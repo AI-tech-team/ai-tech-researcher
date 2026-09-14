@@ -536,6 +536,11 @@ ${batchText}${INDEX_RULE}`,
     }));
     // ⚠ forEach の i（返り値の並び）ではなく ev.index（プロンプトで振った番号）で引く。
     //   位置対応だと別記事の要約が付く（ArticleEvalSchema のコメント参照）。
+    //
+    // ⚠ この1行が HN だけ抜けていた（2026-09-14 に発見）。他6経路には入っているので、
+    //   index が欠けて**黙って位置対応に落ちた**ときに気づけるのは6/7経路だけだった＝
+    //   仕組みがあること自体が確認を省く理由になっていた（[[pattern-wired-but-never-called]]）。
+    console.log(`  [HN] 対応づけ: ${describeAlignment(hnObject.items, withBody.length)}`);
     withBody.forEach((_, i) => {
       const ev = evalAt(hnObject.items, i);
       const key = withBody[i]?.item.url;
