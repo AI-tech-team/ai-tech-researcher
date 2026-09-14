@@ -23,6 +23,7 @@ import { formatMonthDayJst } from '@/lib/format-date';
 import { CONTACT_EMAIL, FEEDBACK_FORM_ACTION, SITE_TAGLINE } from '@/lib/site';
 import { useScrollLock } from '@/lib/useScrollLock';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
+import { displayTags } from '@/lib/display-tags';
 
 
 
@@ -103,7 +104,7 @@ function PubCard({ item }: { item: CollectedItem }) {
         return <p className={s.riverNote}>{r.text}</p>;
       })()}
       <div className={s.riverFoot}>
-        {item.tags?.slice(0, 3).map(t => <span key={t}>#{t}</span>)}
+        {displayTags(item.tags, 3).map(t => <span key={t}>#{t}</span>)}
         {item.sourceValue && <span className={s.riverSource}>{item.sourceValue}</span>}
       </div>
     </Link>

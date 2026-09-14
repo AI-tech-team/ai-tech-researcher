@@ -12,6 +12,7 @@ import { SITE_URL } from '@/lib/site';
 import { CATEGORY_COLORS } from '@/lib/category-colors';
 import { ObservedFacts } from '@/components/public/ObservedFacts';
 import s from '@/styles/brand.module.css';
+import { displayTags } from '@/lib/display-tags';
 
 // 記事本文の表示部。モーダル(ArticleDetailModal)と全画面ページ(/articles/[id])の両方で共用する。
 // 状態(fav/rl/read)とトグル操作は親が供給する（モーダルは楽観patch、ページはServer Action）。
@@ -127,9 +128,9 @@ export function ArticleDetailContent({
       {/* 抽出本文(rawContent)は著作権上、公開UIでは一切表示しない(第三条・オーナーにも出さない)。
           本文は内部の情報解析専用。ユーザー向けは要約＋AI要点＋元記事リンクに限定する。 */}
 
-      {article.tags && article.tags.length > 0 && (
+      {displayTags(article.tags, 6).length > 0 && (
         <div className={s.artTags}>
-          {article.tags.slice(0, 6).map(t => (
+          {displayTags(article.tags, 6).map(t => (
             <Link key={t} href={`/tag/${encodeURIComponent(t)}`} scroll={false}>#{t}</Link>
           ))}
         </div>
