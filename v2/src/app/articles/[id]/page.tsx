@@ -62,6 +62,8 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
   // 0件は「無い」とは限らない。DBが落ちていれば実在する記事でも null が返る。
   // ここで notFound() を投げると、revalidate=3600 のせいで**復旧後も最大1時間**
   // 「見つかりません」を配り続ける。→ src/components/OutageNotice.tsx
+  // ⚠ ただし OutageNotice も同じようにキャッシュされる（2026-09-15実測・Ageが伸びる）。
+  //   直っているのは文面だけで、1時間の汚染そのものは残っている。
   if (!article) {
     if (!(await dbUp())) return <OutageNotice what="記事" />;
     notFound();

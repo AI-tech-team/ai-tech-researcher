@@ -105,6 +105,27 @@ export async function GET() {
   // RSSは <content:encoded> に全文を載せるため contentChars=0（全文）で取得
   const reports = (await getReportsData(MAX_ITEMS, 0)).slice(0, MAX_ITEMS);
 
+  // ⚠ 0件を 200 で返さない（2026-09-15・本番の読み取り枠切れ中に実測）。
+  //   getReportsData は fail-open で [] を返すので、障害中でも **整形式で中身が空のRSS** が
+  //   200 で出ていた（実測696バイト・<item>ゼロ・X-Vercel-Cache: HIT）。
+  //   しかも下の lastBuildDate は「今」を刻むので、**空のフィードに新鮮だという判子を押している**。
+  //   これは欠落ではなく積極的な嘘で、購読者には「Cernoval は何も出していない」と読める。
+  //   さらにヘッダが s-maxage=1800 + stale-while-revalidate=86400 なので、
+  //   **障害中のたった1回の取得が、復旧後も最大24時間そのまま配られ続ける**。
+  //   画面と違って人間の目に触れないぶん、404よりたちが悪い（サイレントな消失）。
+  //   公開レポートは313本あり 0件になる正常系は存在しないので、0件＝こちら側の異常と断定してよい。
+  //   503 ならRSSリーダは手持ちを保持して後で取り直す＝こちらが望む挙動そのもの。
+  if (reports.length === 0) {
+    return new Response('feed temporarily unavailable', {
+      status: 503,
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Retry-After': '1800',
+      },
+    });
+  }
+
   const items = reports.map(r => {
     const label = TYPE_LABEL[r.type] ?? 'レポート';
     const title = `${label} ${r.reportDate}`;
