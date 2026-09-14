@@ -1936,7 +1936,7 @@ async function ingestKnowledge(
   // ── benchmarks（時系列なので全件保存。スペック等のノイズは除外）──
   for (const b of parsed.benchmarks) {
     if (!Number.isFinite(b.score)) continue;
-    if (!isValidBenchmarkName(b.benchmark)) continue;       // ハードスペック/価格/業績/作業量等を除外
+    if (!isValidBenchmarkName(b.benchmark, b.entity)) continue; // スペック/価格/業績/作業量/日本語の説明語/自己参照を除外
     if (!isValidBenchmarkUnit(b.unit ?? null)) continue;     // `52 x` `1.5 times` 等の相対倍率は比較不能
     if (!looksLikeEntity(b.entity)) continue;               // エンティティが文の断片なら除外
     const canon = canonicalBenchmarkName(b.benchmark);      // 表記ゆれを正規化
@@ -3509,11 +3509,11 @@ async function runDataCleanup(): Promise<void> {
 
   // 2. ベンチマーク: 無効（スペック等）を削除し、残りの名称を正規化＋スコアを正規化(D・遡及)
   const benches = await db.select({
-    id: schema.benchmarks.id, name: schema.benchmarks.benchmarkName,
+    id: schema.benchmarks.id, name: schema.benchmarks.benchmarkName, entityName: schema.benchmarks.entityName,
     score: schema.benchmarks.score, unit: schema.benchmarks.unit,
   }).from(schema.benchmarks);
   const badBench = benches
-    .filter(b => !isValidBenchmarkName(b.name) || !isValidBenchmarkUnit(b.unit ?? null))
+    .filter(b => !isValidBenchmarkName(b.name, b.entityName) || !isValidBenchmarkUnit(b.unit ?? null))
     .map(b => b.id);
   let benchDel = 0;
   for (let i = 0; i < badBench.length; i += 100) {
@@ -3522,7 +3522,7 @@ async function runDataCleanup(): Promise<void> {
   }
   let benchNorm = 0, scoreNorm = 0, scoreDel = 0;
   for (const b of benches) {
-    if (!isValidBenchmarkName(b.name) || !isValidBenchmarkUnit(b.unit ?? null)) continue;
+    if (!isValidBenchmarkName(b.name, b.entityName) || !isValidBenchmarkUnit(b.unit ?? null)) continue;
     const canon = canonicalBenchmarkName(b.name);
     // スコア正規化(D): 再抽出せず既存行を直接補正。異常値は削除。
     const norm = normalizeBenchmarkScore(canon, b.score, b.unit ?? null);

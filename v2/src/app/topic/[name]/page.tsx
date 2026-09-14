@@ -51,10 +51,10 @@ function relatedNames(rels: { other: string }[], self: string, limit = 24): stri
 const BENCH_SHOWN = 12;
 const CLAIMS_SHOWN = 8;
 
-function visibleBenchmarks<T extends { benchmark: string; unit: string | null }>(items: T[]): T[] {
+function visibleBenchmarks<T extends { benchmark: string; unit: string | null }>(items: T[], entityName?: string): T[] {
   const seen = new Set<string>();
   return items.filter((b) => {
-    if (!isValidBenchmarkName(b.benchmark) || !isValidBenchmarkUnit(b.unit)) return false;
+    if (!isValidBenchmarkName(b.benchmark, entityName) || !isValidBenchmarkUnit(b.unit)) return false;
     const k = canonicalBenchmarkName(b.benchmark).normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
     if (!k || seen.has(k)) return false;
     seen.add(k);
@@ -72,7 +72,7 @@ const getTopic = cache((name: string) => getEntityKnowledgePage(name));
 
 function isEmpty(p: Awaited<ReturnType<typeof getTopic>>): boolean {
   if (!p) return true;
-  return visibleBenchmarks(p.benchmarks).length === 0 && p.relations.length === 0
+  return visibleBenchmarks(p.benchmarks, p.name).length === 0 && p.relations.length === 0
     && visibleClaims(p).length === 0 && p.articles.length === 0;
 }
 
@@ -177,10 +177,10 @@ export default async function TopicPage({ params }: { params: Promise<{ name: st
           <p className="text-sm text-slate-400 leading-relaxed mt-6">このトピックの詳細情報はまだありません。{SITE_NAME} が新しいレポートを集めるにつれて蓄積されます。</p>
         ) : (
           <div className="grid grid-cols-1 gap-3 mt-6">
-            {visibleBenchmarks(page.benchmarks).length > 0 && (
+            {visibleBenchmarks(page.benchmarks, page.name).length > 0 && (
               <Section icon={<Trophy size={13} />} title="ベンチマーク" tone="text-amber-400">
                 <div className="flex flex-col gap-1.5">
-                  {visibleBenchmarks(page.benchmarks).map((b, i) => (
+                  {visibleBenchmarks(page.benchmarks, page.name).map((b, i) => (
                     <div key={i} className="flex items-center gap-2 text-[13px]">
                       <span className="text-slate-300 truncate flex-1">{b.benchmark}</span>
                       <span className="font-mono text-amber-300">{b.score}{b.unit ?? ''}</span>

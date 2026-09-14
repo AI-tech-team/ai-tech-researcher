@@ -148,9 +148,29 @@ const BENCH_NOT_SCORE_RE = new RegExp([
 // 日本語の汎用語がベンチ名になっているもの（実測: `コーディング能力` `推論速度` `AIベンチマーク` `GPUカーネル最適化`）
 const BENCH_GENERIC_JA_RE = /(能力|速度|効率|最適化|品質|性能|ベンチマーク)$/;
 
-export function isValidBenchmarkName(name: string): boolean {
+/** ベンチ名とエンティティ名を突き合わせるための正規化（空白・記号・大小文字の差を消す）。 */
+function benchKey(s: string): string {
+  return (s ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9ぁ-んァ-ヶー一-龯]/g, '');
+}
+
+/**
+ * ベンチマーク名として成立しているか。
+ * @param entityName 分かるなら渡す。名前が一致する＝自己参照の事故を弾くために使う。
+ */
+export function isValidBenchmarkName(name: string, entityName?: string | null): boolean {
   const t = (name ?? '').trim();
   if (!t || t.length < 2 || t.length > 50) return false;
+  // ラテン文字を1文字も含まない名前はベンチマークではない。
+  // 実測（2026-09-15・このゲートを通過していた383件のうち**53件**）:
+  //   `四タスク平均評価者` `事例`(=150%) `サイズ` `命令追従` `質問応答` `平均所得税率`
+  // どれも記事に出てきた説明語であってベンチ名ではない。**公開面に数値として出ていた**。
+  // 日本語圏の実在ベンチもラテン表記なので誤爆しない（JGLUE / JMMLU / JCommonsenseQA）。
+  // ラテン文字が混ざるだけの名前（`Hugging Face月間ダウンロード数`）はここでは触らない＝別の問題。
+  if (!/[A-Za-z]/.test(t)) return false;
+  // エンティティ名とベンチ名が同じ＝抽出の事故。実測3件:
+  //   `MMBench2 / MMBench2 = 427hours`（時間はスコアではない）
+  //   `Claude Opus / Claude Opus = 4.6`（版番号をスコアとして保存している）
+  if (entityName && benchKey(entityName) === benchKey(t)) return false;
   if (BENCH_SPEC_RE.test(t)) return false;
   if (BENCH_NOT_SCORE_RE.test(t)) return false;
   if (BENCH_GENERIC_JA_RE.test(t)) return false;

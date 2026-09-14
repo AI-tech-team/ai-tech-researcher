@@ -140,3 +140,23 @@ test('isValidClaim: 正当なクレームは落とさない', () => {
   assert.equal(isValidClaim('Nvidia', 'CEO', 'Jensen Huang'), true);
   assert.equal(isValidClaim('TSMC', 'CoWoS-L先端パッケージングの供給能力の予約状況', '2026年末まで完全に予約済み'), true);
 });
+
+// 2026-09-15: backup_2026-09-13 で、表示側ゲートを通過していた383件の中身を全部読んで見つけた形。
+test('isValidBenchmarkName: ラテン文字が無い名前はベンチではない（実測53件）', () => {
+  for (const n of ['四タスク平均評価者', '事例', 'サイズ', '命令追従', '質問応答', '平均所得税率', '推論タスク']) {
+    assert.equal(isValidBenchmarkName(n), false, `${n} はベンチ名ではない`);
+  }
+});
+
+test('isValidBenchmarkName: 実在のベンチは落とさない', () => {
+  for (const n of ['MMLU', 'SWE-bench', 'GPQA', 'ARC-AGI', 'JGLUE', 'JMMLU', 'Terminal-Bench 2.1', 'Chatbot Arena (Elo)']) {
+    assert.equal(isValidBenchmarkName(n), true, `${n} を落としてはいけない`);
+  }
+});
+
+test('isValidBenchmarkName: エンティティ名と同じなら自己参照の事故（実測3件）', () => {
+  assert.equal(isValidBenchmarkName('MMBench2', 'MMBench2'), false);
+  assert.equal(isValidBenchmarkName('Claude Opus', 'Claude Opus'), false);
+  assert.equal(isValidBenchmarkName('MMBench2'), true);   // 従来の呼び方は挙動を変えない
+  assert.equal(isValidBenchmarkName('MMLU', 'Claude Opus 5'), true); // 別物なら落とさない
+});
