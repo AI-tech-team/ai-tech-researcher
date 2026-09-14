@@ -62,6 +62,11 @@ function visibleBenchmarks<T extends { benchmark: string; unit: string | null }>
   }).slice(0, BENCH_SHOWN);
 }
 
+// このページだけ再検証の指定が無く、1リクエスト＝DB 6クエリ（関連24/ベンチ40/主張30ほか）を
+// 毎回そのまま実行していた。兄弟ページ（/articles/[id] も /reports/[id] も 3600）に合わせる。
+// 2026-09-14 に本番 Turso が読み取り上限で BLOCKED になった件の、読み取り量を減らす側の是正。
+export const revalidate = 3600;
+
 // getEntityKnowledgePage は generateMetadata と本体で2回呼ばれるため、リクエスト内でキャッシュ（6クエリの二重実行を防ぐ）
 const getTopic = cache((name: string) => getEntityKnowledgePage(name));
 
