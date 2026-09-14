@@ -67,15 +67,25 @@ function getClient() {
   return _client;
 }
 
-/** 存在すれば true。判定できない（DB未設定・エラー）場合は true を返して通す＝fail-open。 */
-async function exists(kind: 'articles' | 'reports' | 'topic', value: string): Promise<boolean> {
+/**
+ * 'yes' = 実在 / 'no' = 実在しない / 'unknown' = DBに聞けなかった。
+ *
+ * ⚠ 以前はDBエラーを握り潰して true（fail-open）にしていた。その結果リクエストは
+ *   `/articles/[id]` まで進み、ページが障害画面を return し、それが **ISRに格納**されていた。
+ *   「聞けなかった」を「在る」と言い換えていたのが汚染の入口だったので、3値にして呼び側に返す。
+ *   → src/app/outage/page.tsx に実測の経緯
+ */
+type Presence = 'yes' | 'no' | 'unknown';
+
+async function exists(kind: 'articles' | 'reports' | 'topic', value: string): Promise<Presence> {
   const cache = KNOWN[kind];
-  if (cache.has(value)) return true;
-  if (impossibleId(kind, value)) return false; // DBを引かずに弾く
+  if (cache.has(value)) return 'yes';
+  if (impossibleId(kind, value)) return 'no'; // DBを引かずに弾く
   const key = `${kind}:${value}`;
-  if (missingHit(key)) return false;
+  if (missingHit(key)) return 'no';
   const c = getClient();
-  if (!c) return true;
+  // DB未設定はこちらの設定漏れ。障害画面を出すと全ページが潰れるので、従来どおり通す。
+  if (!c) return 'yes';
   try {
     // SQLは必ずプレースホルダ。テーブル名は下のリテラル対応表からしか来ない（文字列連結を作らない）。
     const q = kind === 'articles'
@@ -91,10 +101,10 @@ async function exists(kind: 'articles' | 'reports' | 'topic', value: string): Pr
     } else {
       missingRemember(key);
     }
-    return ok;
+    return ok ? 'yes' : 'no';
   } catch {
-    // 一時的なDB障害で全記事を404にしてしまうのは退化。表示側の fail-open と同じ方針で通す。
-    return true;
+    // 一時的なDB障害で全記事を404にしてしまうのは退化。「無い」とは言わない。
+    return 'unknown';
   }
 }
 
@@ -107,6 +117,18 @@ function toNotFound(req: NextRequest) {
   const url = req.nextUrl.clone();
   url.pathname = '/404-not-found';
   url.search = '';
+  return NextResponse.rewrite(url);
+}
+
+/**
+ * DBに聞けなかったときの逃がし先。**ISRルートに入る前に**専用の動的ルートへ書き換える。
+ * ここを通さずページまで進ませると、障害画面が `/articles/[id]` のISRキャッシュに焼き付き、
+ * 復旧後も最大1時間配られ続ける（2026-09-15 実測）。→ src/app/outage/page.tsx
+ */
+function toOutage(req: NextRequest, kind: 'articles' | 'reports' | 'topic') {
+  const url = req.nextUrl.clone();
+  url.pathname = '/outage';
+  url.search = `?k=${kind}`;
   return NextResponse.rewrite(url);
 }
 
@@ -129,7 +151,9 @@ export async function middleware(req: NextRequest) {
     if (!/^[1-9][0-9]{0,9}$/.test(raw)) {
       return toNotFound(req);
     }
-    if (!(await exists(kind, raw))) return toNotFound(req);
+    const found = await exists(kind, raw);
+    if (found === 'no') return toNotFound(req);
+    if (found === 'unknown') return toOutage(req, kind);
     return NextResponse.next();
   }
 
@@ -142,7 +166,9 @@ export async function middleware(req: NextRequest) {
     name = name.trim().toLowerCase();
     // 長すぎる名前はエンティティとして存在しえない（DBを引くまでもない）
     if (!name || name.length > 80) return toNotFound(req);
-    if (!(await exists('topic', name))) return toNotFound(req);
+    const found = await exists('topic', name);
+    if (found === 'no') return toNotFound(req);
+    if (found === 'unknown') return toOutage(req, 'topic');
     return NextResponse.next();
   }
 
