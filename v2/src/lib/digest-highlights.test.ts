@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHighlights, extractHighlightSection, buildRehashGuard } from './digest-highlights';
+import { parseHighlights, extractHighlightSection, buildRehashGuard, cleanText } from './digest-highlights';
 
 // 本番 2026-09-10 配信分の抜粋（形はそのまま）。
 const REAL = `AIエンジニア・研究者の皆様へ
@@ -190,4 +190,20 @@ test('焼き直し防止: ハイライトが取れない号は飛ばし、全部
   assert.equal(buildRehashGuard([{ reportDate: '2026-09-13', content: '見出しの無い本文' }]), '');
   assert.equal(buildRehashGuard([{ reportDate: null, content: null }]), '');
   assert.equal(buildRehashGuard([]), '');
+});
+
+// 紙面（トップの朝刊・/about）は装飾を持たないので、記号は落として中身だけ残す。
+// 実測: バッククォートは公開142号のうち13号・56本（最後は2026-09-04）、リンクは1号・10本。
+test('紙面のテキストに記号を残さない（コード・リンク・太字）', () => {
+  assert.equal(cleanText('PyTorch 2.5の`torch.compile`を活用'), 'PyTorch 2.5のtorch.compileを活用');
+  assert.equal(cleanText('参考: [PyTorch 2.5 Release Blog](https://pytorch.org/blog/x/)'), '参考: PyTorch 2.5 Release Blog');
+  assert.equal(cleanText('**新登場**: 本文'), '新登場: 本文');
+  for (const src of ['`a`', '[b](https://x.test/y)', '**c**']) {
+    assert.ok(!/[`*]|\]\(/.test(cleanText(src)), `記号が残っている: ${src} -> ${cleanText(src)}`);
+  }
+});
+
+test('紙面の整形は内部IDの除去を壊さない', () => {
+  assert.equal(cleanText('本文（ID: 123）'), '本文');
+  assert.equal(cleanText('本文 [ID:456]'), '本文');
 });

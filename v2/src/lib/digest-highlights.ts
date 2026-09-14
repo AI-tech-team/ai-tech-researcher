@@ -44,6 +44,13 @@ function cleanTitle(raw: string): string {
 export function cleanText(raw: string): string {
   return raw
     .replace(/\*\*/g, '')
+    // ⚠ 紙面（トップの朝刊・/about）はインライン装飾を持たない黒白のバンドなので、
+    //   `**` を落とすのと同じ理由でコード記法とリンク記法も**中身だけ**にする。
+    //   落とさないと読者には記号がそのまま見える。実測（backup_2026-09-13・公開142号）:
+    //   バッククォートは **13号・56本**（最後は 2026-09-04＝現行）、リンクは1号・10本（2026-05-18）。
+    //   記事本文ページ（components/Markdown.tsx）は<code>や<a>にするので、そちらとは意図的に別。
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/\s*[（([]\s*ID\s*[:：][\d,\s]*\d\s*[）)\]]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
