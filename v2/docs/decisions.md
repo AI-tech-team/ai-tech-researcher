@@ -2612,3 +2612,38 @@ Next のルートファイルはHTTPメソッドとセグメント設定を出�
 **確認**: テスト3件追加（295件）。「取得失敗の6種で相手のせいにしない」「本文が無いと分かっている
 ときだけその文言を使う」「短文と詳細が必ず同じ分岐から出る」の3つを固定した。
 
+## 51 `/articles` を開くたびに全件COUNTが5本飛んでいた／キャッシュ衛生を検査で守る（2026-09-15）
+
+※ 丸数字は㊿（50）で打ち止めなので、以降は素の番号にする。
+
+**決定**: `getKnowledgeStats`（全件COUNT×4）と `getArticleCounts` の全体件数（×1）を
+`cached()` で包む。あわせて「共有キャッシュの結果にユーザー状態を直接書き込まない」ことを
+テストで機械的に守る。
+
+**理由（本番実測）**: `/articles` のページ自体は ISR が効いている（`X-Nextjs-Prerender: 1` /
+`X-Vercel-Cache: HIT` / `Age: 15`）。だが `PublicApp` がクライアントから呼ぶ Server Action は
+**POST なのでCDNに載らない**。中身は全テーブルの COUNT(*) で、
+`getKnowledgeStats` が entities/benchmarks/relations/stale の4本、
+`getArticleCounts` が collected_data の1本＝**訪問のたびに5本**そのままTursoへ飛んでいた。
+どれもユーザーに依存せず、更新は日次パイプラインの1回だけ。
+
+**ユーザー別の件数はキャッシュしない**。`getArticleCounts` のお気に入り/後で読む/既読の3本は
+`userArticleState` を `userId` で引くので、共有キャッシュに入れた瞬間に他人へ配ることになる。
+全体件数だけを別のキーで包んだ。
+
+**測って問題なしとしたもの（第一条の点検）**: `cached()` と `overlayUserState()` が同居するのは
+`getCollectedDataList` だけで、そこは `base.map(i => ({ ...i }))` で**正しくコピーしていた**。
+`searchArticles` / `searchRelated` / `getMyFavorites` / `getMyReadLater` / `getArticleById` は
+いずれも毎回DBから引き直しており、`retrieval.ts` の `cached()` が持つのは
+**クエリ埋め込み（number[]）だけで記事行ではない**。混線は起きていない（取り下げ）。
+
+**ただし不変条件はコメントでしか守られていなかった**ので、`src/lib/action-cache-hygiene.test.ts` を追加。
+`actions.ts` をトップレベル関数ごとに切り出し、`cached(` と `overlayUserState(` が同居する関数に
+浅いコピーが無ければ落ちる。**テストの有効性も確かめた**: コピーを外した版を作ると
+`getCollectedDataList` を検出する。見張る対象が0件になったときも落ちるようにしてある
+（検査が空振りしていることに気づけないのが一番まずいので）。
+
+**言えないこと**: 本番の `/articles` の閲覧数は測れていない（Turso が BLOCKED）。
+言えるのは「1訪問あたりの読み取りが 5本 → 0本（同一インスタンス・5分以内）になった」までで、
+枠切れの原因を特定したわけではない。
+

@@ -498,8 +498,12 @@ export interface ArticleCounts { total: number; unread: number; favorite: number
 export async function getArticleCounts(anonymous = false): Promise<ArticleCounts> {
   try {
     const userId = anonymous ? undefined : await currentUserId();
-    const [tot] = await db.select({ c: count() }).from(collectedData);
-    const total = Number(tot?.c ?? 0);
+    // 全体件数はユーザーに依存しない。ここも `/articles` の訪問ごとに COUNT(*) が飛んでいた。
+    // ユーザー別の3本（お気に入り/後で読む/既読）は**絶対にキャッシュしない**＝他人に配ることになる。
+    const total = await cached('articleTotal', 300_000, async () => {
+      const [tot] = await db.select({ c: count() }).from(collectedData);
+      return Number(tot?.c ?? 0);
+    });
     if (!userId) return { total, unread: total, favorite: 0, readLater: 0 };
     const [fav, rl, rd] = await Promise.all([
       db.select({ c: count() }).from(userArticleState).where(and(eq(userArticleState.userId, userId), eq(userArticleState.isFavorited, 1))),
@@ -651,20 +655,27 @@ export async function markAsRead(id: number) {
 
 // ─── v3知識グラフ ───────────────────────────────────────────────────
 
+// ⚠ これは `/articles` のクライアント側から Server Action として毎回呼ばれる。
+//   Server Action は POST なのでCDNに載らず、ページ自体がISR（本番実測: X-Vercel-Cache HIT）でも
+//   **訪問のたびに全件 COUNT(*) が4本**そのままTursoへ飛んでいた。
+//   中身は全テーブルの件数＝ユーザーに一切依存せず、更新も日次パイプラインの1回だけ。
+//   失敗はキャッシュしない（内側が投げれば cached() は何も保存しない）。
 export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   try {
-    const [ent, bench, rel, staleRel] = await Promise.all([
-      db.select({ c: count() }).from(entities),
-      db.select({ c: count() }).from(benchmarks),
-      db.select({ c: count() }).from(relations),
-      db.select({ c: count() }).from(relations).where(eq(relations.status, 'stale')),
-    ]);
-    return {
-      entities: Number(ent[0]?.c ?? 0),
-      benchmarks: Number(bench[0]?.c ?? 0),
-      relations: Number(rel[0]?.c ?? 0),
-      staleRelations: Number(staleRel[0]?.c ?? 0),
-    };
+    return await cached('knowledgeStats', 300_000, async () => {
+      const [ent, bench, rel, staleRel] = await Promise.all([
+        db.select({ c: count() }).from(entities),
+        db.select({ c: count() }).from(benchmarks),
+        db.select({ c: count() }).from(relations),
+        db.select({ c: count() }).from(relations).where(eq(relations.status, 'stale')),
+      ]);
+      return {
+        entities: Number(ent[0]?.c ?? 0),
+        benchmarks: Number(bench[0]?.c ?? 0),
+        relations: Number(rel[0]?.c ?? 0),
+        staleRelations: Number(staleRel[0]?.c ?? 0),
+      };
+    });
   } catch (error) {
     await logError('fetch knowledge stats', error);
     return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
