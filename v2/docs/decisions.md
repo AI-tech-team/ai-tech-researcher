@@ -2139,3 +2139,61 @@ LLMは `*   ` を好んで出す。バックアップ実測で**公開143号の�
 - **内部レポートの露出**: `getReportById` は `type IN ('daily','weekly','monthly')` で
   絞っており、`briefing` / `corpus_health` 等は `/reports/[id]` から見えない。
 
+## ㊴ 自分が入れた生のNULバイトと、安全機構の総点検（2026-09-15）
+
+㊲㊳で「同じ処理のコピーが3本あり1本だけ古い」を2件続けて引いたので、残りを人手でなく
+機械で当たった。**本番コードの欠陥は出なかったが、自分が入れた事故を1件見つけた。**
+
+### 自分の編集で NUL バイトを2ファイルに書き込んでいた
+
+安全機構の呼び出し数を `grep` で数えていたら、`safeUrl.ts` と `entity-quality.ts` が
+**「Binary file … matches」**と表示され、定義行が出なかった。バイト列を見ると:
+
+| ファイル | 書いたつもり | 実際に入っていたもの |
+|---|---|---|
+| `src/lib/safeUrl.ts:29` | `/[\u0000-\u0020\u007f]/` | `/[<NUL>- <DEL>]/` |
+| `src/lib/entity-quality.ts:67` | `/[\u0000-\u001f]/` | `/[<NUL>-<0x1f>]/` |
+
+原因は、編集をヒアドキュメント経由で流し込んだときに `\uXXXX` のバックスラッシュが潰れ、
+エスケープではなく**実体の制御文字**が書き込まれたこと。
+
+**動作は同一**（文字クラスの範囲としては等価）なので、`tsc` もテストも本番も全部通る。
+見つかったのは**grepが中身を表示しなくなったから**だけで、静かに壊れたのは挙動ではなく
+「読める・探せる」という性質だった。検索から漏れるファイルは、次に誰かが直すときに見落とされる。
+
+対処: 正しいエスケープに直し、`src/lib/source-hygiene.test.ts` で
+**ソースのバイト列を直接見る検査**を常設した（タブ・改行・復帰以外の制御文字を全ファイルで禁止）。
+実効性の確認: 直前のコミット `784f4ee` の `safeUrl.ts` をこの検査に掛けると
+`0x00` と `0x7f` を検出して**FAILする**。通ってしまう検査ではない。
+
+⚠ この事故はこのセッションの編集手段そのものに起因する。以後、ヒアドキュメントで
+バックスラッシュを含むコードを書いたら、書いた直後にバイト列を確認する。
+
+### 機械的に当たって「問題なし」だったもの（測った記録）
+
+いずれも直す必要が無かった。同じ調査を繰り返さないために残す。
+
+- **`created_at` のパース**が本番5箇所（`daily_pipeline` / `daily-report` / `actions`×2 /
+  `api/health`）にコピーされていた。[[reference-data-and-cron]] の「空白区切りとISO列の罠」が
+  再発していないかを見たが、**5箇所とも中身は同一でNaNガードもあり、渡されるのは全部 `created_at`**。
+  DRYの匂いはあるが欠陥は無いので触らない（行動原則1「ついで改善をしない」）。
+- **日付列の格納形式**: `createdAt` は 100% `YYYY-MM-DD HH:MM:SS`、`publishedAt` は 100% ISO。
+  混在ゼロ。23,649件で文字列順と時刻順の食い違い**0行**、`Date.parse` 不能**0件**。
+  `COALESCE(publishedAt, createdAt)` の並びが壊れる条件（publishedAt が NULL）も0件。
+- **ソース(フィード)791件**: URLに実体参照0件、壊れたURL0件、http(s)でないもの0件、
+  前後の空白0件。同一URLの重複は1組だけで、片方 `stopped` なので実害なし。
+- **セキュリティヘッダ**: CSP / HSTS / X-Frame-Options: DENY / nosniff /
+  Referrer-Policy / Permissions-Policy が全て本番で出ている。
+  `X-Robots-Tag: noindex, nofollow` も `/` `/about` `/articles/*` `/feed.xml` `/sitemap.xml`
+  `/api/health` の全部で確認（HTMLの `<meta robots>` と二重掛け）。
+  `robots.txt` が `Allow: /` なのは正しい（`Disallow` にするとクローラが noindex を読めない）。
+- **`/api/revalidate`**: timing-safe 比較、未設定時は503で機能ごと閉じる、
+  再検証パスはサーバ側の決め打ち、外から受けるのは数値の `reportId` だけ。
+- **Service Worker**: HTML は network-first なので復旧後は素直に最新を取る。
+  障害画面がキャッシュに残るのはオフライン時のフォールバックだけで、そのときはどのみち記事も取れない。
+- **安全機構の呼び出し数**（[[pattern-wired-but-never-called]] の再検査）:
+  `logError` 24 / `checkRateLimit` 9 / `isSafeFetchUrl` 6 / `safeHttpUrl` 5 /
+  `politeFetch` 3 / `isAllowedByRobots` 2 / `maskPII` 2 / `decodeHtmlEntities` 4。
+  すべて呼ばれている。`clampSummary` が「定義なし」と出たのは**こちらのgrepが
+  `export function` しか見ていなかったせい**で、実体は `daily_pipeline.ts:201` にある（誤検知）。
+
