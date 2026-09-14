@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft, BookOpen } from 'lucide-react';
 import { SITE_NAME, SITE_URL } from '@/lib/site';
-import { getTopicIndex } from '@/app/actions';
+import { getTopicIndex, isDbReachable } from '@/app/actions';
 import { JsonLd } from '@/components/JsonLd';
 import { BrandNav } from '@/components/digest/BrandChrome';
 
@@ -93,7 +93,13 @@ export default async function TopicIndexPage() {
         </p>
 
         {topics.length === 0 ? (
-          <p className="text-sm text-slate-400 mt-8">まだトピックがありません。</p>
+          <p className="text-sm text-slate-400 mt-8">
+            {/* 0件は「無い」とは限らない。actions は失敗時も [] を返す（fail-open）＝
+                DBが落ちていても「まだありません」と嘘をつく。0件のときだけ確かめる。 */}
+            {(await isDbReachable())
+              ? 'まだトピックがありません。'
+              : 'いまトピックをお見せできません。こちらの不具合です。復旧しだい、いつもどおりお届けします。'}
+          </p>
         ) : (
           <>
             <Group label="よく登場する" hint="10回以上" items={major} />

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Suspense } from 'react';
-import { searchArticles, searchRelated } from '@/app/actions';
+import { searchArticles, searchRelated, isDbReachable } from '@/app/actions';
 import { ArticleListView } from '@/components/ArticleListView';
 import { SearchBox } from '@/components/SearchBox';
 import { noSummaryShort } from '@/lib/no-summary';
@@ -53,6 +53,10 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   // 1つのリストに順位融合すると両方の精度が落ちることを実測済み（2026-07-15・nDCG 87.5%→84%）。
   // 全画面ページはパレット(25件)より多く見せる。畳み込み後で最大50件。
   const articles = q.length >= 2 ? await searchArticles(q, 50) : [];
+  // ⚠ 0件を「無い」と言い切らない。検索の失敗は fail-open で [] になるので、
+  //   DBが落ちているときに**偽陰性**（「一致する記事は見つかりませんでした」）を返していた。
+  //   検索で「無い」と言われた読者は二度と探さないので、ここは特に嘘をついてはいけない。
+  const dbDown = articles.length === 0 && q.length >= 2 && !(await isDbReachable());
 
   return (
     <ArticleListView
@@ -60,7 +64,11 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
       title={q ? `「${q}」` : '検索'}
       articles={articles}
       topSlot={<SearchBox q={q} />}
-      emptyText={q.length < 2 ? 'キーワードを入力してください（2文字以上）。' : `「${q}」に一致する記事は見つかりませんでした。`}
+      emptyText={q.length < 2
+        ? 'キーワードを入力してください（2文字以上）。'
+        : dbDown
+          ? 'いま検索できません。こちらの不具合です。記事が無いわけではありません。'
+          : `「${q}」に一致する記事は見つかりませんでした。`}
       bottomSlot={q.length >= 2 ? (
         <Suspense fallback={<p className="mt-10 text-[11px] text-slate-500">関連する記事を探しています…</p>}>
           <RelatedSection q={q} />
