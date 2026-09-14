@@ -119,8 +119,15 @@ export async function middleware(req: NextRequest) {
     const kind = m[1] as 'articles' | 'reports';
     const raw = decodeURIComponent(m[2]);
     // フロントは信用しない: 数値以外・桁あふれ・ゼロ埋めはDBを引くまでもなく404。
+    // ⚠ ここは以前 `new NextResponse(null, { status: 404 })` を返していた＝**本文0バイトの白画面**。
+    //   2026-09-15 本番実測: /articles/abc ・/articles/0 ・/articles/007 はいずれも
+    //   `HTTP 404 / 0 bytes`（ブラウザの既定エラー画面）だったのに対し、存在しないIDを踏む
+    //   もう一方の枝（toNotFound）は `HTTP 404 / 27,397 bytes` でサイトの404ページを描いていた。
+    //   同じ「その記事は無い」なのに、入口のゆれ（メールで途切れたURL・ゼロ埋め・打ち間違い）だけで
+    //   読者がサイトの外に放り出されていたので、描画のある方に揃える。ステータスは404のまま
+    //   （上の実測どおり toNotFound も 404 を返す。DBは引かない）。
     if (!/^[1-9][0-9]{0,9}$/.test(raw)) {
-      return new NextResponse(null, { status: 404 });
+      return toNotFound(req);
     }
     if (!(await exists(kind, raw))) return toNotFound(req);
     return NextResponse.next();

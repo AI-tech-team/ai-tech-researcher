@@ -2366,3 +2366,40 @@ v10で通知を作ったときの仮置きがそのまま残っていたもの�
 
 `public/sw.js` 側は `payload.body` をそのまま `showNotification` に渡しているので変更不要。
 
+## ㊹ 読み取り削減の「対策」が最初から効いていなかった／同じ404が入口で白画面と正規ページに割れていた（2026-09-15）
+
+**決定**: `/topic/[name]` の `export const revalidate = 3600`（16f6ac6）を**撤去**し、読み取り削減は
+`getEntityKnowledgePage` を `cached()` で包む形に置き換える。あわせて middleware の
+「数値でない記事ID」枝を `new NextResponse(null, {status:404})` から `toNotFound(req)` に揃える。
+
+**理由（本番実測）**:
+- 2026-09-14 に読み取り枠切れの是正として入れた `revalidate` は、**1件も効いていなかった**。
+  `/topic/OpenAI`・`/topic/zzzznotreal` はどちらも `Cache-Control: private, no-cache, no-store` で
+  `X-Nextjs-Prerender` ヘッダが付かない。効いている `/articles/26178` には `X-Nextjs-Prerender: 1` が付く。
+  差は `generateStaticParams` の有無で、兄弟2ページ（articles/reports）は
+  `generateStaticParams() { return []; }` と `revalidate` を**併記**している。
+  動的セグメントは `revalidate` 単体では静的化の対象にならない。
+- **足りない片割れを足す道は塞がっている**。同ファイル内に 2026-09-12 の実測が残っており、
+  ISRが有効になると非ASCII名のトピックが `x-next-cache-tags`（Latin-1しか運べない）で
+  **HTTP 500**（204件中6件）。つまりあの1行は「効かなかったから無害」だっただけで、
+  善意で完成させると壊れる。残すこと自体が罠なので消す。
+- 代わりに置いた `cached()` は HTTPヘッダを経由しないので非ASCII名でも壊れない。
+  `getEntityKnowledgePage` は1リクエスト＝**8クエリ**（エンティティ1＋並列6＋関連記事1）で、
+  `currentUserId` も `overlayUserState` も通らない＝ユーザー状態に非依存なのでインスタンス内共有が安全。
+- middleware: `/articles/abc`・`/articles/0`・`/articles/007` は **HTTP 404 / 本文0バイト**＝白画面だった。
+  一方 `toNotFound` 側は **HTTP 404 / 27,397バイト**でサイトの404ページを描く（DBを引かない経路
+  `/topic/<90文字>` で実測）。同じ「その記事は無い」なのに、URLのゆれ（メールで途切れた・ゼロ埋め・
+  打ち間違い）だけで読者がサイトの外に出ていた。
+
+**不採用**: `/topic/[name]` に `generateStaticParams` を足して ISR を完成させる案
+（上記のとおり非ASCII名が500になる）。`cached()` の TTL を長くする案（日次更新に対し5分は既存の
+`bycat`/`bytag` と同じ水準で、復旧直後の遅延も5分に収まる）。
+
+**影響**: `/topic/*` の応答自体は変わらない（元から動的）。同一インスタンスに5分以内に再訪した
+トピックは 8クエリ→0クエリになる。**ただし本番のトピック閲覧数は測っていない**（Turso が BLOCKED で
+Platform API トークンも無い）ので、これは「枠切れの原因を特定した」ではなく
+「1閲覧あたりの読み取り増幅を減らした」までしか言えない。
+
+**失敗の記録**: ㊹は「対策を入れた」と書いたコミットが実際には何もしていなかった事例で、
+[[pattern-wired-but-never-called]] と同型。**設定を足したら、それが効いていることを応答ヘッダで確かめる**。
+

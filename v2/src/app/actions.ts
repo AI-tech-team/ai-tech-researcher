@@ -783,120 +783,132 @@ export interface EntityPage {
   articles: { id: number; title: string; category: string | null; storyCount: number | null; publishedAt: string | null }[];
 }
 
+// /topic/[name] は ISR を使えない（非ASCII名が x-next-cache-tags に載らず HTTP 500 になる。
+// 理由は topic/[name]/page.tsx のコメント）。CDNに逃がせない以上、読み取りを減らす場所はここしかない。
+// 1リクエスト＝8クエリ（エンティティ1＋並列6＋関連記事1）を毎回そのまま実行していた。
+// ユーザー状態に一切依存しない（currentUserId も overlayUserState も通らない）ので、
+// インスタンス内で共有して安全。キーはDBの照合と同じく小文字へ正規化する。
 export async function getEntityKnowledgePage(name: string): Promise<EntityPage | null> {
   try {
-    const ent = await db.select({ id: entities.id, name: entities.canonicalName, type: entities.type, mention: entities.mentionCount })
-      .from(entities).where(sql`LOWER(${entities.canonicalName}) = ${name.toLowerCase()}`).limit(1);
-    const canonical = ent[0]?.name ?? name;
-    const entId = ent[0]?.id ?? null;
-    const type = ent[0]?.type ?? null;
-    const mentionCount = Number(ent[0]?.mention ?? 0);
-
-    // claims/benchmarks は entity_id で引く。subject/entity_name の完全一致だけで引いていたため、
-    // entity `Nvidia` に対し subject が `NVIDIA` のクレーム（SQLiteの = は大小文字を区別する）が
-    // ページから丸ごと漏れていた（2026-09-10 本番実測で確認）。名前一致は entity 未登録時のフォールバック。
-    const claimMatch = entId != null
-      ? or(eq(claims.entityId, entId), eq(claims.subject, canonical))!
-      : eq(claims.subject, canonical);
-    const benchMatch = entId != null
-      ? or(eq(benchmarks.entityId, entId), eq(benchmarks.entityName, canonical))!
-      : eq(benchmarks.entityName, canonical);
-
-    const [bench, relsOut, relsIn, clm, claimArts, benchArts] = await Promise.all([
-      // ⚠ 上限は**表示する数ではなく、表示側で捨てる分を見込んだ数**にする。
-      // ベンチは表示側(visibleBenchmarks)で `tok/s` `unknown` `2026年売上高見通し 430億ユーロ` のような
-      // 非ベンチを落とし、表記ゆれも畳む。旧実装は12件取ってから落としていたので、
-      // 新しい日付の無効行が12枠を埋めた日は有効なベンチが1件も出なかった（絞ってから落とす形）。
-      // 40件取って表示側で12件に切る。claims も同じ理由で 8→30。
-      db.select({ benchmark: benchmarks.benchmarkName, score: benchmarks.score, unit: benchmarks.unit, date: benchmarks.recordedDate })
-        .from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.recordedDate)).limit(40),
-      // ⚠ relations には一意制約が無く、同じ (subject, type, object) が**記事の数だけ重複する**。
-      // 旧実装は ORDER BY 無しの LIMIT 20 で、SQLiteは rowid 順＝最も古い20行を返していた
-      // （すぐ下の claims/benchmarks では同じ罠を直したのに、この2本だけ直っていなかった）。
-      // しかも重複除去は表示側(relatedNames)なので、20枠が同じ相手の繰り返しで埋まると
-      // 「関連トピック」が数件しか出ない。→ SQLで先に畳み、新しい関係から取る。
-      // ⚠ 相手の名前は relations の**自由文字列**で、そのまま /topic/<名前> のリンクになる。
-      // middleware は entities に無い名前を404にするので、エンティティ化されていない相手は
-      // **押すと404になるリンク**として並んでいた。2026-09-15 実測: 関連に出うる938種のうち
-      // **50種(5.3%)が404**、**658種(70.1%)が公開に耐えない名前**＝薄いページ行きで、
-      // 無事なのは230種(24.5%)だけだった（`サムスン` `川崎重工業` `F#` `本書` が404側）。
-      // → entities と内部結合して「存在する相手」だけにし、mention数も持ち帰って公開判定に使う。
-      // 結合は **名前でなく entity_id** で行う。LOWER(名前)=LOWER(名前) は索引が効かず、
-      // 関係1行ごとに entities を走査しかねない（読み取り枠が切れている最中に増やすのは論外）。
-      // id で等価になることは実測で確認済み: 非stale 888件のうち、
-      // 「idありだが名前がentitiesに無い」0件 / 「idはnullだが名前はentitiesに在る」0件。
-      // 上限は 24→60 に広げる。先に24で切ると枠が公開に耐えない名前で埋まり、
-      // 絞ったあとに数件しか残らない（[[pattern-throughput-starvation]]: 広く取る→絞るの順）。
-      db.select({ type: relations.relationType, other: relations.objectName, mentions: entities.mentionCount })
-        .from(relations)
-        .innerJoin(entities, eq(relations.objectEntityId, entities.id))
-        .where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`))
-        .groupBy(relations.relationType, relations.objectName)
-        .orderBy(desc(sql`MAX(${relations.id})`)).limit(60),
-      db.select({ type: relations.relationType, other: relations.subjectName, mentions: entities.mentionCount })
-        .from(relations)
-        .innerJoin(entities, eq(relations.subjectEntityId, entities.id))
-        .where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`))
-        .groupBy(relations.relationType, relations.subjectName)
-        .orderBy(desc(sql`MAX(${relations.id})`)).limit(60),
-      db.select({ predicate: claims.predicate, value: claims.value })
-        .from(claims).where(and(claimMatch, eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(30),
-      // ⚠ この2本の LIMIT 40 には **ORDER BY を必ず付ける**。付けないとSQLiteは rowid 順＝
-      // 挿入の古い順に40行返すので、「関連記事」の候補プールがそのトピックで**最も古い40件**になる。
-      // 本番実測(2026-09-13, /topic/OpenAI): claims 107行のうち古い40行 → 記事29件、中央値98日前。
-      // ここが「取り上げてるニュースが3か月前」の主因で、下の表示順だけ直しても94日→63日にしかならない
-      // （プールごと新しい側に寄せると6日になる）。→ [[pattern-throughput-starvation]] と同じ形で、
-      // 上限を書いたら「何が上限からこぼれるか」を必ず見る。
-      db.select({ aid: claims.articleId }).from(claims).where(claimMatch).orderBy(desc(claims.id)).limit(40),
-      db.select({ aid: benchmarks.articleId }).from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.id)).limit(40),
-    ]);
-
-    const ids = [...new Set([...claimArts, ...benchArts].map(r => r.aid).filter((x): x is number => x != null))];
-    let articles: EntityPage['articles'] = [];
-    if (ids.length > 0) {
-      const arts = await db.select({
-        id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa,
-        category: collectedData.category,
-        storyCount: collectedData.storyCount, publishedAt: collectedData.publishedAt,
-      }).from(collectedData).where(inArray(collectedData.id, ids))
-        // ⚠ 並び順に**新しさ**を入れること。importance だけで並べていた頃、このページの関連記事は
-        // 本番実測で /topic/OpenAI が中央値94日前・最古115日前だった（2026-09-13）。
-        // 収集データ自体は93.4%が当日で健全なのに、表示だけが3か月前を向いていた
-        // （本人からの指摘「取り上げてるニュースが3か月前、みたいなのがまあまああった」の正体）。
-        // 日付で粗く新しい順に並べ、同じ日の中は重要度で解く（「その日いちばん重要な記事」の並びは保つ）。
-        // published_at は本番23,328件すべて ISO UTC（"2026-09-12T15:08:27.000Z"）、created_at は
-        // "YYYY-MM-DD HH:MM:SS" のUTC。どちらも先頭10文字が YYYY-MM-DD なので substr で揃えて比較できる。
-        // 列はNULL許容なので COALESCE は残す（実測ではNULL 0件だが、スキーマ上入りうる）。
-        .orderBy(
-          desc(sql`substr(COALESCE(${collectedData.publishedAt}, ${collectedData.createdAt}), 1, 10)`),
-          desc(collectedData.importanceScore),
-        )
-        .limit(12);
-      articles = arts.map(a => ({
-        id: a.id, title: a.titleJa || a.title || '無題', category: a.category,
-        storyCount: a.storyCount, publishedAt: a.publishedAt,
-      }));
-    }
-
-    return {
-      name: canonical,
-      type,
-      mentionCount,
-      benchmarks: bench.map(b => ({ benchmark: b.benchmark, score: b.score, unit: b.unit, date: b.date })),
-      relations: [
-        // 公開に耐えない相手（一般名詞・文・言及1回）はリンクにしない。押しても薄いページしか出ない。
-        ...relsOut.filter(r => isPublishableEntity(r.other ?? '', Number(r.mentions ?? 0)))
-          .map(r => ({ dir: 'out' as const, type: r.type, other: r.other })),
-        ...relsIn.filter(r => isPublishableEntity(r.other ?? '', Number(r.mentions ?? 0)))
-          .map(r => ({ dir: 'in' as const, type: r.type, other: r.other })),
-      ],
-      claims: clm.map(c => ({ predicate: c.predicate, value: c.value })),
-      articles,
-    };
+    return await cached(`entityPage:${name.trim().toLowerCase()}`, 300_000, () => loadEntityKnowledgePage(name));
   } catch (error) {
     await logError('getEntityKnowledgePage', error);
     return null;
   }
+}
+
+// ⚠ ここは失敗時に null を返さず**投げる**。呼び出し側が cached() なので、null を返すと
+//   「DBが落ちている」という結果まで5分間キャッシュされ、復旧後も notFound() を配り続ける。
+//   投げれば cached() は何も保存しないため、次のリクエストでやり直せる。
+async function loadEntityKnowledgePage(name: string): Promise<EntityPage | null> {
+  const ent = await db.select({ id: entities.id, name: entities.canonicalName, type: entities.type, mention: entities.mentionCount })
+    .from(entities).where(sql`LOWER(${entities.canonicalName}) = ${name.toLowerCase()}`).limit(1);
+  const canonical = ent[0]?.name ?? name;
+  const entId = ent[0]?.id ?? null;
+  const type = ent[0]?.type ?? null;
+  const mentionCount = Number(ent[0]?.mention ?? 0);
+
+  // claims/benchmarks は entity_id で引く。subject/entity_name の完全一致だけで引いていたため、
+  // entity `Nvidia` に対し subject が `NVIDIA` のクレーム（SQLiteの = は大小文字を区別する）が
+  // ページから丸ごと漏れていた（2026-09-10 本番実測で確認）。名前一致は entity 未登録時のフォールバック。
+  const claimMatch = entId != null
+    ? or(eq(claims.entityId, entId), eq(claims.subject, canonical))!
+    : eq(claims.subject, canonical);
+  const benchMatch = entId != null
+    ? or(eq(benchmarks.entityId, entId), eq(benchmarks.entityName, canonical))!
+    : eq(benchmarks.entityName, canonical);
+
+  const [bench, relsOut, relsIn, clm, claimArts, benchArts] = await Promise.all([
+    // ⚠ 上限は**表示する数ではなく、表示側で捨てる分を見込んだ数**にする。
+    // ベンチは表示側(visibleBenchmarks)で `tok/s` `unknown` `2026年売上高見通し 430億ユーロ` のような
+    // 非ベンチを落とし、表記ゆれも畳む。旧実装は12件取ってから落としていたので、
+    // 新しい日付の無効行が12枠を埋めた日は有効なベンチが1件も出なかった（絞ってから落とす形）。
+    // 40件取って表示側で12件に切る。claims も同じ理由で 8→30。
+    db.select({ benchmark: benchmarks.benchmarkName, score: benchmarks.score, unit: benchmarks.unit, date: benchmarks.recordedDate })
+      .from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.recordedDate)).limit(40),
+    // ⚠ relations には一意制約が無く、同じ (subject, type, object) が**記事の数だけ重複する**。
+    // 旧実装は ORDER BY 無しの LIMIT 20 で、SQLiteは rowid 順＝最も古い20行を返していた
+    // （すぐ下の claims/benchmarks では同じ罠を直したのに、この2本だけ直っていなかった）。
+    // しかも重複除去は表示側(relatedNames)なので、20枠が同じ相手の繰り返しで埋まると
+    // 「関連トピック」が数件しか出ない。→ SQLで先に畳み、新しい関係から取る。
+    // ⚠ 相手の名前は relations の**自由文字列**で、そのまま /topic/<名前> のリンクになる。
+    // middleware は entities に無い名前を404にするので、エンティティ化されていない相手は
+    // **押すと404になるリンク**として並んでいた。2026-09-15 実測: 関連に出うる938種のうち
+    // **50種(5.3%)が404**、**658種(70.1%)が公開に耐えない名前**＝薄いページ行きで、
+    // 無事なのは230種(24.5%)だけだった（`サムスン` `川崎重工業` `F#` `本書` が404側）。
+    // → entities と内部結合して「存在する相手」だけにし、mention数も持ち帰って公開判定に使う。
+    // 結合は **名前でなく entity_id** で行う。LOWER(名前)=LOWER(名前) は索引が効かず、
+    // 関係1行ごとに entities を走査しかねない（読み取り枠が切れている最中に増やすのは論外）。
+    // id で等価になることは実測で確認済み: 非stale 888件のうち、
+    // 「idありだが名前がentitiesに無い」0件 / 「idはnullだが名前はentitiesに在る」0件。
+    // 上限は 24→60 に広げる。先に24で切ると枠が公開に耐えない名前で埋まり、
+    // 絞ったあとに数件しか残らない（[[pattern-throughput-starvation]]: 広く取る→絞るの順）。
+    db.select({ type: relations.relationType, other: relations.objectName, mentions: entities.mentionCount })
+      .from(relations)
+      .innerJoin(entities, eq(relations.objectEntityId, entities.id))
+      .where(and(eq(relations.subjectName, canonical), sql`${relations.status} != 'stale'`))
+      .groupBy(relations.relationType, relations.objectName)
+      .orderBy(desc(sql`MAX(${relations.id})`)).limit(60),
+    db.select({ type: relations.relationType, other: relations.subjectName, mentions: entities.mentionCount })
+      .from(relations)
+      .innerJoin(entities, eq(relations.subjectEntityId, entities.id))
+      .where(and(eq(relations.objectName, canonical), sql`${relations.status} != 'stale'`))
+      .groupBy(relations.relationType, relations.subjectName)
+      .orderBy(desc(sql`MAX(${relations.id})`)).limit(60),
+    db.select({ predicate: claims.predicate, value: claims.value })
+      .from(claims).where(and(claimMatch, eq(claims.status, 'active'))).orderBy(desc(claims.validFrom)).limit(30),
+    // ⚠ この2本の LIMIT 40 には **ORDER BY を必ず付ける**。付けないとSQLiteは rowid 順＝
+    // 挿入の古い順に40行返すので、「関連記事」の候補プールがそのトピックで**最も古い40件**になる。
+    // 本番実測(2026-09-13, /topic/OpenAI): claims 107行のうち古い40行 → 記事29件、中央値98日前。
+    // ここが「取り上げてるニュースが3か月前」の主因で、下の表示順だけ直しても94日→63日にしかならない
+    // （プールごと新しい側に寄せると6日になる）。→ [[pattern-throughput-starvation]] と同じ形で、
+    // 上限を書いたら「何が上限からこぼれるか」を必ず見る。
+    db.select({ aid: claims.articleId }).from(claims).where(claimMatch).orderBy(desc(claims.id)).limit(40),
+    db.select({ aid: benchmarks.articleId }).from(benchmarks).where(benchMatch).orderBy(desc(benchmarks.id)).limit(40),
+  ]);
+
+  const ids = [...new Set([...claimArts, ...benchArts].map(r => r.aid).filter((x): x is number => x != null))];
+  let articles: EntityPage['articles'] = [];
+  if (ids.length > 0) {
+    const arts = await db.select({
+      id: collectedData.id, title: collectedData.title, titleJa: collectedData.titleJa,
+      category: collectedData.category,
+      storyCount: collectedData.storyCount, publishedAt: collectedData.publishedAt,
+    }).from(collectedData).where(inArray(collectedData.id, ids))
+      // ⚠ 並び順に**新しさ**を入れること。importance だけで並べていた頃、このページの関連記事は
+      // 本番実測で /topic/OpenAI が中央値94日前・最古115日前だった（2026-09-13）。
+      // 収集データ自体は93.4%が当日で健全なのに、表示だけが3か月前を向いていた
+      // （本人からの指摘「取り上げてるニュースが3か月前、みたいなのがまあまああった」の正体）。
+      // 日付で粗く新しい順に並べ、同じ日の中は重要度で解く（「その日いちばん重要な記事」の並びは保つ）。
+      // published_at は本番23,328件すべて ISO UTC（"2026-09-12T15:08:27.000Z"）、created_at は
+      // "YYYY-MM-DD HH:MM:SS" のUTC。どちらも先頭10文字が YYYY-MM-DD なので substr で揃えて比較できる。
+      // 列はNULL許容なので COALESCE は残す（実測ではNULL 0件だが、スキーマ上入りうる）。
+      .orderBy(
+        desc(sql`substr(COALESCE(${collectedData.publishedAt}, ${collectedData.createdAt}), 1, 10)`),
+        desc(collectedData.importanceScore),
+      )
+      .limit(12);
+    articles = arts.map(a => ({
+      id: a.id, title: a.titleJa || a.title || '無題', category: a.category,
+      storyCount: a.storyCount, publishedAt: a.publishedAt,
+    }));
+  }
+
+  return {
+    name: canonical,
+    type,
+    mentionCount,
+    benchmarks: bench.map(b => ({ benchmark: b.benchmark, score: b.score, unit: b.unit, date: b.date })),
+    relations: [
+      // 公開に耐えない相手（一般名詞・文・言及1回）はリンクにしない。押しても薄いページしか出ない。
+      ...relsOut.filter(r => isPublishableEntity(r.other ?? '', Number(r.mentions ?? 0)))
+        .map(r => ({ dir: 'out' as const, type: r.type, other: r.other })),
+      ...relsIn.filter(r => isPublishableEntity(r.other ?? '', Number(r.mentions ?? 0)))
+        .map(r => ({ dir: 'in' as const, type: r.type, other: r.other })),
+    ],
+    claims: clm.map(c => ({ predicate: c.predicate, value: c.value })),
+    articles,
+  };
 }
 
 // 公開UIのグローバル検索向け: 無料テキスト検索（LLM不使用・全コーパス対象）。
