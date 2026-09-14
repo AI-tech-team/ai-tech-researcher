@@ -23,18 +23,26 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/terms`, lastModified: now, changeFrequency: 'yearly', priority: 0.3 },
   ];
 
+  // カテゴリのランディング（固定・DBを引かない）
+  const categoryPages: MetadataRoute.Sitemap = CATEGORIES.map(c => ({
+    url: `${SITE_URL}/category/${encodeURIComponent(c)}`,
+    lastModified: now, changeFrequency: 'daily' as const, priority: 0.5,
+  }));
+
+  // ⚠ noindex のあいだは **DBを引く列挙を1つも回さない**（2026-09-14）。
+  //   9/14 の止血では記事(約22,000行)だけを止めたが、レポート1,000件とトピック300件の
+  //   クエリはそのまま毎時走っていた＝**同じ型の枝を1本だけ直して残りを見ていなかった**
+  //   （[[pattern-positional-pairing]] の「1本見つけたら同型を全部当たる」と同じ失敗）。
+  //   クロールさせない状態でURLを配る意味は無いので、固定ページだけ返して打ち切る。
+  //   公開（SITE_NOINDEX=false）に戻せば自動で全部復活する。
+  if (SITE_NOINDEX) return [...pages, ...categoryPages];
+
   let articles: MetadataRoute.Sitemap = [];
   try {
     // ⚠ 上限は「何日分か」で考える。旧実装の200件は流入221件/日を下回り、**1日未満**しか載らなかった。
     // 2026-09-13 本人の判断で**全件**に。約22,000URL＝Googleの上限(1ファイル50,000URL/50MB)の内側。
     // cookies を読まない専用クエリなので sitemap は静的のまま（revalidate=3600 が効く）。
-    //
-    // ⚠ ただし **noindex のあいだは記事を列挙しない**（2026-09-14）。
-    //   noindex ＝ クロールさせない状態なので22,000URLを配る意味が無いのに、
-    //   revalidate=3600 で**毎時22,000行を読む**。2026-09-14 に本番Tursoが
-    //   `BLOCKED: reads are blocked` で読み取り拒否になった日、これが動いていた。
-    //   公開（SITE_NOINDEX=false）に戻せば自動で全件に戻る。
-    const items = SITE_NOINDEX ? [] : await getSitemapArticles();
+    const items = await getSitemapArticles();
     articles = items.map(i => {
       const d = i.date ? new Date(i.date) : now;
       return {
@@ -63,12 +71,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   } catch {
     // 取得失敗時はレポートを除外（sitemap自体は落とさない）
   }
-
-  // カテゴリのランディング（固定）
-  const categoryPages: MetadataRoute.Sitemap = CATEGORIES.map(c => ({
-    url: `${SITE_URL}/category/${encodeURIComponent(c)}`,
-    lastModified: now, changeFrequency: 'daily' as const, priority: 0.5,
-  }));
 
   // 知識グラフの主要トピック（関係を持つ＝中身のあるエンティティ）
   let topicPages: MetadataRoute.Sitemap = [];
