@@ -10,7 +10,6 @@ import * as nodemailer from 'nodemailer';
 import * as schema from './src/db/schema';
 import { resolveGroundingUrl, extractJson } from './src/lib/llm';
 import { discoverFeedUrl, fetchArticleText, fetchArticleTextDetailed } from './src/lib/feeds';
-import { isSafeFetchUrl } from './src/lib/safeUrl';
 import { politeFetch } from './src/lib/robots';
 import { decodeHtmlEntities } from './src/lib/html-entities';
 import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
@@ -1008,12 +1007,15 @@ async function collectData(rounds = 10): Promise<{ collected: number; failed: nu
 
   for (const target of urlSources) {
     if (target.status !== 'active') continue;
-    if (!isSafeFetchUrl(target.value)) continue; // SSRF対策
     try {
-      const res = await fetch(target.value, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Cernoval/1.0)' },
-        signal: AbortSignal.timeout(15000),
-      });
+      // ⚠ ここは robots.txt のゲートを通っていなかった（2026-09-14 発見）。
+      //   SSRF対策(isSafeFetchUrl)だけ掛かっていて、フィード経路には入っている
+      //   isAllowedByRobots が素通り＝2026-09-10 に Reddit を毎日叩いていたのと同じ形が
+      //   **URL型ソースにだけ残っていた**（politeFetch の呼び出しが全体で1箇所しか無いのが目印）。
+      //   ついでに User-Agent の 'Mozilla/5.0 (compatible; ...)' も外れる。ブラウザを騙る名乗りは
+      //   politeFetch の 'Cernoval/1.0 (+連絡先)' に統一する（CLAUDE.md 第三条）。
+      const res = await politeFetch(target.value, { signal: AbortSignal.timeout(15000) });
+      if (!res) { console.warn(`  スキップ (${target.value}): robots.txt で許可されていない`); continue; }
       const html = await res.text();
       const match = html.match(/const ITEMS_BY_DATE = (\{[\s\S]*?\});\s*\n/);
       if (!match) { console.warn(`  スキップ (${target.value}): ITEMS_BY_DATE なし`); continue; }
