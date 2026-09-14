@@ -1,0 +1,51 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,'Segoe UI',sans-serif;background:#e9edf3;color:#0f172a;padding:30px}
+  h1{font-size:19px;margin:0 0 18px}
+  .row{display:flex;gap:26px;flex-wrap:wrap}
+  .col{width:210px}
+  .phone{width:210px;height:430px;border-radius:30px;background:#03060f;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;box-shadow:0 10px 30px rgba(2,6,23,.3);border:4px solid #0b1220}
+  .logo{width:74px;height:74px}
+  .name{color:#eaf2ff;font-weight:700;font-size:15px;margin-top:16px;letter-spacing:.2px}
+  .tag{color:#7d93b3;font-size:11px;margin-top:5px}
+  .cap{font-weight:700;font-size:13px;margin-top:10px}
+  .mo{color:#64748b;font-size:11px;margin-top:2px;line-height:1.45}
+  /* C: glow */
+  .glow::before{content:"";position:absolute;width:230px;height:230px;border-radius:50%;background:radial-gradient(circle,rgba(34,211,238,.33),rgba(34,211,238,0) 60%)}
+  /* D: depth */
+  .depth{background:radial-gradient(circle at 50% 38%,#0e1a33 0%,#03060f 72%)}
+  .bar{position:absolute;bottom:38px;width:90px;height:3px;border-radius:3px;background:linear-gradient(90deg,#22d3ee,#6366f1);opacity:.7}
+  .dim{filter:drop-shadow(0 6px 18px rgba(34,211,238,.18))}
+</style></head><body>
+<h1>スプラッシュ見直し — 構図×演出の方向（モーションは下に説明）</h1>
+<div class="row">
+
+  <div class="col">
+    <div class="phone"><img class="logo dim" src="public/icon-512.png"></div>
+    <div class="cap">A. 現行（ロゴのみ）</div>
+    <div class="mo">ロゴが scale-in → fade-out。最小・あっさり。</div>
+  </div>
+
+  <div class="col">
+    <div class="phone"><img class="logo dim" src="public/icon-512.png"><div class="name">AI Tech Researcher</div><div class="tag">毎日「育つ」AIリサーチ</div></div>
+    <div class="cap">B. ロゴ＋名前＋タグ</div>
+    <div class="mo">ロゴ scale-in → 名前が下からfade-up → タグ薄く。一番"ちゃんとしたアプリ"の起動画面。</div>
+  </div>
+
+  <div class="col">
+    <div class="phone glow"><img class="logo dim" src="public/icon-512.png" style="position:relative"><div class="name" style="position:relative">AI Tech Researcher</div></div>
+    <div class="cap">C. 電球が灯る（グロー）</div>
+    <div class="mo">暗→電球がポッと灯る(グローが膨らむ)＋ロゴ。"ひらめき"を演出。テーマと直結。</div>
+  </div>
+
+  <div class="col">
+    <div class="phone depth"><img class="logo dim" src="public/icon-512.png"><div class="name">AI Tech Researcher</div><div class="tag">毎日「育つ」AIリサーチ</div><div class="bar"></div></div>
+    <div class="cap">D. 奥行き＋ロード感</div>
+    <div class="mo">放射状の濃淡で奥行き＋下に細いプログレスバー(往復)。読み込み中の"生きてる"感。</div>
+  </div>
+
+</div>
+<p style="color:#64748b;font-size:12px;margin-top:22px;max-width:760px;line-height:1.6">
+※ もう1案「<b>新芽が育つ</b>」＝バルブ内の芽が伸びる/葉が開くアニメ（"育つ"の直球）。これだけは PNG では動かせず、アイコンを <b>インラインSVG で再現</b>して各パーツを animate する必要あり（少し手間・品質は最上）。
+</p>
+</body></html>

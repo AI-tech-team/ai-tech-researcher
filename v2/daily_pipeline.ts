@@ -3716,7 +3716,8 @@ async function ensureSources() {
     // AI特化の報道（一次情報を伝える層）
     { type: 'rss', value: 'https://siliconangle.com/category/ai/feed/',                            score: 6 }, // 30本/月
     { type: 'rss', value: 'https://spectrum.ieee.org/feeds/topic/artificial-intelligence.rss',     score: 7 }, // 15本/月
-    { type: 'rss', value: 'https://www.theregister.com/software/ai_ml/headlines.atom',            score: 6 }, // 14本/月
+    // ⚠ 外した: robots.txt で拒否されるので politeFetch が必ず空を返す（2026-09-14 実測）。
+    //   { type: 'rss', value: 'https://www.theregister.com/software/ai_ml/headlines.atom', score: 6 },
     { type: 'rss', value: 'https://www.sciencedaily.com/rss/computers_math/artificial_intelligence.xml', score: 6 }, // 9本/月
     { type: 'rss', value: 'https://rss.itmedia.co.jp/rss/2.0/aiplus.xml',                         score: 7 }, // ITmedia AI+ 専用。20本/月
     // ベンダーの技術ブログ（実装の一次情報）
@@ -3729,15 +3730,19 @@ async function ensureSources() {
     // 企業のML工学ブログ
     { type: 'rss', value: 'https://netflixtechblog.com/feed',                                     score: 7 }, // 2本/月
     { type: 'rss', value: 'https://engineering.atspotify.com/feed',                               score: 7 }, // 2本/月
+    // ⚠ GitHub の releases.atom は**全て外した**（2026-09-14 実測）。
+    //   github.com の robots.txt が拒否するので politeFetch が必ず空を返し、6本とも
+    //   「通算0件・一度も無し」のまま毎回 robots.txt を取りに行くだけになっていた。
+    //   リリース情報が要るなら GitHub API（/repos/{o}/{r}/releases）で取り直すこと。
     // GitHub のリリース（どのリポジトリにも releases.atom がある＝既存のRSS経路でそのまま取れる）
     // ⚠ セマンティックversionを出すものだけ。llama.cpp(b10936) と pytorch(trunk/ハッシュ) は
     //   ビルドタグを毎日出すので入れない。
-    { type: 'rss', value: 'https://github.com/ollama/ollama/releases.atom',                       score: 8 },
-    { type: 'rss', value: 'https://github.com/vllm-project/vllm/releases.atom',                   score: 8 },
-    { type: 'rss', value: 'https://github.com/huggingface/transformers/releases.atom',            score: 8 },
-    { type: 'rss', value: 'https://github.com/comfyanonymous/ComfyUI/releases.atom',              score: 7 },
-    { type: 'rss', value: 'https://github.com/unslothai/unsloth/releases.atom',                   score: 7 },
-    { type: 'rss', value: 'https://github.com/sgl-project/sglang/releases.atom',                  score: 7 },
+    // { type: 'rss', value: 'https://github.com/ollama/ollama/releases.atom',                       score: 8 },
+    // { type: 'rss', value: 'https://github.com/vllm-project/vllm/releases.atom',                   score: 8 },
+    // { type: 'rss', value: 'https://github.com/huggingface/transformers/releases.atom',            score: 8 },
+    // { type: 'rss', value: 'https://github.com/comfyanonymous/ComfyUI/releases.atom',              score: 7 },
+    // { type: 'rss', value: 'https://github.com/unslothai/unsloth/releases.atom',                   score: 7 },
+    // { type: 'rss', value: 'https://github.com/sgl-project/sglang/releases.atom',                  score: 7 },
     // Hugging Face（JSON API。専用の収集経路を持つ）
     { type: 'hf-models', value: 'https://huggingface.co/api/models',       score: 9 },
     { type: 'hf-papers', value: 'https://huggingface.co/api/daily_papers', score: 8 },
