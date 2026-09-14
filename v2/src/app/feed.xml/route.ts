@@ -1,5 +1,6 @@
 import { SITE_URL, SITE_NAME, SITE_DESC } from '@/lib/site';
 import { getReportsData } from '@/app/actions';
+import { safeHttpUrl } from '@/lib/safeUrl';
 
 // 公開レポート(daily/weekly/monthly)の全文RSS 2.0フィード。メール配信と同じ中身を一本化。
 // 配信ホットパスなのでCDNでサイドキャッシュ（getReportsData自体も60秒キャッシュ）。
@@ -36,9 +37,11 @@ function inlineHtml(text: string): string {
       out += `<a href="${SITE_URL}/articles/${idRef[1]}">[#${idRef[1]}]</a>`;
     } else if (link) {
       const [, label, url] = link;
-      // http(s)のみリンク化（javascript:等やグラウンディングのリダイレクトURLは弾く）
-      if (/^https?:\/\//.test(url) && !url.includes('vertexaisearch.cloud.google.com')) {
-        out += `<a href="${esc(url)}">${esc(label)}</a>`;
+      // ⚠ 判定をここに書き写さない（第四条 DRY）。同じ規則が3箇所にコピーされていて、
+      //   safeHttpUrl に入れたエンティティ解除（2026-09-15）がここだけ効かなかった。
+      const href = safeHttpUrl(url);
+      if (href) {
+        out += `<a href="${esc(href)}">${esc(label)}</a>`;
       } else {
         out += esc(label);
       }

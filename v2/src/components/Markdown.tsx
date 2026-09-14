@@ -1,6 +1,7 @@
 "use client";
 
 import React, { Fragment } from 'react';
+import { safeHttpUrl } from '@/lib/safeUrl';
 
 type ArticleRef = ((id: number) => void) | undefined;
 
@@ -28,9 +29,11 @@ function parseInline(text: string, onArticleRef?: ArticleRef): React.ReactNode {
       );
     } else if (link) {
       const [, label, url] = link;
-      // http(s)のみリンク化（javascript:等やリダイレクトURLは弾く）
-      if (/^https?:\/\//.test(url) && !url.includes('vertexaisearch.cloud.google.com')) {
-        parts.push(<a key={key++} href={url} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:text-sky-300 underline underline-offset-2">{label}</a>);
+      // ⚠ 判定をここに書き写さない。同じ規則が3箇所にコピーされていて、safeHttpUrl に
+      //   入れたエンティティ解除（2026-09-15）がここだけ効かなかった（第四条 DRY）。
+      const href = safeHttpUrl(url);
+      if (href) {
+        parts.push(<a key={key++} href={href} target="_blank" rel="noopener noreferrer" className="text-sky-400 hover:text-sky-300 underline underline-offset-2">{label}</a>);
       } else {
         parts.push(label);
       }

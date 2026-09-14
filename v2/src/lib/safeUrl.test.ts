@@ -42,3 +42,35 @@ test('safeHttpUrl: 危険スキームはnull、正常はそのまま', () => {
   assert.equal(safeHttpUrl(null), null);
   assert.equal(safeHttpUrl(''), null);
 });
+
+// ── 2026-09-15: 本番2,083件(8.8%)のURLにHTMLエンティティが生で残っていた回帰 ──
+// `#` はフラグメント開始なので、ブラウザは実測で **404ではなくHTTP 200の無関係な記事**へ飛んだ。
+// 静かに間違った場所へ運ぶので、リンク切れより害が大きい。
+test('ハイフンの数値参照を解いて本来の記事URLに戻す（gigazineの実データ）', () => {
+  assert.equal(
+    safeHttpUrl('https://gigazine.net/news/20260722&#45;block&#45;buzz/'),
+    'https://gigazine.net/news/20260722-block-buzz/',
+  );
+});
+
+test('クエリの &#038; を & に戻す（futurumgroupの実データ）', () => {
+  assert.equal(
+    safeHttpUrl('https://futurumgroup.com/insights/x/?utm_source=rss&#038;utm_medium=rss'),
+    'https://futurumgroup.com/insights/x/?utm_source=rss&utm_medium=rss',
+  );
+});
+
+test('エンティティを解いてから検査するので危険スキームは隠せない', () => {
+  assert.equal(safeHttpUrl('&#106;avascript:alert(1)'), null);
+  assert.equal(safeHttpUrl('&#100;ata:text/html,<script>'), null);
+});
+
+test('解いた結果に制御文字が現れたら弾く', () => {
+  assert.equal(safeHttpUrl('https://example.com/&#10;x'), null);
+  assert.equal(safeHttpUrl('https://example.com/&#9;x'), null);
+});
+
+test('エンティティを含まない普通のURLは1文字も変えない', () => {
+  const u = 'https://example.com/a/b?c=1&d=2#frag';
+  assert.equal(safeHttpUrl(u), u);
+});
