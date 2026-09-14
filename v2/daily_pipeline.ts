@@ -2470,6 +2470,20 @@ async function evolveSources() {
 
   console.log(`[Evolve] 昇格${promoted}, 降格${demoted}, 再活性化${reactivated}, 停止${stoppedCount}`);
 
+  // ⚠ キーワード候補が active になる唯一の道は、この直上の昇格（条件: 14日で3ヒット＋採用歴）。
+  //   ところがヒットは collectData が `status='active'` のソースしか巡回しないので発生しえない。
+  //   ＝**候補 → active の輪が閉じていない**。以降で作るキーワード候補は一度も巡回されず、
+  //   14日後に `daysSinceCreated >= 14` で必ず stopped になる。
+  //   実測（2026-09-15・backup_2026-09-13）: keyword型697件のうち **active は0件**、
+  //   候補40件の採用歴も **0件**、08-01以降の採用373件中 keyword は2件だけ。
+  //   修理する（候補を試験的に巡回させる）か撤去する（keywordRounds も発見も止める）かは
+  //   商品の判断なのでオーナーに委ねる。少なくとも黙って回り続けないように毎回言う。
+  const activeKw = await db.select({ n: count() }).from(schema.sources)
+    .where(and(eq(schema.sources.type, 'keyword' as any), eq(schema.sources.status, 'active')));
+  if (Number(activeKw[0]?.n ?? 0) === 0) {
+    console.warn('[Evolve] ⚠ activeなkeywordソースが0件。以降で作る候補は巡回されず14日後にstoppedになる（候補→activeの輪が閉じていない）');
+  }
+
   const highQualityData = await db.select({
     summary: schema.collectedData.summary,
     title: schema.collectedData.title,
