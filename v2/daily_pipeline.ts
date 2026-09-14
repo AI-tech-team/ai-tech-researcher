@@ -3026,12 +3026,19 @@ async function translateTitles(limit = 80): Promise<number> {
     .orderBy(sql`(${schema.collectedData.titleJa} IS NULL) DESC`, desc(schema.collectedData.createdAt))
     .limit(limit * 4);
 
-  const targets = rows.filter(r => {
+  const needing = rows.filter(r => {
     const t = r.title ?? '';
     if (!t || JA_CHAR.test(t)) return false;                 // 元から日本語のタイトル＝翻訳不要
     if (r.titleJa === t) return false;                       // 「訳しようがない」と判定済みの印（下を参照）
     return !r.titleJa || !JA_CHAR.test(r.titleJa);           // titleJa無し or 英語のまま残存
-  }).slice(0, limit);
+  });
+  // 滞留は**この窓の中で**数える。SQLのCOUNTでは数えられないため（下記）。
+  if (needing.length >= limit) {
+    console.warn(`[Translate] ⚠ 走査${rows.length}件中${needing.length}件が要翻訳 ≧ 1回の上限${limit}件＝窓が上限で埋まっている（滞留の疑い）`);
+  } else {
+    console.log(`[Translate] 走査${rows.length}件中${needing.length}件が要翻訳（1回の上限${limit}件）`);
+  }
+  const targets = needing.slice(0, limit);
   if (targets.length === 0) { console.log('[Translate] 対象なし'); return 0; }
 
   let translated = 0, marked = 0;
@@ -3079,10 +3086,13 @@ ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
     }
   }
   console.log(`[Translate] ${translated}件翻訳${marked ? ` / 訳しようのない題 ${marked}件に印` : ''}（候補${targets.length}件）`);
-  // 「英語のまま残った title_ja」の判定はJS側（JA_CHAR）なのでSQLでは数えられない。
-  // 曖昧でない部分＝**まだ一度も訳していない (title_ja IS NULL)** だけを正確に出す。
-  // 近似値を出して滞留を過小評価するより、確実に数えられる分だけを出す。
-  await reportBacklog('[Translate]', 'title IS NOT NULL AND title_ja IS NULL', limit);
+  // ⚠ ここで `reportBacklog('title_ja IS NULL')` を使ってはいけない（2026-09-14 に入れて即撤回）。
+  //   backup_2026-09-13 で実測: title_ja IS NULL は **10,674件**だが、うち **10,514件は
+  //   元から日本語のタイトル＝翻訳不要**。本当の未翻訳は **160件**しかない。
+  //   つまりそのCOUNTは滞留を**67倍に盛って**毎日「⚠滞留」を出し続ける＝警告が無視されるようになる。
+  //   「確実に数えられる分だけ出す」つもりが**過大**方向に外していた（過小だと思い込んでいた）。
+  //   翻訳要否の判定は JA_CHAR（JS側）にしか無く、SQLite には正規表現が無いので
+  //   COUNT では数えられない。→ 窓の中で数える（上）。
   return translated;
 }
 
