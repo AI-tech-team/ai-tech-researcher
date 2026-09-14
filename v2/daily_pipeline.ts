@@ -21,6 +21,7 @@ import { isAllowedPushEndpoint } from './src/lib/push-endpoint';
 import { PRIMARY_SOURCE_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY } from './src/lib/primary-sources';
 import { SITE_NAME, SITE_URL, SERVER_SITE_URL, CONTACT_EMAIL, OPERATOR_NAME, OPERATOR_ADDRESS } from './src/lib/site';
 import { firstNonEmpty } from './src/lib/env';
+import { mailMarkdownToHtml } from './src/lib/mail-markdown';
 
 /**
  * 配信メールの共通フッター。特定電子メール法4条が求める
@@ -1604,24 +1605,6 @@ function safeMailHref(u: string | null | undefined): string {
 }
 
 // 購読者メール（明るい背景）用：Markdown を本文フラグメントへ変換（<html>ラッパー無し）。
-function mdToLightHtml(md: string): string {
-  let html = md
-    .replace(/^## (.+)$/gm, '<h2 style="color:#0ea5e9;font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin:16px 0 8px">$1</h2>')
-    .replace(/^### (.+)$/gm, '<h3 style="color:#4f46e5;font-size:14px;margin:16px 0 4px">$1</h3>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code style="background:#f1f5f9;padding:2px 5px;border-radius:4px;font-family:monospace;font-size:0.9em">$1</code>')
-    .replace(/^- (.+)$/gm, '<li style="margin:3px 0;line-height:1.6">$1</li>')
-    .replace(/\n\n+/g, '\n\n');
-  html = html.replace(/(<li[^>]*>[\s\S]*?<\/li>\n?)+/g, m => `<ul style="padding-left:20px;margin:4px 0">${m}</ul>`);
-  html = html.replace(/\n\n/g, '</p><p style="margin:5px 0;line-height:1.7;color:#334155">');
-  html = html.replace(/\n/g, '<br>');
-  // ブロック要素（見出し/リスト）の前後に残る<br>と空段落を除去して間延びを防ぐ
-  html = html
-    .replace(/(?:<br>\s*)+(<(?:h2|h3|ul|li))/g, '$1')
-    .replace(/(<\/(?:h2|h3|ul|li)>)(?:\s*<br>)+/g, '$1')
-    .replace(/<p[^>]*>(?:\s|<br>)*<\/p>/g, '');
-  return `<p style="margin:5px 0;line-height:1.7;color:#334155">${html}</p>`;
-}
 
 // メール購読ユーザーへ日次の朝刊を配信する（全員同一・LLM不使用）。
 async function sendPersonalizedBriefs(reportText: string | null = null) {
@@ -1638,7 +1621,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
       .orderBy(desc(schema.reports.createdAt)).limit(1);
     reportMd = latest?.content ?? null;
   }
-  const reportHtml = reportMd ? mdToLightHtml(reportMd) : '';
+  const reportHtml = reportMd ? mailMarkdownToHtml(reportMd) : '';
 
   const recipients = await db.select({
     uid: schema.users.id, email: schema.users.email, name: schema.users.name,
