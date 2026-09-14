@@ -173,6 +173,22 @@ export async function getLandingDigest() {
   }
 }
 
+/**
+ * 「まだ出ていない」のか「いま繋がらない」のかを、**表示の文言を決めるためだけ**に確かめる。
+ *
+ * 経緯: 公開ページは actions の catch → return [] / null でfail-openするので、
+ * DBが全滅していても「今朝の朝刊は、まだ出ていません」と表示する。
+ * 2026-06-19〜07-08 の19日間の停止を誰も気づけなかったのと同じ形で、
+ * 読者には**休刊日に見える**。2026-09-14 の読み取り枠切れでも、トップの
+ * 「集めた記事を見る」を押すと /articles も空で「見つかりません」＝行き止まりになっていた。
+ *
+ * 監視は /api/health が担う（こちらは HTTP ステータスで落とす）。ここは**読者への言い方**だけを直す。
+ * 呼ぶのは「表示するものが無い」と分かった後だけなので、正常時はこのクエリは走らない。
+ */
+export async function isDbReachable(): Promise<boolean> {
+  try { await client.execute('SELECT 1'); return true; } catch { return false; }
+}
+
 export async function getSourcesData() {
   // ソース一覧(フィードURL/スコア/状態)は運用情報。公開UI(PublicApp)はsrcsを使わないため
   // オーナー限定にして匿名へのキュレーション戦略の露出を防ぐ（getCoreData経由でも非オーナーは[]）。

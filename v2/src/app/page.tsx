@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { RSS_ALTERNATE_TYPES } from '@/lib/site';
-import { getLandingDigest, getRecentDigests } from './actions';
+import { getLandingDigest, getRecentDigests, isDbReachable } from './actions';
 import { parseDigest, digestReadingSeconds } from '@/lib/digest';
 import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
 import { IssueHeader, BackIssues } from '@/components/digest/IssueHeader';
@@ -38,19 +38,35 @@ export default async function Page() {
   }
 
   if (!digest) {
+    // ⚠ 「まだ出ていない」と「いま繋がらない」を読者に言い分ける。
+    //   fail-open のせいで、DBが全滅していても休刊日と同じ画面になっていた
+    //   （2026-09-14 の読み取り枠切れでは「集めた記事を見る」の先も空で行き止まりだった）。
+    //   繋がらないと分かっているときに /articles へ送らないのが、この分岐のいちばんの目的。
+    const reachable = await isDbReachable();
     return (
       <div className={s.page}>
         <BrandNav />
         <main id="main-content" className={`${s.bandInk} ${s.band}`}>
           <div className={s.measure}>
             <p className={`${s.eyebrow} ${s.eyebrowInk}`}>朝刊</p>
-            <h1 className={`${s.displayJp} ${s.h2}`}>今朝の朝刊は、<br />まだ出ていません。</h1>
-            <p className={s.lead} style={{ marginTop: 26 }}>
-              毎朝6時に1号出ます。少し時間をおいてから、もう一度開いてみてください。
-            </p>
-            <div className={s.row} style={{ marginTop: 34 }}>
-              <Link className={`${s.btn} ${s.btnSolid}`} href="/articles">集めた記事を見る</Link>
-            </div>
+            {reachable ? (
+              <>
+                <h1 className={`${s.displayJp} ${s.h2}`}>今朝の朝刊は、<br />まだ出ていません。</h1>
+                <p className={s.lead} style={{ marginTop: 26 }}>
+                  毎朝6時に1号出ます。少し時間をおいてから、もう一度開いてみてください。
+                </p>
+                <div className={s.row} style={{ marginTop: 34 }}>
+                  <Link className={`${s.btn} ${s.btnSolid}`} href="/articles">集めた記事を見る</Link>
+                </div>
+              </>
+            ) : (
+              <>
+                <h1 className={`${s.displayJp} ${s.h2}`}>いま記事を<br />お見せできません。</h1>
+                <p className={s.lead} style={{ marginTop: 26 }}>
+                  こちらの不具合です。休刊ではありません。復旧しだい、いつもどおり毎朝6時に1号お届けします。
+                </p>
+              </>
+            )}
           </div>
         </main>
         <BrandFooter />
