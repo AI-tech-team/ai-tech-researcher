@@ -86,7 +86,14 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
     inLanguage: 'ja',
     author: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
     publisher: { '@type': 'Organization', name: SITE_NAME, logo: { '@type': 'ImageObject', url: `${SITE_URL}/icon-512.png` } },
-    image: `${SITE_URL}/icon-512.png`,
+    // 構造化データの画像は、このページ自身のOGカード（1200×630）を指す。
+    // ⚠ ここは `${SITE_URL}/icon-512.png`（512×512のアプリアイコン）だった。Google の
+    //   Article 構造化データは**幅1200px以上**を推奨しており、512pxでは満たさないうえ、
+    //   全ページが同じアプリアイコンを「このページの画像」として申告していた。
+    //   同じページに 1200×630 のカードが既にある（2026-09-15 本番実測: このルートは
+    //   200 / image/png / 約50KB で、Next が og:image にも自動注入している）。指し先を揃えるだけ。
+    //   publisher.logo はロゴなのでアイコンのままでよい。
+    image: { '@type': 'ImageObject', url: `${SITE_URL}/articles/${article.id}/opengraph-image`, width: 1200, height: 630 },
     mainEntityOfPage: `${SITE_URL}/articles/${article.id}`,
   };
 
