@@ -69,6 +69,21 @@ async function backup() {
   // content_chunks(本文チャンク)はダンプしない。中身が抽出本文そのもの＝公開リポジトリに置けない。
   // 復旧は PIPELINE_MODE=deep（本文再取得）→ PIPELINE_MODE=chunks（再チャンク＋再埋め込み）。
 
+  // ⚠ 中身が空のバックアップを書かない。
+  //   読み取りが落ちれば db.select() が投げてここへ来ないが、**接続先が違う空DB**だと
+  //   0件のまま正常終了して「全テーブル0件のバックアップ」を公開リポジトリにコミットしてしまう。
+  //   2026-07-08 の [[debug-db-split-brain]]（パイプラインとVercelが別DBを見ていた）は
+  //   まさにこの形で、サイトが19日間空だったのに誰も気づかなかった。
+  //   週ごとにファイル名が変わるので過去のバックアップは壊れないが、
+  //   **空を「その週のバックアップ」として残すのは嘘**なので、書かずに落ちる。
+  for (const key of ['collectedData', 'reports'] as const) {
+    const rows = out[key];
+    if (!Array.isArray(rows) || rows.length === 0) {
+      console.error(`[Backup] 中止: ${key} が0件。接続先DBが違う可能性があるため書き出さない。`);
+      process.exit(1);
+    }
+  }
+
   const filePath = join(dir, `backup_${date}.json`);
   writeFileSync(filePath, JSON.stringify(out, null, 2), 'utf-8');
 
