@@ -13,6 +13,7 @@ import { logError } from '@/lib/logError';
 import { PRIMARY_SOURCE_HOSTS, DIGEST_EXCLUDED_HOSTS, MIN_IMPORTANCE, MIN_IMPORTANCE_PRIMARY, isPrimarySource } from '@/lib/primary-sources';
 import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
 import { formatSpecificityReport } from './why-specificity';
+import { formatBacklog } from './backlog';
 
 // SQLite/libSQL の CURRENT_TIMESTAMP は 'YYYY-MM-DD HH:MM:SS'(空白区切り・UTC)で格納される。
 // 比較しきい値はこの形式に揃える（ISOの'T'区切りだと字句比較で境界日がズレる）。
@@ -521,6 +522,15 @@ export async function buildDailyReport(): Promise<DailyReportResult | null> {
 
   // 1社が朝刊を占拠しないようにドメイン上限を掛けてから上位40件に絞る
   const topRecent = pickTopWithDomainCap(rawRecent, TOP_N, PER_DOMAIN_CAP);
+
+  // 上限に当たり始めたら毎日ログに出す。この形の不具合（上限<流入で静かに欠落）は
+  // 本番で15箇所見つかっており、共通点は「当たっても誰も気づかない」ことだった。
+  // 2026-09-15 の実測では CANDIDATE_LIMIT は60日間一度も効いていない（最大63/120）。
+  // TOP_N が埋まる日があるのは仕様どおり（材料の上限であって掲載本数ではない）。→ src/lib/backlog.ts
+  console.log(formatBacklog([
+    { name: '候補', got: rawRecent.length, cap: CANDIDATE_LIMIT },
+    { name: '材料(TOP_N)', got: topRecent.length, cap: TOP_N },
+  ]));
 
   // 重複ストーリーを代表1件に集約
   const seenStory = new Set<number>();
