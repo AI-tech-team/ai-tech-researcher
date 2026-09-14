@@ -19,16 +19,12 @@
  *   メールクライアントは `<style>` や外部CSSを落とすので、装飾はインラインstyleで書く。
  */
 
-/**
- * 箇条書きの行頭。LLMは `*   ` を好んで出すので `-` だけを見てはいけない（上の経緯）。
- * 行頭の空白も許す: 5月の号は字下げした入れ子（`    * **実践的ヒント:** …`）を出しており、
- * 空白を許さない版で143号を通し直したら **1,133箇所**が素の `*` のまま残った（実測）。
- * 上限を6文字にしてあるのは、深く字下げした塊まで吸い込まないため。
- */
-const BULLET_RE = /^[ \t]{0,6}[-*+][ \t]+(.+)$/gm;
+import { BULLET_LINE, HR_LINE } from './markdown-lines';
 
-/** 水平線。`---` `***` `___` を3つ以上。箇条書きと衝突しないよう記号の後に何も許さない。 */
-const HR_RE = /^(?:-{3,}|\*{3,}|_{3,})$/gm;
+// 行の判定は markdown-lines.ts に集約（同じ規則のコピーを増やさない）。
+// `.replace` は全行に効かせたいので g フラグ付きに作り直す。
+const BULLET_RE = new RegExp(BULLET_LINE.source, 'gm');
+const HR_RE = new RegExp(HR_LINE.source, 'gm');
 
 export function mailMarkdownToHtml(md: string): string {
   let html = md
