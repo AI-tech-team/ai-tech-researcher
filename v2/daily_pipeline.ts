@@ -3079,6 +3079,10 @@ ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
     }
   }
   console.log(`[Translate] ${translated}件翻訳${marked ? ` / 訳しようのない題 ${marked}件に印` : ''}（候補${targets.length}件）`);
+  // 「英語のまま残った title_ja」の判定はJS側（JA_CHAR）なのでSQLでは数えられない。
+  // 曖昧でない部分＝**まだ一度も訳していない (title_ja IS NULL)** だけを正確に出す。
+  // 近似値を出して滞留を過小評価するより、確実に数えられる分だけを出す。
+  await reportBacklog('[Translate]', 'title IS NOT NULL AND title_ja IS NULL', limit);
   return translated;
 }
 
@@ -3208,6 +3212,10 @@ ${body}`,
     }
   }
   console.log(`[KeyPoints] ${done}件の要点を生成`);
+  // ⚠ ここは上限220/回に対し流入が221件/日（ピーク318）＝**ほぼ同数**。追い越されたら
+  //   滞留は二度と減らず、しかも並びは created_at DESC なので古い記事から永久に届かなくなる。
+  //   上限を勘で上げず、まず毎日「残りn件」を出す（[[pattern-throughput-starvation]] の恒久対策）。
+  await reportBacklog('[KeyPoints]', 'key_points IS NULL AND summary IS NOT NULL', limit);
   return done;
 }
 
