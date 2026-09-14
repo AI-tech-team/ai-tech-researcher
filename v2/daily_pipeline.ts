@@ -14,7 +14,7 @@ import { isSafeFetchUrl } from './src/lib/safeUrl';
 import { politeFetch } from './src/lib/robots';
 import { decodeHtmlEntities } from './src/lib/html-entities';
 import { parseFeedItems, filterByDate } from './src/lib/feed-parse';
-import { evalAt, INDEX_RULE, describeAlignment } from './src/lib/eval-align';
+import { evalAt, INDEX_RULE, describeAlignment, acceptKnownIds, describeIdMatch } from './src/lib/eval-align';
 import { dedupeByBaseModel, baseModelKey } from './src/lib/model-id';
 import { topByScore, spreadByDay } from './src/lib/collect-select';
 import { unsubscribeUrl } from './src/lib/unsubscribe-link';
@@ -3040,7 +3040,11 @@ async function translateTitles(limit = 80): Promise<number> {
 ${chunk.map(c => `[${c.id}] ${c.title}`).join('\n')}`,
       }));
       const orig = new Map(chunk.map(c => [c.id, c.title ?? '']));
-      for (const it of object.items) {
+      // モデルが返した id をそのまま主キーにしない（渡した25件の外なら無関係な記事を書き換える）
+      const picked = acceptKnownIds(object.items, orig.keys());
+      const note = describeIdMatch(picked);
+      if (note) console.warn(`  [Translate]${note}`);
+      for (const it of picked.ok) {
         // 上のプロンプトで渡した `[id] ` を訳文にそのまま残すことがある。頼んでも守られないので
         // ここで剥がす（本番で1,732件が「[21984] …」の形で公開面に出ていた・src/lib/title-prefix.ts）。
         const ja = it.titleJa ? stripIdPrefix(it.titleJa, it.id) : '';
@@ -3104,7 +3108,10 @@ async function translateSummaries(limit = 80, scanRows = limit * 4): Promise<num
 
 ${chunk.map(c => `[${c.id}] ${c.title}\n${c.summary}`).join('\n\n')}`,
       }));
-      for (const it of object.items) {
+      const picked = acceptKnownIds(object.items, chunk.map(c => c.id));
+      const note = describeIdMatch(picked);
+      if (note) console.warn(`  [TranslateSum]${note}`);
+      for (const it of picked.ok) {
         if (!it.summaryJa || !JA_CHAR.test(it.summaryJa)) continue; // 日本語が無い訳は書かない
         await db.update(schema.collectedData)
           .set({ summary: it.summaryJa.slice(0, 300) })
@@ -3176,7 +3183,10 @@ async function enrichKeyPoints(limit = 60): Promise<number> {
 ${body}`,
       }));
 
-      for (const it of object.items) {
+      const picked = acceptKnownIds(object.items, chunk.map(c => c.id));
+      const note = describeIdMatch(picked);
+      if (note) console.warn(`  [KeyPoints]${note}`);
+      for (const it of picked.ok) {
         if (!it.keyPoints?.length) continue;
         await db.update(schema.collectedData)
           .set({
@@ -3222,7 +3232,10 @@ async function translateClaims(limit = 200): Promise<number> {
 
 ${chunk.map(c => `[${c.id}] subject:${c.subject} / predicate:${c.predicate} / value:${c.value}`).join('\n')}`,
       }));
-      for (const it of object.items) {
+      const picked = acceptKnownIds(object.items, chunk.map(c => c.id));
+      const note = describeIdMatch(picked);
+      if (note) console.warn(`  [ClaimTrans]${note}`);
+      for (const it of picked.ok) {
         if (!it.predicate && !it.value) continue;
         await db.update(schema.claims)
           .set({ predicate: it.predicate.slice(0, 80), value: it.value.slice(0, 150) })

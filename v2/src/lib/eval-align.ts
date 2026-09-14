@@ -43,3 +43,45 @@ export function describeAlignment<T extends { index?: number }>(evals: T[], n: n
   if (inRange !== uniq.size) return `⚠ index が範囲外を含む（${uniq.size}個中${inRange}個が有効）`;
   return `index で対応（${inRange}/${n}件）`;
 }
+
+/**
+ * LLMが返してきた `id` を、**そのバッチで渡した id だけ**に絞る。
+ *
+ * ⚠ 2026-09-14 の点検で見つけた、上の位置対応と同じ家系の穴。
+ *   翻訳・要点生成の4経路（translateTitles / translateSummaries / generateKeyPoints /
+ *   translateClaims）は `.where(eq(table.id, it.id))` と、**モデルが返した数値を
+ *   そのまま主キーにして UPDATE** していた。渡した25件のどれでもない id が返れば、
+ *   無関係な行の summary や keyPoints を上書きして元の値を消す。
+ *   位置で突き合わせるのをやめても、**キーを検証していなければ結局モデルを信じている**。
+ *
+ *   件数チェックでは見つからない（件数は合ったまま中身だけ別行に飛ぶ）のも前回と同じ。
+ *
+ * 重複も落とす。同じ id が2回返ると「最後の1件が黙って勝つ」＝どちらが採用されたか
+ * ログにも残らないため、両方捨てて件数に出す方が安全側（書き込みは回復不能）。
+ */
+export function acceptKnownIds<T extends { id: number }>(
+  items: T[] | null | undefined,
+  allowed: Iterable<number>,
+): { ok: T[]; unknown: number; duplicated: number } {
+  const allow = allowed instanceof Set ? allowed : new Set(allowed);
+  const seen = new Set<number>();
+  const dup = new Set<number>();
+  let unknown = 0;
+  const kept: T[] = [];
+  for (const it of items ?? []) {
+    if (it == null || typeof it.id !== 'number' || !allow.has(it.id)) { unknown++; continue; }
+    if (seen.has(it.id)) { dup.add(it.id); continue; }
+    seen.add(it.id);
+    kept.push(it);
+  }
+  const ok = dup.size === 0 ? kept : kept.filter(it => !dup.has(it.id));
+  return { ok, unknown, duplicated: dup.size };
+}
+
+/** acceptKnownIds の結果を1行で表す（問題が無ければ空文字＝ログを汚さない） */
+export function describeIdMatch(r: { unknown: number; duplicated: number }): string {
+  const parts: string[] = [];
+  if (r.unknown) parts.push(`渡していないid ${r.unknown}件`);
+  if (r.duplicated) parts.push(`重複id ${r.duplicated}種`);
+  return parts.length ? ` ⚠ 破棄: ${parts.join(' / ')}` : '';
+}
