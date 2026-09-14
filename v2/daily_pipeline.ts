@@ -3694,7 +3694,25 @@ async function logPipeline(collected: number, failed: number, durationMs: number
       failed,
       durationMs,
     });
-    console.log(`[Log] パイプライン記録: 収集${collected}件, 失敗${failed}件, ${Math.round(durationMs / 1000)}秒`);
+    // ⚠ 記録するだけで誰も読んでいなかった（pipeline_logs 369件に対し、本番コードに SELECT が1件も無い）。
+    //   そのせいで 2026-09-13 18:49 の回が 2,531秒（直近の中央値173秒）だったことに誰も気づいていない。
+    //   書いている数字を、その場で直近の実績の隣に置く。
+    //
+    // ⚠ しきい値で警告は出さない。`pipeline_logs` は **どのモードで動いたかを記録していない** ので、
+    //   収集の回と夜間の重い回が同じ列に混ざっている。実際「中央値の3倍で警告」を全369回に当てると
+    //   **364回中109回（29.9%）鳴った**（09-07〜09-11 の21時台が毎晩2,200〜3,100秒＝別モードの正常値）。
+    //   3回に1回鳴る警告は読まれない。比較の土台が無いので、判定せず数字を並べるだけにする。
+    //   モード列を足して初めて警告にできる（本番スキーマ変更なので枠が戻ってから）。
+    const hist = await client.execute('SELECT duration_ms AS d, collected AS c FROM pipeline_logs ORDER BY id DESC LIMIT 11');
+    const past = (hist.rows as any[]).slice(1); // 先頭は今入れた自分自身なので外す
+    let ctx = '';
+    if (past.length >= 5) {
+      const med = (xs: number[]) => { const a = xs.slice().sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
+      const medD = Math.round(med(past.map(r => Number(r.d ?? 0))) / 1000);
+      const medC = med(past.map(r => Number(r.c ?? 0)));
+      ctx = `（直近${past.length}回の中央値: 収集${medC}件 / ${medD}秒・モード混在のため参考値）`;
+    }
+    console.log(`[Log] パイプライン記録: 収集${collected}件, 失敗${failed}件, ${Math.round(durationMs / 1000)}秒${ctx}`);
   } catch (e: any) {
     console.warn('[Log] ログ記録失敗(非クリティカル):', e.message);
   }
