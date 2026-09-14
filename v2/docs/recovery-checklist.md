@@ -62,6 +62,10 @@
   - 代案（connection()が効かない場合）: 障害中は `throw` して `error.tsx` に任せる。
     Next は throw した描画をISRに格納しないはずだが、これも実機確認が要る。
     ただし文面の質は落ちる（`error.tsx` は汎用文）のでトレードオフ。
+  - **範囲が狭まった（㊹・2026-09-15 実測）**: 汚染されるのは ISR が実際に効いている
+    `/articles/[id]` と `/reports/[id]` の2ルートだけ。`/topic/[name]` と `/category/[name]` は
+    `X-Nextjs-Prerender` が付かず `no-store` ＝ 元からCDNに載らないので、この件の対象外。
+    （`/topic` にあった `revalidate` は `generateStaticParams` が無く無効だったため撤去済み）
 
 - [ ] **RSSの503が正しく出るか**（㊱で入れたガード）
   - `curl -sD - https://cernoval.com/feed.xml -o /dev/null` で **200 かつ `<item>` が入っている**こと。
