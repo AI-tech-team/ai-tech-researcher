@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { OutageNotice } from '@/components/OutageNotice';
 import { SITE_NAME, SITE_URL, RSS_ALTERNATE_TYPES } from '@/lib/site';
-import { getReportById, getAdjacentReports } from '@/app/actions';
+import { getReportById, getAdjacentReports, isDbReachable } from '@/app/actions';
 import { parseDigest, digestReadingSeconds } from '@/lib/digest';
 import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
 import { IssueHeader } from '@/components/digest/IssueHeader';
@@ -43,7 +44,13 @@ export const revalidate = 3600;
 export default async function ReportPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const report = await getReportById(Number(id));
-  if (!report) notFound();
+  // 0件は「無い」とは限らない。DBが落ちていれば実在する記事でも null が返る。
+  // ここで notFound() を投げると、revalidate=3600 のせいで**復旧後も最大1時間**
+  // 「見つかりません」を配り続ける。→ src/components/OutageNotice.tsx
+  if (!report) {
+    if (!(await isDbReachable())) return <OutageNotice what="レポート" />;
+    notFound();
+  }
 
   const label = TYPE_LABEL[report.type] ?? 'レポート';
   const content = report.content ?? '';

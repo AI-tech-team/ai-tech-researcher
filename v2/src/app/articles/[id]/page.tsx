@@ -2,11 +2,12 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { cache } from 'react';
 import { notFound } from 'next/navigation';
+import { OutageNotice } from '@/components/OutageNotice';
 import { ArrowLeft } from 'lucide-react';
 import { SITE_NAME, SITE_URL, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { BrandNav, BrandFooter } from '@/components/digest/BrandChrome';
 import s from '@/styles/brand.module.css';
-import { getArticleById } from '@/app/actions';
+import { getArticleById, isDbReachable } from '@/app/actions';
 import { ArticleView } from '@/components/ArticleView';
 import { JsonLd } from '@/components/JsonLd';
 import { safeHttpUrl } from '@/lib/safeUrl';
@@ -54,7 +55,13 @@ export const revalidate = 3600;
 export default async function ArticlePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const article = await getArticle(Number(id));
-  if (!article) notFound();
+  // 0件は「無い」とは限らない。DBが落ちていれば実在する記事でも null が返る。
+  // ここで notFound() を投げると、revalidate=3600 のせいで**復旧後も最大1時間**
+  // 「見つかりません」を配り続ける。→ src/components/OutageNotice.tsx
+  if (!article) {
+    if (!(await isDbReachable())) return <OutageNotice what="記事" />;
+    notFound();
+  }
 
   // このページを Article として構造化する。
   // ⚠ 主張しているのは「元記事」ではなく**この解説ページ**。見出し・要約・要点はこちらの著作物で、
