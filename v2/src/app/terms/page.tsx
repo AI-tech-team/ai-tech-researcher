@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { SITE_NAME, CONTACT_EMAIL, RSS_ALTERNATE_TYPES } from '@/lib/site';
+import { SITE_NAME, CONTACT_EMAIL, CONTACT_POINT, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
@@ -74,7 +74,7 @@ export default function TermsPage() {
           技術的・業務的・投資的な判断は、必ず一次情報をご確認のうえ利用者ご自身の責任で行ってください。
         </p>
         <p className="text-sm text-slate-400 leading-relaxed mt-3">
-          本サービスに掲載された記述に事実と異なる点を発見された場合は、下記の窓口までご連絡ください。
+          本サービスに掲載された記述に事実と異なる点を発見された場合は、{CONTACT_POINT}までご連絡ください。
           確認のうえ、速やかに訂正または削除します。
         </p>
 

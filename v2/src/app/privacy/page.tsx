@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { SITE_NAME, SITE_HOST, CONTACT_EMAIL, RSS_ALTERNATE_TYPES } from '@/lib/site';
+import { SITE_NAME, SITE_HOST, CONTACT_EMAIL, CONTACT_POINT, RSS_ALTERNATE_TYPES } from '@/lib/site';
 import { BrandNav } from '@/components/digest/BrandChrome';
 
 export const metadata: Metadata = {
@@ -170,7 +170,7 @@ export default function PrivacyPage() {
           あわせて、Googleアカウントとの連携解除は
           <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer"
             className="text-sky-400 hover:text-sky-300 underline underline-offset-2"> Googleアカウントのアクセス管理</a>
-          からも行えます。その他、保有する個人データの開示・訂正・利用停止・削除をご希望の場合は、{CONTACT_EMAIL ? '下記の窓口' : '運営者'}までご連絡ください。本人確認のうえ、法令に従って速やかに対応します。
+          からも行えます。その他、保有する個人データの開示・訂正・利用停止・削除をご希望の場合は、{CONTACT_POINT}までご連絡ください。本人確認のうえ、法令に従って速やかに対応します。
         </p>
 
         {/* 公開ログインはEU居住者も来る＝GDPR適用前提（v2/CLAUDE.md 第三条）。
@@ -193,7 +193,7 @@ export default function PrivacyPage() {
             同意はいつでも撤回でき、撤回前の処理の適法性には影響しません。</li>
           <li><span className="text-slate-200">あなたの権利</span> — アクセス（15条）、訂正（16条）、消去（17条）、
             処理の制限（18条）、データポータビリティ（20条）、異議（21条）、同意の撤回（7条3項）を行使できます。
-            退会はサイト上でいつでも実行でき、その他の請求は下記の窓口で受け付けます。</li>
+            退会はサイト上でいつでも実行でき、その他の請求は{CONTACT_POINT}までお申し出ください。</li>
           <li><span className="text-slate-200">国外移転</span> — ホスティング・データベース・認証に米国等のクラウド事業者を利用しており、
             移転は各事業者の標準契約条項（SCC）または十分性認定に基づいて行われます。</li>
           <li><span className="text-slate-200">苦情の申立て</span> — お住まいの国の監督機関（英国は ICO）に苦情を申し立てる権利があります。</li>
@@ -214,7 +214,7 @@ export default function PrivacyPage() {
             アプリ内の操作（お気に入り／後で読む／既読）は保存した記事を端末間で引き継ぐために利用します。
             これ以外の目的には利用しません。</li>
           <li><span className="text-slate-200">開示等の請求に応じる手続</span> — 開示・訂正・追加・削除・利用停止・第三者提供の停止のご請求は、
-            下記の窓口で受け付けます。ご本人であることを確認のうえ、法令に従って対応します。手数料はいただきません。</li>
+            {CONTACT_POINT}までお申し出ください。ご本人であることを確認のうえ、法令に従って対応します。手数料はいただきません。</li>
           <li><span className="text-slate-200">苦情の申出先</span> — 本サービスの個人データの取り扱いに関するお申し出も、同じ窓口で受け付けます。</li>
         </ul>
 
