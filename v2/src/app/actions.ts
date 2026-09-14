@@ -105,6 +105,17 @@ async function overlayUserState<T extends { id: number; isFavorited?: number | n
 
 // ─── データ取得 ───────────────────────────────────────────────────
 
+/**
+ * 本文が空の号を公開面から外す述語。
+ *
+ * 空の号が実在する: id=81（2026-06-09・daily）。当時 LLM が空応答を返し、それを**検証せずに保存**した
+ * （[[debug-empty-report-digest]] / 生成側は b19d4a4 で修正済み）。行は消していないのでDBに残っている。
+ * `getRecentDigests` だけがこの条件を持っていたため、**バックナンバー一覧には出ないのに
+ * sitemap・RSS・前号/次号ナビには出る**という食い違いが起きていた。1か所に置いて揃える。
+ */
+const EMPTY_REPORT_EXCLUDED = sql`length(${reports.content}) > 0`;
+
+
 // 公開してよいレポート種別は daily/weekly/monthly のみ（ホワイトリスト/fail-closed）。
 // briefing/learning_recap/cross_insight/corpus_health 等の内部レポートは新種別が増えても既定で非公開。
 // （"use server" ファイルは async 関数しか export できないため定数化はせずクエリ内に直書きする）
@@ -125,7 +136,16 @@ export async function getReportsData(limit = 40, contentChars = 800) {
       createdAt: reports.createdAt,
       content: chars > 0 ? sql<string | null>`substr(${reports.content}, 1, ${chars})` : reports.content,
     }).from(reports)
-      .where(sql`${reports.type} IN ('daily', 'weekly', 'monthly')`)
+      .where(and(
+        sql`${reports.type} IN ('daily', 'weekly', 'monthly')`,
+        // ⚠ 本文が空の号を公開面に出さない（2026-09-15 追加）。
+        //   2026-06-09 に LLM が空応答を返した日次レポートが**検証されずに保存**されていて、
+        //   その行（id=81）が今もDBに残っている（生成側は b19d4a4 で修正済みだが行は消していない）。
+        //   `getRecentDigests` は最初からこの条件を持っていたのでバックナンバー一覧には出ないが、
+        //   ここを使う **sitemap と RSS には出ていた**＝クローラと購読者に中身ゼロの号を配っていた。
+        //   条件は3か所（ここ・getRecentDigests・getAdjacentReports）で揃える。
+        EMPTY_REPORT_EXCLUDED,
+      ))
       .orderBy(desc(reports.createdAt))
       .limit(lim));
   } catch (error) {
@@ -148,7 +168,7 @@ export async function getLandingDigest() {
     const [latest, prev] = await db.select({
       id: reports.id, reportDate: reports.reportDate, createdAt: reports.createdAt, content: reports.content,
     }).from(reports)
-      .where(and(eq(reports.type, 'daily'), sql`length(${reports.content}) > 0`))
+      .where(and(eq(reports.type, 'daily'), EMPTY_REPORT_EXCLUDED))
       .orderBy(desc(reports.createdAt))
       .limit(2);
     if (!latest?.content) return null;
@@ -319,11 +339,16 @@ export async function getArticlesByTag(tag: string, limit = 40, offset = 0): Pro
 export async function getAdjacentReports(type: string, reportDate: string): Promise<{ prev: { id: number; reportDate: string } | null; next: { id: number; reportDate: string } | null }> {
   try {
     if (!['daily', 'weekly', 'monthly'].includes(type)) return { prev: null, next: null };
+    // ⚠ 本文が空の号へ**リンクしない**（2026-09-15 追加）。バックナンバー一覧は
+    //   `length(content) > 0` で隠しているのに、ここには条件が無かった。実データで確認すると
+    //   2026-06-08 の「次号」と 2026-06-10 の「前号」が、どちらも本文が空の id=81（2026-06-09）を
+    //   指していた＝読者が次号ボタンを押すと**中身ゼロの紙面**に着く導線が2本あった。
+    //   （id=81 は 2026-06-09 のLLM空応答事故の残骸。生成側は修正済みだが行は残っている）
     const [prev] = await db.select({ id: reports.id, reportDate: reports.reportDate })
-      .from(reports).where(and(eq(reports.type, type), sql`${reports.reportDate} < ${reportDate}`))
+      .from(reports).where(and(eq(reports.type, type), sql`${reports.reportDate} < ${reportDate}`, EMPTY_REPORT_EXCLUDED))
       .orderBy(desc(reports.reportDate)).limit(1);
     const [next] = await db.select({ id: reports.id, reportDate: reports.reportDate })
-      .from(reports).where(and(eq(reports.type, type), sql`${reports.reportDate} > ${reportDate}`))
+      .from(reports).where(and(eq(reports.type, type), sql`${reports.reportDate} > ${reportDate}`, EMPTY_REPORT_EXCLUDED))
       .orderBy(asc(reports.reportDate)).limit(1);
     return { prev: prev ?? null, next: next ?? null };
   } catch (error) {
@@ -1125,7 +1150,8 @@ export async function getRecentDigests(limit = 7, excludeId?: number) {
     }).from(reports)
       .where(and(
         eq(reports.type, 'daily'),
-        sql`length(${reports.content}) > 0`,
+        // 空の号を出さない条件は EMPTY_REPORT_EXCLUDED に集約（同じ規則のコピーを増やさない）
+        EMPTY_REPORT_EXCLUDED,
         excludeId ? sql`${reports.id} <> ${excludeId}` : sql`1 = 1`,
       ))
       .orderBy(desc(reports.createdAt))
