@@ -2647,3 +2647,45 @@ Next のルートファイルはHTTPメソッドとセグメント設定を出�
 言えるのは「1訪問あたりの読み取りが 5本 → 0本（同一インスタンス・5分以内）になった」までで、
 枠切れの原因を特定したわけではない。
 
+## 52【提案・未実施】読む人がいない `content_chunks` に毎日書き込んでいる（2026-09-15）
+
+**状態**: 測って証拠は揃えたが、**実行していない**。パイプラインの挙動変更とテーブル削除は
+破壊操作なので本人のGOが要る（[[feedback-proposal-go]]・行動原則5）。
+
+**事実（すべて機械的に確認）**:
+1. `src/lib/retrieval.ts`（`hybridSearch` / `graphContext` / `cachedQueryEmbed`）は
+   **アプリから1箇所も import されていない**。参照は `scripts/test_retrieval.ts`（手動確認用）と、
+   `daily_pipeline.ts` / `scripts/migrate_v9_search.ts` の**コメント内の言及**だけ。
+   チャットと夜間リサーチを撤去した 2026-07-07 の取り残し。
+2. `content_chunks` を**読む**のは `retrieval.ts:87` だけ。つまり読む人がいない。
+3. それなのに日次パイプラインは `runChunkEmbeddings()` で書き続けている。
+   呼び出しは `runChunkEmbeddings(envLimit('CHUNK_LIMIT', 2000, 10000))`（フル実行）と
+   `runChunkEmbeddings(250)`（自己修復）。**1記事あたり最大8チャンク**。
+4. 対象条件は `raw_content IS NOT NULL AND importance_score >= 7`。
+   **`importance_score >= 7` は全23,649件中19,010件＝80.4%**に当たり、フィルタとして効いていない。
+   日次の新規該当は中央値 **179件/日**（8月以降・最大284件/日）。
+5. 公開検索（`actions.ts` の `relatedByPRF`）が使うのは**記事レベルの `collected_embedding_idx`** で、
+   チャンクは一切使っていない。＝チャンクを止めても検索は壊れない。
+
+**なぜ重いか**: [[reference-vector-index-cost]] の実測で、チャンク処理の律速は
+**DB書込 1.9秒/件＝埋め込みの158倍**。埋め込みAPIの金額は小さくても、
+**Turso への書き込みが本体**で、いまその Turso が枠切れで止まっている。
+さらに [[pattern-coverage-is-not-outcome]] に「チャンク47%化が検索を**-30pt**にしていた
+（利得ゼロで枠だけ占拠）」という記録もある＝**増やしても良くならないことは既に実証済み**。
+
+**もう1つの実害**: `cachedQueryEmbed` は**匿名から到達しうる唯一のGemini課金経路**の形をしている。
+いま呼ばれていないので発火しないが、うっかり繋ぐと誰でも埋め込みAPIを叩ける。
+
+**提案（どれもGO待ち・順に重くなる）**:
+- (a) `runChunkEmbeddings()` の呼び出しを止める（1行コメントアウト＋理由）。**可逆・データは消えない**。
+- (b) `src/lib/retrieval.ts` と `scripts/test_retrieval.ts` を削除する（[[cleanup-dead-code]]）。
+      `/api/health` の `chunk_embedding_idx` 監視もあわせて外す。
+- (c) `content_chunks` テーブルと `chunk_embedding_idx` を落とす。**不可逆**。再生成にはコストがかかる。
+
+**残す判断もありうる**: RAG（チャット等）を戻す予定があるなら、チャンクは資産。
+その場合でも (a) だけ止めて「戻すときに作り直す」のが一番安い。
+
+**言えないこと**: `content_chunks` の現在の行数と、日次で実際に何行書いているかは**測れていない**
+（Turso が BLOCKED、バックアップは第三条でチャンクを含めない）。上の数字は
+「対象になりうる記事数」と「1記事あたりの上限」から出した**上限の見積り**であって実績値ではない。
+
