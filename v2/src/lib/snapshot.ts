@@ -106,3 +106,29 @@ export function snapshotArticleById(id: number): Record<string, unknown> | null 
 export function snapshotArticleCount(): number {
   return S.articles.length;
 }
+
+/**
+ * 延命中の簡易検索。載っている最新1,500件の題・和題・要約・タグを**部分一致**で拾う。
+ *
+ * ⚠ 本来の検索は kuromoji の形態素解析＋BM25＋ベクトル＋GraphRAG の3レーン（[[search-overhaul]]）。
+ *   それらは索引がDBにあるので延命中は引けない。ここは代役であって同じものではない。
+ * ⚠ **黙って0件を返さない**ことがこの関数の目的。分岐が無いと `searchArticles` が BLOCKED で
+ *   例外→catch→`[]` となり、`isDbReachable()` は延命中 true を返すので、画面には
+ *   「見つかりませんでした」とだけ出る＝検索が動いているように見えて何も出ない状態になる。
+ *
+ * 並べ替えは「題に入っている > 要約に入っている」→ 同点なら重要度→新しい順。
+ * 日本語なので単語境界は使えない。空白で切って**全語を含む**ものだけ通す（AND）。
+ */
+export function snapshotSearch(query: string, limit: number): Record<string, unknown>[] {
+  const terms = query.toLowerCase().split(/[\s　]+/).filter((t) => t.length > 0).slice(0, 6);
+  if (!terms.length) return [];
+  const scored: { a: Record<string, unknown>; s: number }[] = [];
+  for (const a of S.articles) {
+    const title = `${a.title ?? ''} ${a.titleJa ?? ''}`.toLowerCase();
+    const body = `${a.summary ?? ''} ${a.tags ?? ''}`.toLowerCase();
+    if (!terms.every((t) => title.includes(t) || body.includes(t))) continue;
+    const hitTitle = terms.filter((t) => title.includes(t)).length;
+    scored.push({ a, s: hitTitle * 1000 + Number(a.importanceScore ?? 0) });
+  }
+  return scored.sort((x, y) => y.s - x.s).slice(0, clamp(limit, 1, 100)).map((x) => x.a);
+}

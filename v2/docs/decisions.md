@@ -2948,3 +2948,38 @@ Googleフォーム（`FEEDBACK_FORM_ACTION` / `FEEDBACK_ENTRY`）を用意する
     読めない状態でビルドが完走する**）。`next start` して `/` `/articles` `/reports/324`
     `/articles/26178` `/feed.xml` `/topic` が全て 200 で中身を返すこと、
     デスクトップ／モバイルの版面を実機スクショで確認。tsc クリーン・314テスト通過。
+
+62. **朝刊の発行とメール配信を、Turso を一切引かずに続ける（2026-09-15）**
+    決定: GitHub Actions のランナーの中にローカルSQLite（`v2/.work.db`）を1つ立て、そこで
+    パイプラインを回す。接続先の差し替えは `TURSO_DATABASE_URL=file:./.work.db` の1行だけ。
+    理由: 61 のスナップショットで**読む**方は延命できたが、**書く**方（収集・朝刊生成・配信）は
+    DB読み取りに依存していて止まったままだった。商品は「毎朝3〜5本のダイジェスト」なので、
+    16日間これが出ないのは延命になっていない（[[cernoval-concept]]）。
+    成立の根拠は先に測った: ローカル `file:` の libSQL で `libsql_vector_idx` / `vector32` /
+    `vector_distance_cos` / `vector_top_k` / FTS5(trigram) / `bm25()` が**全部動く**こと、
+    DB接続が `src/db/index.ts` も `daily_pipeline.ts` も `process.env.TURSO_DATABASE_URL` を
+    見ているだけで**コード変更が要らない**ことを確認してから着手した。
+    構成: `scripts/bootstrap_workdb.ts`（週次バックアップ→work.db・drizzle-kit push でDDLを
+    二重管理しない）/ `scripts/build_snapshot.ts --from-db`（work.db→スナップショット）/
+    run.yml の延命ステップ群（キャッシュ復元→無ければbootstrap→パイプライン→スナップショット→
+    コミット→キャッシュ保存）。切り替えはリポジトリ変数 `OFFLINE_MODE=1` の**1本**で、
+    10月1日に消せば元の経路がそのまま戻る（Vercel 側の `SNAPSHOT_MODE=1` と対になる）。
+    不採用: **BLOCKED を検知して自動でオフラインに落ちる**設計。61 と同じ理由で、
+    自動切替は「いつ切り替わったのか分からないまま古いものを配る」状態を作る。
+    不採用: **work.db をリポジトリにコミットする**。41MB×毎日は公開リポジトリに載せられない。
+    Actions のキャッシュ（10GB/repo・7日失効だが毎日触るので生き続ける）で持ち回す。
+    ただしキャッシュは保証されないので、**飛んだときに発行済みの号が消えない**ように、
+    bootstrap の最後でコミット済み `snapshot.json` から reports を補填する（313→314 で実証）。
+    スナップショットのコミットは**1日2回に絞った**（4.2MBを毎回積むと16日で100MB超）。
+    影響（承知のうえで落としたもの）: 埋め込み・知識抽出・チャンクは走らせない
+    （ベクトルが無いので意味が無く、Gemini の課金区分も増やさない）。その結果
+    **story による重複排除が効かない**＝同じ話題が複数載りうる。トピック面は 61 の通り対象外。
+    配信先: work.db には users / user_profiles が無い（PIIなのでバックアップ対象外）。
+    env `OFFLINE_RECIPIENTS`（`メール[:表示名]` のカンマ区切り・**secret でのみ渡す**）から読む。
+    uid が取れないので配信停止URLに署名できず、`signed=false` としてフッターと
+    `List-Unsubscribe` をプロフィール導線に退避する。**`List-Unsubscribe-Post` は名乗らない**
+    （署名なしで One-Click を名乗ると、Gmail が退避先にPOSTして「解除済み」と嘘を表示する）。
+    検証: work.db で `PIPELINE_MODE=collect` が完走（収集151件・翻訳76件・朝刊 id=325 を生成、
+    1,694字）／`--from-db` のスナップショットで `next build --webpack` が通る／
+    `OFFLINE_RECIPIENTS` の解釈を認証を落として確認（3件中2件採用・壊れた値は捨てる・
+    ログにメールを出さず `env#0` と出る）。

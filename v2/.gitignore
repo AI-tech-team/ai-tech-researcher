@@ -59,3 +59,10 @@ next-env.d.ts
 .vercel
 
 .vercel
+
+# 延命モード（2026-09-15〜）の作業DB。41MBあるのでコミットしない。
+# 中身は backups/ から作り直せる（scripts/bootstrap_workdb.ts）。GitHub Actions ではキャッシュで持ち回す。
+.work.db
+.work.db-shm
+.work.db-wal
+.probe-*.db

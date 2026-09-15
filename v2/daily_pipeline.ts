@@ -1614,6 +1614,39 @@ function safeMailHref(u: string | null | undefined): string {
   return escapeHtml(u);
 }
 
+type BriefRecipient = { uid: number | null; email: string; name: string | null; displayName: string | null };
+
+/**
+ * 配信先を取り出す。通常は DB（user_profiles.email_opt_in = 1 の購読者）。
+ *
+ * 延命中（Turso の読み取り枠切れ・2026-09-15〜10-01）は作業DBに users / user_profiles が
+ * **無い**（PII なのでバックアップ対象外）ので、env `OFFLINE_RECIPIENTS` から読む。
+ *   書式: `メールアドレス[:表示名]` をカンマ区切り
+ * ⚠ この値は GitHub Actions の secret でだけ渡すこと。リポジトリにもスナップショットにも
+ *   メールアドレスを入れてはいけない。
+ * ⚠ uid が無いので配信停止URLに署名できない（呼び出し側でサイトURLへ退避する）。
+ */
+async function briefRecipients(): Promise<BriefRecipient[]> {
+  const offline = (process.env.OFFLINE_RECIPIENTS ?? '').trim();
+  if (offline) {
+    const list = offline.split(',').map((chunk) => {
+      const i = chunk.indexOf(':');
+      const email = (i < 0 ? chunk : chunk.slice(0, i)).trim();
+      const displayName = i < 0 ? null : chunk.slice(i + 1).trim() || null;
+      return { uid: null, email, name: null, displayName };
+    }).filter((r) => /^[^@s]+@[^@s]+.[^@s]+$/.test(r.email));
+    console.log(`[Brief] OFFLINE_RECIPIENTS から ${list.length}件（DBは見ない）`);
+    return list;
+  }
+  return db.select({
+    uid: schema.users.id, email: schema.users.email, name: schema.users.name,
+    displayName: schema.userProfiles.displayName,
+  })
+    .from(schema.userProfiles)
+    .innerJoin(schema.users, eq(schema.userProfiles.userId, schema.users.id))
+    .where(eq(schema.userProfiles.emailOptIn, 1));
+}
+
 // 購読者メール（明るい背景）用：Markdown を本文フラグメントへ変換（<html>ラッパー無し）。
 
 // メール購読ユーザーへ日次の朝刊を配信する（全員同一・LLM不使用）。
@@ -1633,13 +1666,7 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
   }
   const reportHtml = reportMd ? mailMarkdownToHtml(reportMd) : '';
 
-  const recipients = await db.select({
-    uid: schema.users.id, email: schema.users.email, name: schema.users.name,
-    displayName: schema.userProfiles.displayName,
-  })
-    .from(schema.userProfiles)
-    .innerJoin(schema.users, eq(schema.userProfiles.userId, schema.users.id))
-    .where(eq(schema.userProfiles.emailOptIn, 1));
+  const recipients = await briefRecipients();
   if (recipients.length === 0) { console.log('[Brief] 購読者なし'); return; }
 
   const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user, pass } });
@@ -1672,17 +1699,21 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
   if (!reportHtml) { console.log('[Brief] 朝刊本文が空のため配信しない'); return; }
   const digestBlock = `<div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin-bottom:8px;">${reportHtml}</div>`;
 
-  for (const r of recipients) {
+  for (const [i, r] of recipients.entries()) {
     if (!r.email) continue;
+    // ログ用の非PII識別子。OFFLINE_RECIPIENTS 経由は uid が無いので通し番号にする（メールは出さない）。
+    const label = r.uid ? `uid=${r.uid}` : `env#${i}`;
     try {
       // 特定電子メール法4条の表示義務＋RFC8058（Gmail/Yahooの一括送信者要件）のワンクリック解除。
       // これが無いと有料配信に切り替えた瞬間、法令違反であると同時に到達率が構造的に落ちる。
-      const unsubUrl = canSign ? unsubscribeUrl(siteUrl, String(r.uid)) : siteUrl;
+      // uid が無い受信者（延命中の OFFLINE_RECIPIENTS）は署名できないのでサイトURLへ退避する。
+      const signed = canSign && Boolean(r.uid);
+      const unsubUrl = signed ? unsubscribeUrl(siteUrl, String(r.uid)) : siteUrl;
       const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:640px;margin:0 auto;color:#0f172a;padding:8px 4px;">
         <h1 style="font-size:20px;margin:0 0 2px;">☀️ ${escapeHtml(r.displayName || r.name || 'あなた')}さんへ — 今日の朝刊</h1>
         <p style="font-size:12px;color:#94a3b8;margin:0 0 16px;">${today}</p>
         ${digestBlock}
-        ${mailFooter(unsubUrl, siteUrl, canSign)}
+        ${mailFooter(unsubUrl, siteUrl, signed)}
       </div>`;
 
       await transporter.sendMail({
@@ -1693,14 +1724,14 @@ async function sendPersonalizedBriefs(reportText: string | null = null) {
           'List-Unsubscribe': `<${unsubUrl}>`,
           // One-Click を名乗るのは実際にPOSTで停止できるときだけ。署名が無い状態で名乗ると
           // Gmail が退避先URLへPOSTし、何も起きていないのに「解除済み」と表示される（黙って壊れる方が悪い）。
-          ...(canSign ? { 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } : {}),
+          ...(signed ? { 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } : {}),
           'List-Id': `${SITE_NAME} Daily Digest <digest.${new URL(siteUrl).hostname}>`,
         },
       });
       sent++;
     } catch (e: any) {
       // ログにメール(PII)を残さない。識別は非PIIの uid を使う（匿名性方針）。
-      console.warn(`[Brief] uid=${r.uid} 送信失敗: ${(e.message ?? '').slice(0, 60)}`);
+      console.warn(`[Brief] ${label} 送信失敗: ${(e.message ?? '').slice(0, 60)}`);
     }
   }
   console.log(`[Brief] 朝刊配信: ${sent}/${recipients.length}件`);

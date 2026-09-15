@@ -1118,6 +1118,9 @@ async function relatedByPRF(lex: { ids: number[] }): Promise<number[]> {
 export async function searchRelated(query: string): Promise<CollectedItem[]> {
   const q = query.trim().slice(0, 100);
   if (q.length < 2) return [];
+  // 「関連」はGraphRAG（entities/relations）とPRFの合わせ技。延命中はどちらも手元に無いので、
+  // 代役を作らず**出さない**（[[feedback-subtraction]]：全部を再現しようとしない）。
+  if (SNAPSHOT_MODE) return [];
   try {
     const userId = await currentUserId();
     const lex = await lexicalSearch(q, 60);
@@ -1150,6 +1153,10 @@ export async function searchArticles(query: string, limit = 25): Promise<Collect
   if (q.length < 2) return [];
   const cap = Math.min(Math.max(limit, 1), 100);
   try {
+    // 延命中は kuromoji+BM25 の索引がDB側にあって引けない。スナップショット上の部分一致で代替する。
+    // ⚠ ここに分岐が無いと BLOCKED が catch に落ちて `[]` を返し、`isDbReachable()` は
+    //   延命中 true なので画面には「見つかりませんでした」とだけ出る＝**黙って0件**になる。
+    if (SNAPSHOT_MODE) return parseCollectedRows((await snap()).snapshotSearch(q, cap));
     const userId = await currentUserId();
     const lex = await lexicalSearch(q, Math.max(60, cap * 2));
     if (!lex) return [];

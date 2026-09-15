@@ -88,7 +88,7 @@ jobs:
       # 日次フルパイプライン: 収集・ベクトル化・知識抽出・(日曜/月初は週次/月次レポート生成)。
       # デイリーレポートの生成＋メールはここでは行わず、下の Report ステップが 06:00 JST に実行する。
       - name: Run Daily Pipeline (full)
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily'
+        if: vars.OFFLINE_MODE != '1' && github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'daily'
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -104,7 +104,7 @@ jobs:
 
       # レポート生成＋購読者全員へ同一ダイジェスト配信。外部スケジューラが 06:00 JST に叩く。
       - name: Generate & Send Daily Report (06:00 JST)
-        if: always() && (github.event.schedule == '11 21 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'report'))
+        if: always() && vars.OFFLINE_MODE != '1' && (github.event.schedule == '11 21 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'report'))
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -124,7 +124,7 @@ jobs:
         run: cd v2 && npx tsx daily_pipeline.ts
 
       - name: Run Collection (09/12/15/18/21 JST)
-        if: github.event.schedule == '17 21 * * *' || github.event.schedule == '17 0 * * *' || github.event.schedule == '17 3 * * *' || github.event.schedule == '17 6 * * *' || github.event.schedule == '17 9 * * *' || github.event.schedule == '17 12 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'collect')
+        if: vars.OFFLINE_MODE != '1' && (github.event.schedule == '17 21 * * *' || github.event.schedule == '17 0 * * *' || github.event.schedule == '17 3 * * *' || github.event.schedule == '17 6 * * *' || github.event.schedule == '17 9 * * *' || github.event.schedule == '17 12 * * *' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'collect'))
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
@@ -179,15 +179,17 @@ jobs:
           CHUNK_LIMIT: ${{ github.event.inputs.limit || '3500' }}
         run: cd v2 && npx tsx daily_pipeline.ts
 
+      # ⚠ 延命中(OFFLINE_MODE=1)は止める。本番Tursoは**書き込みは通っていて中身は無傷**なので
+      #   何も失われない。作業DBから取ると entities/relations が空のバックアップができ、そちらが危険。
       - name: Weekly DB Backup
-        if: github.event.schedule == '43 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup')
+        if: vars.OFFLINE_MODE != '1' && (github.event.schedule == '43 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup'))
         env:
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: cd v2 && npx tsx scripts/backup.ts
 
       - name: Commit DB Backup
-        if: github.event.schedule == '43 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup')
+        if: vars.OFFLINE_MODE != '1' && (github.event.schedule == '43 20 * * 0' || (github.event_name == 'workflow_dispatch' && github.event.inputs.report_type == 'backup'))
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -197,3 +199,82 @@ jobs:
           #   Vercel は [skip ci] / [skip cd] / [skip vercel] を見てデプロイを飛ばす。
           git diff --staged --quiet || git commit -m "chore: weekly DB backup $(date +%Y-%m-%d) [skip ci]"
           git push origin main || true
+
+      # ── 延命モード（2026-09-15〜10-01）──────────────────────────────────────
+      # Turso Free の読み取り枠を9/14に使い切り、`BLOCKED` で**読み取りが全部落ちた**。
+      # リセットはカレンダー月なので10月1日まで戻らない（memory: debug-turso-quota-exhaustion）。
+      # その間、本番DBを一切引かずに朝刊を出し続けるための経路。
+      #   - Actions の中にローカルSQLite（v2/.work.db）を立てて、そこでパイプラインを回す
+      #   - 生成物は静的スナップショットとしてコミットし、Vercel 側は SNAPSHOT_MODE=1 で配る
+      # 切り替えはリポジトリ変数 `OFFLINE_MODE=1` の1本（Settings > Secrets and variables > Actions > Variables）。
+      # 10月1日にこの変数を消せば、上の通常ステップがそのまま元に戻る（他に触る所は無い）。
+      #
+      # ⚠ 埋め込み・知識抽出・チャンクは走らせない（PIPELINE_MODE は collect か report だけ）。
+      #   作業DBにベクトルが無いので意味が無く、Gemini の課金区分も今より増やさないため。
+      #   副作用として、延命中は story による重複排除が効かない（同じ話題が複数載りうる）。
+
+      # キャッシュで持ち回す。41MBあるのでリポジトリには入れない（v2/.gitignore 済み）。
+      # 固定キーのキャッシュは上書きできないので、保存は run_id 付き・復元は前方一致で拾う。
+      - name: Restore work DB (offline)
+        if: vars.OFFLINE_MODE == '1'
+        id: workdb
+        uses: actions/cache/restore@v4
+        with:
+          path: v2/.work.db
+          key: workdb-${{ github.run_id }}
+          restore-keys: workdb-
+
+      # キャッシュが無い／7日で失効したときだけ、週次バックアップから作り直す。
+      # 作り直すと backup 以降に発行した号が消えるので、コミット済みスナップショットから補填する
+      # （bootstrap_workdb.ts の最後のステップ）。
+      - name: Bootstrap work DB (offline)
+        if: vars.OFFLINE_MODE == '1' && steps.workdb.outputs.cache-matched-key == ''
+        run: cd v2 && npx tsx scripts/bootstrap_workdb.ts
+
+      - name: Run pipeline on work DB (offline)
+        id: offline
+        if: vars.OFFLINE_MODE == '1' && (github.event_name == 'schedule' && github.event.schedule != '43 20 * * 0' || github.event_name == 'workflow_dispatch' && (github.event.inputs.report_type == 'daily' || github.event.inputs.report_type == 'report' || github.event.inputs.report_type == 'collect'))
+        env:
+          # ⚠ 相対パスで渡す。日本語を含む絶対パスを file: に渡すと libsql ネイティブが黙って落ちる。
+          TURSO_DATABASE_URL: file:./.work.db
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_GENERATIVE_AI_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+          REPORT_TO: ${{ secrets.REPORT_TO }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          # 延命中は users / user_profiles が作業DBに無い（PIIなのでバックアップ対象外）ため、
+          # 配信先を secret から渡す。書式: `メールアドレス[:表示名]` のカンマ区切り。
+          # ⚠ この値はリポジトリにもスナップショットにも絶対に書かない。
+          OFFLINE_RECIPIENTS: ${{ secrets.OFFLINE_RECIPIENTS }}
+          # 06:11 JST の保険cronと report 指定のときだけ朝刊を出す。それ以外の回は収集だけ。
+          PIPELINE_MODE: ${{ (github.event.schedule == '11 21 * * *' || github.event.inputs.report_type == 'report') && 'report' || 'collect' }}
+        run: cd v2 && npx tsx daily_pipeline.ts
+
+      - name: Build snapshot (offline)
+        if: steps.offline.outcome == 'success'
+        env:
+          TURSO_DATABASE_URL: file:./.work.db
+        run: cd v2 && npx tsx scripts/build_snapshot.ts --from-db
+
+      # コミットすると Vercel が本番ビルドを回す＝ここが公開面の更新経路（[skip ci] を付けない）。
+      # ⚠ 収集は1日6回走るが、コミットは1日2回に絞る。スナップショットは4.2MBあり、毎回コミットすると
+      #   16日間で公開リポジトリに100MB以上積む。朝刊(06:11)と自己修復回(12:17)に載せれば鮮度は足りる。
+      - name: Commit snapshot (offline)
+        if: steps.offline.outcome == 'success' && (github.event.schedule == '11 21 * * *' || github.event.schedule == '17 3 * * *' || github.event_name == 'workflow_dispatch')
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add v2/src/data/snapshot.json v2/src/data/snapshot-ids.json
+          git diff --staged --quiet && echo "変化なし" && exit 0
+          git commit -m "chore(offline): スナップショット更新 $(date -u +%Y-%m-%dT%H:%MZ)"
+          git pull --rebase origin main || true
+          git push origin main
+
+      # ⚠ コミットしない回もキャッシュは必ず保存する（記事は作業DBに溜まっているため）。
+      - name: Save work DB (offline)
+        if: always() && steps.offline.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: v2/.work.db
+          key: workdb-${{ github.run_id }}
