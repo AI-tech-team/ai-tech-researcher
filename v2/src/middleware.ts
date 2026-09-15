@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createClient } from '@libsql/client/web';
+import { SNAPSHOT_MODE } from '@/lib/site';
+// 延命モードの存在確認に使う id 一覧（約9KB）。⚠ スナップショット本体(数MB)は import しない。
+import snapshotIds from '@/data/snapshot-ids.json';
 
 // 旧OG用URL（/?article=N・/?report=N）を独立URL（/articles/N・/reports/N）へ寄せる。
 // 目的は2つ:
@@ -28,6 +31,12 @@ const METADATA_ROUTES = new Set(['opengraph-image', 'twitter-image', 'icon', 'ap
 
 // 存在が確認できたキーのメモリキャッシュ。インスタンスが再利用される限りDBを再度叩かない。
 const KNOWN = { articles: new Set<string>(), reports: new Set<string>(), topic: new Set<string>() };
+
+// 延命モードの存在確認は Set で引く（配列の線形探索にしない）
+const SNAPSHOT_IDS = {
+  articles: new Set<number>(snapshotIds.articles as number[]),
+  reports: new Set<number>(snapshotIds.reports as number[]),
+};
 const KNOWN_MAX = 2000; // 際限なく太らせない
 
 // 「無い」も短時間だけ覚える。正の結果しか覚えていなかったため、`/articles/999999998` のように
@@ -83,6 +92,13 @@ async function exists(kind: 'articles' | 'reports' | 'topic', value: string): Pr
   if (impossibleId(kind, value)) return 'no'; // DBを引かずに弾く
   const key = `${kind}:${value}`;
   if (missingHit(key)) return 'no';
+  // 延命モード（読み取り枠切れ）ではDBに聞かず、スナップショットに載っているidだけを通す。
+  // ⚠ ここで読むのは id の配列だけの軽量ファイル。本体(数MB)を middleware に import してはいけない。
+  if (SNAPSHOT_MODE) {
+    if (kind === 'topic') return 'no'; // トピックは延命の対象外（entities を載せていない）
+    const ids = kind === 'articles' ? SNAPSHOT_IDS.articles : SNAPSHOT_IDS.reports;
+    return ids.has(Number(value)) ? 'yes' : 'no';
+  }
   const c = getClient();
   // DB未設定はこちらの設定漏れ。障害画面を出すと全ページが潰れるので、従来どおり通す。
   if (!c) return 'yes';

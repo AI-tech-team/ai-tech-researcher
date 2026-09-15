@@ -36,6 +36,22 @@ export const SITE_NAME = 'Cernoval';
  *  ⚠ robots.txt は `Disallow` にしない。クロールを止めると**クローラが noindex を読めなくなる**ので、
  *    既にインデックスされているページが消えない。「載せない」は allow + noindex で実現する。 */
 export const SITE_NOINDEX = true;
+
+/**
+ * 延命モード。DBを一切引かず、週次バックアップから作った静的スナップショットだけで公開面を配る。
+ *
+ * 2026-09-15、Turso Free の月500M行読み取りを使い切って `BLOCKED` になり、**読み取りが全部落ちた**。
+ * リセットはカレンダー月なので、プランを上げない限り10月1日まで戻らない（書き込みは通る）。
+ * その間サイトを黙らせないための仕組み。
+ *
+ * 切り替えは Vercel の環境変数 `SNAPSHOT_MODE=1` **1本**。復旧したら外すだけで元に戻る
+ * （コード変更は不要）。`SITE_NOINDEX` と違ってコード定数にしないのは、
+ * 枠が戻った瞬間にデプロイを待たずに戻せるようにするため。
+ *
+ * ⚠ 「BLOCKED を検知して自動で切り替える」設計にはしない。同じページの中で
+ *   一部はDB・一部はスナップショットという中途半端な状態を作らないため、全部まとめて切り替える。
+ */
+export const SNAPSHOT_MODE = (process.env.SNAPSHOT_MODE ?? '') === '1';
 export const SITE_TAGLINE = '読むべきものだけを、毎朝';
 export const SITE_DESC = '毎日集まる大量のAI関連ニュースから、本当に読むべきものだけを選び、なぜ重要かを添えて毎朝お届けします。';
 /** 問い合わせ／データ削除依頼の窓口。Vercel に NEXT_PUBLIC_CONTACT_EMAIL を設定すると有効化される。

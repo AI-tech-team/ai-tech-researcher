@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { SITE_NAME } from '@/lib/site';
 import s from '@/styles/brand.module.css';
 import { BrandNavActions } from '@/components/digest/BrandNavActions';
+import { SnapshotNotice } from '@/components/SnapshotNotice';
 
 /**
  * 全ページ共通のナビとフッタ。
@@ -31,18 +32,24 @@ const NAV: NavLink[] = [
 
 export function BrandNav() {
   return (
-    <nav className={s.nav}>
-      <div className={s.navInner}>
-        {/* ワードマークが「今朝の朝刊へ戻る」を兼ねる。だから朝刊はリンク一覧に置かない。 */}
-        <Link className={s.navBrand} href="/">{SITE_NAME}</Link>
-        <div className={s.navLinks}>
-          {NAV.map(l => (
-            <Link key={l.href} href={l.href} className={l.minor ? s.navMinor : undefined}>{l.label}</Link>
-          ))}
+    <>
+      <nav className={s.nav}>
+        <div className={s.navInner}>
+          {/* ワードマークが「今朝の朝刊へ戻る」を兼ねる。だから朝刊はリンク一覧に置かない。 */}
+          <Link className={s.navBrand} href="/">{SITE_NAME}</Link>
+          <div className={s.navLinks}>
+            {NAV.map(l => (
+              <Link key={l.href} href={l.href} className={l.minor ? s.navMinor : undefined}>{l.label}</Link>
+            ))}
+          </div>
+          <div className={s.navRight}><BrandNavActions /></div>
         </div>
-        <div className={s.navRight}><BrandNavActions /></div>
-      </div>
-    </nav>
+      </nav>
+      {/* 延命モードのときだけ1行出る。通常時は null を返すので何も増えない。
+          ここに置くのは、ナビを使う全ページで**1回だけ**出ることを保証するため
+          （ページごとに挿すと、貼り忘れたページだけが黙って古い内容を配ることになる）。 */}
+      <SnapshotNotice />
+    </>
   );
 }
 
