@@ -2890,3 +2890,61 @@ Googleフォーム（`FEEDBACK_FORM_ACTION` / `FEEDBACK_ENTRY`）を用意する
     `generateSitemaps()` を手放し、XMLを手で組むこと（約50行）。公開作業とセットで判断する。
     **副産物**: 繰り越し表（recovery-checklist）の㊵が**既に完了しているのに残っていた**。
     そのせいで同じ調査を一度やり直した。直した項目はその場で消すこと。
+
+60. **読み取り枠を使い切った真因を EXPLAIN で特定し、140万行/回のクエリを2,100行にした（2026-09-15）**
+    2026-09-14、Turso Free の月500M行読み取りを使い切って `BLOCKED` になり、**読み取りが全部落ちた**。
+    公式docsどおりリセットは**カレンダー月**なので、プランを上げない限り10月1日まで戻らない。
+    9/1〜9/14 で使い切った＝**1日あたり約3,600万行**。DBは全部で35,389行しかない
+    （backup_2026-09-13.json の実測）ので、**件数ではなく読み方の問題**だと分かる。
+    **測り方**: 本番もdevも読めない（**枠は組織単位で共有されていて dev DB も同じ `BLOCKED`**）。
+    そこで `drizzle-kit generate` で出したDDLと、リポジトリ内の `CREATE INDEX` 16本すべてを
+    ローカルSQLite（`node:sqlite`）に再現し、EXPLAIN QUERY PLAN を当てた。
+    **索引を全部入れた最良条件でも SCAN するクエリ**＝本番でも確実に SCAN、という形で絞り込める。
+    **犯人**: `getTopicIndex` / `getSitemapTopics`（actions.ts）の EXISTS 相関サブクエリ。
+    プランは `SCAN e USING INDEX entities_mention_idx` → `CORRELATED SCALAR SUBQUERY` → `SCAN r`
+    ＝**entities 1行ごとに relations を全走査**。LIMIT 400/600 は効かない。`mention_count>=2` を
+    満たすのは実測18.5%（約341件）で上限に届かず、entities を最後まで舐めるため。
+    実データ規模で **1,846 × 891 ≒ 140万行/回**。sitemap は `revalidate=3600` なので
+    **1日3,400万行**に達しうる ⇒ 逆算した必要量（1日3,600万行）とほぼ一致する。
+    **対処**: EXISTS を捨て、relations に登場する名前を1回のスキャンで Set にして突き合わせる
+    （140万行 → 約2,100行＝**660分の1**）。あわせて `COALESCE(mention_count,0) >= 2` を
+    `mention_count >= 2` に直した。結果は同じ（NULL >= 2 は偽）だが、関数を噛ませると
+    `entities_mention_idx` が効かず SCAN になる。直すと `SEARCH (mention_count>?)` に変わる。
+    **索引4本を追加**（`scripts/migrate_2026_09_15_indexes.ts`・どれも再現環境でプランの変化を確認済み）:
+    `entities(LOWER(canonical_name))` … middleware:95 と actions:841。**middleware は
+    `/topic/:name` の全アクセスで走り、ISRでCDNヒットしても手前で必ず動く**ので効きが大きい。
+    `relations(object_name, status)` … 既存の `relations_edge_uniq` は先頭列が `subject_name` なので
+    片方向しか効いていなかった。`benchmarks(entity_name)` … OR の片側に索引が無いと全体が SCAN に
+    落ちる（`MULTI-INDEX OR` になる。claims 側は既にこの形で直っていた）。
+    `collected_data(source_id)` … `reportSilentSources` が毎回 `AUTOMATIC COVERING INDEX` を
+    作っていた＝23,649行を読んで一時索引を構築し直す。しかも**収集ラン6回すべて**で走る。
+    **書き込みは通ると実測**（dev で SELECT は NG、CREATE TABLE/INSERT/CREATE INDEX/DROP は OK）
+    なので、枠が戻る前でもこのマイグレーションは当てられる。
+    ⚠ **測れていないこと**: どのクエリが実際に何行読んだかの内訳は Turso のダッシュボードにしかない。
+    上の「1日3,400万行」はコードのLIMITと再現環境のプランからの算術で、実測ではない。
+
+61. **読み取りが戻らない16日間を、静的スナップショットで延命する（2026-09-15）**
+    枠のリセットは10月1日。それまでサイトを黙らせないために、既にリポジトリにある週次バックアップを
+    そのまま公開面のデータ源にする（`scripts/build_snapshot.ts` → `src/data/snapshot.json`）。
+    **設計の選択**: 「BLOCKED を検知して自動でフォールバック」にはしない。同じページの中で
+    一部はDB・一部はスナップショットという**中途半端な状態**を作らないため、
+    環境変数 `SNAPSHOT_MODE=1` **1本で全部切り替える**（`SITE_NOINDEX` と同じ思想）。
+    コード定数にしないのは、枠が戻った瞬間にデプロイを待たずに戻せるようにするため。
+    **収録**: 公開種別のレポート142件（daily 121・最新 2026-09-14 号）と記事の最新1,500件（4.3MB）。
+    記事を全23,649件にしないのは、載せた分だけバンドルが太るため。1,500件＝約1週間分
+    （流入は実測221件/日）。それより古い記事の個別ページは延命中は404になる。
+    **⚠ 抽出本文(rawContent)はバックアップ自体に含まれない**（第三条・公衆送信の回避）ので、
+    スナップショットにも入らない＝公開してよい範囲しか持たない。
+    **middleware には本体を import しない**。id の配列だけの軽量ファイル（9KB）を別に出して、
+    存在確認はそれで行う（数MBを全アクセスで読ませない）。
+    **トピックは延命の対象外**にした（entities/relations を載せていない）。[[feedback-subtraction]] に従い、
+    全部を再現しようとせず落とす。
+    **読者への告知**: ナビ直下に1行だけ出す（`SnapshotNotice`）。黙って古いものを配ると、
+    読者からは「更新が止まったのか、壊れているのか、自分の画面が古いのか」が区別できない。
+    日付・こちらの都合であること・再開日を1行で言う。帯は1本だけで、閉じるボタンも付けない。
+    ページごとに挿すのではなく `BrandNav` に組み込んだのは、**貼り忘れたページだけが黙って
+    古い内容を配る**のを防ぐため。
+    **検証**: `SNAPSHOT_MODE=1` で `next build --webpack` が通ることを確認した（＝**DBが1行も
+    読めない状態でビルドが完走する**）。`next start` して `/` `/articles` `/reports/324`
+    `/articles/26178` `/feed.xml` `/topic` が全て 200 で中身を返すこと、
+    デスクトップ／モバイルの版面を実機スクショで確認。tsc クリーン・314テスト通過。

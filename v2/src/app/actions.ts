@@ -17,7 +17,17 @@ import { cached } from '@/lib/cache';
 import { vocabCandidates, segmentQuery, toMatchExpr } from '@/lib/search-tokens';
 import { isPublishableEntity } from '@/lib/entity-quality';
 import { AI_RELEVANT_SQL } from '@/lib/ai-relevance';
+import { SNAPSHOT_MODE } from '@/lib/site';
 import type { CollectedItem, KnowledgeStats, Report } from '@/types';
+
+// 延命モード（SNAPSHOT_MODE）のデータ源。読み取り枠が切れている間、公開面はDBを一切引かずここを見る。
+// ⚠ 動的 import にしてあるのは、4MBのスナップショットを**通常時のメモリに載せない**ため。
+//   静的 import にすると SNAPSHOT_MODE が false でも毎インスタンスで読み込まれる。
+let snapshotMod: typeof import('@/lib/snapshot') | null = null;
+async function snap() {
+  if (!snapshotMod) snapshotMod = await import('@/lib/snapshot');
+  return snapshotMod;
+}
 
 // created_at等はSQLiteのCURRENT_TIMESTAMP（"YYYY-MM-DD HH:MM:SS" 空白区切り）で格納される。
 // 比較しきい値もこの形式に揃える（ISOの"T"/"Z"だと文字列比較で境界1日分ずれるため）。
@@ -127,6 +137,7 @@ export async function getReportsData(limit = 40, contentChars = 800) {
     // 公開Server Actionは引数もクライアント供給になり得るため上限をサーバ側で強制（行動原則6）
     const lim = Math.min(Math.max(limit, 1), 1000);
     const chars = Math.min(Math.max(contentChars, 0), 100_000);
+    if (SNAPSHOT_MODE) return (await snap()).snapshotReports(lim, chars);
     // 公開対象(daily/weekly/monthly)のみ。内部レポートはホワイトリストから外れるので自動的に除外。
     // 全ユーザー共通かつ更新頻度が低いのでインスタンス内60秒キャッシュ（毎アクセスのTurso読みを削減）。
     return await cached(`reportsData:${lim}:${chars}`, 60_000, () => db.select({
@@ -165,6 +176,7 @@ export async function getReportsData(limit = 40, contentChars = 800) {
  */
 export async function getLandingDigest() {
   try {
+    if (SNAPSHOT_MODE) return (await snap()).snapshotLandingDigest();
     const [latest, prev] = await db.select({
       id: reports.id, reportDate: reports.reportDate, createdAt: reports.createdAt, content: reports.content,
     }).from(reports)
@@ -206,6 +218,8 @@ export async function getLandingDigest() {
  * 呼ぶのは「表示するものが無い」と分かった後だけなので、正常時はこのクエリは走らない。
  */
 export async function isDbReachable(): Promise<boolean> {
+  // 延命中はDBを見ない。スナップショットを配れている＝読者にとっては「繋がっている」
+  if (SNAPSHOT_MODE) return true;
   try { await client.execute('SELECT 1'); return true; } catch { return false; }
 }
 
@@ -228,6 +242,11 @@ function urlDomain(url: string | null): string | null {
 
 export async function getCollectedDataList(limit = 60, offset = 0, anonymous = false): Promise<CollectedItem[]> {
   try {
+    // 延命中はユーザー状態を解決しない（スナップショットに個人の状態は無い）。cookies も読まない。
+    if (SNAPSHOT_MODE) {
+      const rows = (await snap()).snapshotArticles(Math.min(Math.max(limit, 1), 200), Math.max(offset, 0));
+      return parseCollectedRows(rows);
+    }
     // anonymous=true はユーザー状態の解決を丸ごと省く（=cookiesを読まない）。SSRの静的化に必要。
     // クライアントから true を渡されても「自分の状態が見えなくなる」だけの権限降格なので安全。
     const userId = anonymous ? undefined : await currentUserId();
@@ -339,6 +358,7 @@ export async function getArticlesByTag(tag: string, limit = 40, offset = 0): Pro
 export async function getAdjacentReports(type: string, reportDate: string): Promise<{ prev: { id: number; reportDate: string } | null; next: { id: number; reportDate: string } | null }> {
   try {
     if (!['daily', 'weekly', 'monthly'].includes(type)) return { prev: null, next: null };
+    if (SNAPSHOT_MODE) return (await snap()).snapshotAdjacentReports(type, reportDate);
     // ⚠ 本文が空の号へ**リンクしない**（2026-09-15 追加）。バックナンバー一覧は
     //   `length(content) > 0` で隠しているのに、ここには条件が無かった。実データで確認すると
     //   2026-06-08 の「次号」と 2026-06-10 の「前号」が、どちらも本文が空の id=81（2026-06-09）を
@@ -387,6 +407,58 @@ export async function getSitemapArticles(limit = 50000): Promise<Array<{ id: num
   }
 }
 
+/**
+ * relations に「非staleの関係」を持つ名前の集合を、1回のスキャンで作る。
+ *
+ * ⚠️ 旧実装はこれを entities 側の WHERE に EXISTS の相関サブクエリとして書いていた。
+ *    EXPLAIN QUERY PLAN が `SCAN e USING INDEX entities_mention_idx` →
+ *    `CORRELATED SCALAR SUBQUERY` → `SCAN r` ＝ **entities 1行ごとに relations を全走査**。
+ *    リポジトリのDDLにある索引を全部入れた条件で測っても同じで、LIMIT も効かない
+ *    （mention_count>=2 を満たすのは実測18.5%＝約341件しかなく上限400/600に届かないため、
+ *    entities を最後まで舐める）。実データ規模で 1,846 × 891 ≒ **140万行/回**。
+ *    sitemap は revalidate=3600 なので、これだけで 1日3,400万行に達しうる。
+ *    → 名前の集合を先に1回だけ作り、突き合わせはアプリ側でやる（relations の1スキャンで済む）。
+ *    2026-09-15 の読み取り枠切れ（`BLOCKED`）調査で特定 → docs/decisions.md
+ */
+async function namesWithRelations(): Promise<Set<string>> {
+  const r = await client.execute(
+    `SELECT DISTINCT subject_name AS n FROM relations WHERE status != 'stale' AND subject_name IS NOT NULL
+      UNION
+     SELECT DISTINCT object_name AS n FROM relations WHERE status != 'stale' AND object_name IS NOT NULL`,
+  );
+  return new Set(r.rows.map((x) => String(x.n)));
+}
+
+/**
+ * 公開品質を満たすエンティティを言及数の多い順に返す（/topic と sitemap の共通母集団）。
+ *
+ * mention_count>=2 で足切り（実測: m=1 が1,606件中1,309件＝81.5%で、中身は
+ * `8VC` `1010 Digital Works` のような一度きりの固有名詞）。
+ * ⚠️ 足切りは `COALESCE(mention_count,0) >= 2` ではなく `mention_count >= 2` と書く。
+ *    結果は同じ（NULL >= 2 は偽）だが、関数を噛ませると索引 entities_mention_idx が効かない。
+ */
+async function publishableEntities(lim: number): Promise<{ n: string; m: number; t: string | null }[]> {
+  // 延命中はトピックを出さない（スナップショットに entities/relations を載せていない）。
+  // 無言で空になるのではなく、/topic 側で「延命中は休止」と伝える。
+  if (SNAPSHOT_MODE) return [];
+  const [r, hasRelation] = await Promise.all([
+    client.execute(
+      `SELECT canonical_name AS n, mention_count AS m, type AS t
+         FROM entities
+        WHERE canonical_name IS NOT NULL AND canonical_name != '' AND mention_count >= 2
+        ORDER BY mention_count DESC
+        LIMIT 2000`,
+    ),
+    namesWithRelations(),
+  ]);
+  // 関係を持たない＝空ページになるものを外し、さらに一般名詞(AI/LLMs/China/CEO)・
+  // 文(「既存のLLMスケーリング則」)・文字化けを公開面から除く
+  return r.rows
+    .map((row) => ({ n: String(row.n), m: Number(row.m ?? 0), t: row.t ? String(row.t) : null }))
+    .filter((x) => x.n && hasRelation.has(x.n) && isPublishableEntity(x.n, x.m))
+    .slice(0, lim);
+}
+
 export async function getSitemapTopics(limit = 300): Promise<string[]> {
   try {
     // ⚠️ 旧実装は ORDER BY が無く、UNION の結果をそのまま LIMIT していた。その結果 sitemap に
@@ -394,29 +466,8 @@ export async function getSitemapTopics(limit = 300): Promise<string[]> {
     // `8VC` や `1010 Digital Works` のような無価値ページを出す一方、`OpenAI`/`NVIDIA`/`Gemini`
     // など D以降の主要エンティティが1件もクロールに出ていなかった（2026-09-09 実測）。
     // mention_count 降順にして「言及が多い＝中身のあるエンティティ」から載せる。
-    // relations を持つ条件は EXISTS で維持（関係が無い＝空ページ化を避ける）。
-    // mention_count>=2 で足切り（実測: m=1 が1,606件中1,309件＝81.5%で、中身は
-    // `8VC` `1010 Digital Works` のような一度きりの固有名詞）。フィルタで減る分を見越して多めに取る。
     const lim = Math.min(Math.max(limit, 1), 1000);
-    const r = await client.execute(
-      `SELECT e.canonical_name AS n, COALESCE(e.mention_count, 0) AS m
-         FROM entities e
-        WHERE e.canonical_name IS NOT NULL AND e.canonical_name != ''
-          AND COALESCE(e.mention_count, 0) >= 2
-          AND EXISTS (
-            SELECT 1 FROM relations r
-             WHERE r.status != 'stale'
-               AND (r.subject_name = e.canonical_name OR r.object_name = e.canonical_name)
-          )
-        ORDER BY e.mention_count DESC
-        LIMIT ${lim * 2}`,
-    );
-    // 一般名詞(AI/LLMs/China/CEO)・文(「既存のLLMスケーリング則」)・文字化けを公開面から除く
-    return r.rows
-      .map((row) => ({ n: String(row.n), m: Number(row.m ?? 0) }))
-      .filter((x) => x.n && isPublishableEntity(x.n, x.m))
-      .slice(0, lim)
-      .map((x) => x.n);
+    return (await publishableEntities(lim)).map((x) => x.n);
   } catch (error) {
     await logError('getSitemapTopics', error);
     return [];
@@ -431,23 +482,7 @@ export async function getSitemapTopics(limit = 300): Promise<string[]> {
 export async function getTopicIndex(limit = 200): Promise<{ name: string; mentions: number; type: string | null }[]> {
   try {
     const lim = Math.min(Math.max(limit, 1), 500);
-    const r = await client.execute(
-      `SELECT e.canonical_name AS n, COALESCE(e.mention_count, 0) AS m, e.type AS t
-         FROM entities e
-        WHERE e.canonical_name IS NOT NULL AND e.canonical_name != ''
-          AND COALESCE(e.mention_count, 0) >= 2
-          AND EXISTS (
-            SELECT 1 FROM relations r
-             WHERE r.status != 'stale'
-               AND (r.subject_name = e.canonical_name OR r.object_name = e.canonical_name)
-          )
-        ORDER BY e.mention_count DESC
-        LIMIT ${lim * 2}`,
-    );
-    return r.rows
-      .map((row) => ({ name: String(row.n), mentions: Number(row.m ?? 0), type: row.t ? String(row.t) : null }))
-      .filter((x) => x.name && isPublishableEntity(x.name, x.mentions))
-      .slice(0, lim);
+    return (await publishableEntities(lim)).map((x) => ({ name: x.n, mentions: x.m, type: x.t }));
   } catch (error) {
     await logError('getTopicIndex', error);
     return [];
@@ -469,6 +504,17 @@ export type ArticleDetail = CollectedItem & {
 export async function getArticleById(id: number, anonymous = false): Promise<ArticleDetail | null> {
   try {
     if (!Number.isFinite(id)) return null;
+    if (SNAPSHOT_MODE) {
+      const row = (await snap()).snapshotArticleById(id);
+      if (!row) return null;
+      const [item] = parseCollectedRows([row]);
+      const kp = (row as { keyPoints?: string | null }).keyPoints;
+      return {
+        ...item,
+        keyPoints: kp ? (() => { try { const a = JSON.parse(kp); return Array.isArray(a) ? a : null; } catch { return null; } })() : null,
+        whyMatters: (row as { whyMatters?: string | null }).whyMatters ?? null,
+      } as ArticleDetail;
+    }
     const userId = anonymous ? undefined : await currentUserId();
     const rows = await db.select({
       ...COLLECTED_SELECT,
@@ -522,6 +568,11 @@ export interface ArticleCounts { total: number; unread: number; favorite: number
 // セグメントバッジ用の全体件数（ページングで未ロードでも正確）。ユーザー別状態はuser_article_state集計
 export async function getArticleCounts(anonymous = false): Promise<ArticleCounts> {
   try {
+    if (SNAPSHOT_MODE) {
+      // 載せているのは最新1,500件だけ。総数(23,649)を出すと「もっと読む」が空振りする
+      const total = (await snap()).snapshotArticleCount();
+      return { total, unread: total, favorite: 0, readLater: 0 };
+    }
     const userId = anonymous ? undefined : await currentUserId();
     // 全体件数はユーザーに依存しない。ここも `/articles` の訪問ごとに COUNT(*) が飛んでいた。
     // ユーザー別の3本（お気に入り/後で読む/既読）は**絶対にキャッシュしない**＝他人に配ることになる。
@@ -687,6 +738,7 @@ export async function markAsRead(id: number) {
 //   失敗はキャッシュしない（内側が投げれば cached() は何も保存しない）。
 export async function getKnowledgeStats(): Promise<KnowledgeStats> {
   try {
+    if (SNAPSHOT_MODE) return { entities: 0, benchmarks: 0, relations: 0, staleRelations: 0 };
     return await cached('knowledgeStats', 300_000, async () => {
       const [ent, bench, rel, staleRel] = await Promise.all([
         db.select({ c: count() }).from(entities),
@@ -1123,6 +1175,7 @@ export async function searchArticles(query: string, limit = 25): Promise<Collect
 export async function getReportById(id: number): Promise<Report | null> {
   try {
     if (!Number.isFinite(id)) return null;
+    if (SNAPSHOT_MODE) return ((await snap()).snapshotReportById(id) as Report | null) ?? null;
     const [r] = await db.select().from(reports)
       .where(and(
         eq(reports.id, id),
@@ -1145,6 +1198,7 @@ export async function getReportById(id: number): Promise<Report | null> {
 export async function getRecentDigests(limit = 7, excludeId?: number) {
   try {
     const lim = Math.min(Math.max(limit, 1), 60);
+    if (SNAPSHOT_MODE) return (await snap()).snapshotRecentDigests(lim, excludeId);
     return await cached(`recentDigests:${lim}:${excludeId ?? 0}`, 300_000, () => db.select({
       id: reports.id, type: reports.type, reportDate: reports.reportDate,
     }).from(reports)
